@@ -777,11 +777,11 @@ class TestWebApp:
         assert "openReports(selectedTarget, path, Boolean(path))" in app_source
         assert "focus={reportFocus}" in app_source
         assert "onOpenAdvanced" in settings_source
-        assert "Diagnostics" in settings_source
-        assert "MCP status" in settings_source
-        assert "Open task console" in settings_source
-        assert "MCP services" in settings_source
-        assert "Tools" in settings_source
+        assert "settings.diagnostics" in settings_source
+        assert "settings.diagnostics_copy" in settings_source
+        assert "settings.open_task_console" in settings_source
+        assert "settings.mcp_services" in settings_source
+        assert "settings.tools" in settings_source
         assert "nmap" in settings_source
         assert "runtime" in settings_source
         assert "function handleSelectView" in app_source
@@ -791,14 +791,14 @@ class TestWebApp:
         )
         assert "actionLabel?: string" in toast_source
         assert "toast-action-btn" in toast_source
-        assert 'actionLabel: "Open results"' in app_source
-        assert 'actionLabel: "Open console"' in app_source
+        assert "toast.open_results" in app_source
+        assert "toast.open_console" in app_source
         assert 'navigateToView("risk")' in app_source
         assert 'navigateToView("advanced")' in app_source
-        assert "Welcome to VulnClaw" in home_source
-        assert "New Scan Task" in home_source
-        assert "Start deep scan?" in home_source
-        assert "Continuous mode does not support a path-only scope." in home_source
+        assert "home.welcome" in home_source
+        assert "home.new_scan_task" in home_source
+        assert "home.confirm_deep_title" in home_source
+        assert "home.continuous_no_path" in home_source
         assert ".goby-home-board" in styles_source
         assert "inferScopeFromTarget" in home_source
         assert "effectiveOnlyHost" in home_source
@@ -812,8 +812,8 @@ class TestWebApp:
         assert "Port must be a number between 1 and 65535." in validation_source
         assert "setConfirmOpen(true)" in home_source
         assert "useConfigQuery" in app_source
-        assert "Findings" in app_source
-        assert "Scope limits and blocked actions." in app_source
+        assert "nav.findings" in app_source
+        assert "view.scope.copy" in app_source
         assert "Constraint Audit" not in app_source
         assert "configQuery.refetch" in app_source
         assert "useQueryClient" in app_source
@@ -827,8 +827,8 @@ class TestWebApp:
         confirm_source = (
             root / "src" / "components" / "ConfirmDialog.tsx"
         ).read_text(encoding="utf-8")
-        assert "VulnClaw UI hit a rendering error" in error_boundary_source
-        assert "Reload UI" in error_boundary_source
+        assert "error_boundary.title" in error_boundary_source
+        assert "error_boundary.reload" in error_boundary_source
         assert 'tone?: "primary" | "danger"' in confirm_source
         assert 'tone === "danger" ? "danger-btn" : "primary-btn"' in confirm_source
         assert "event.key === \"Escape\"" in confirm_source
@@ -840,8 +840,8 @@ class TestWebApp:
         assert "white-space: pre-wrap;" in styles_source
         assert ".toast-action-btn" in styles_source
         assert 'tone="danger"' in app_source
-        assert "Backend unavailable" in shell_source
-        assert "Retry" in shell_source
+        assert "shell.backend_unavailable" in shell_source
+        assert "shell.retry" in shell_source
         api_source = (root / "src" / "api" / "web.ts").read_text(encoding="utf-8")
         assert "Unable to reach the VulnClaw backend API" in api_source
         assert "Request failed" in api_source
@@ -855,8 +855,8 @@ class TestWebApp:
         )
         assert "blocked" in banner_source
         assert "boundary-alert-btn" in banner_source
-        assert "View safety boundary" in banner_source
-        assert "Open console" in banner_source
+        assert "banner.boundary" in banner_source
+        assert "banner.open_console" in banner_source
         assert 'task.status === "failed"' in banner_source
         assert "openBoundaryForActiveTask" in app_source
         assert 'onOpenAdvanced={() => navigateToView("advanced")}' in app_source
@@ -869,16 +869,16 @@ class TestWebApp:
         task_console_source = (
             root / "src" / "pages" / "TaskConsolePage.tsx"
         ).read_text(encoding="utf-8")
-        assert "Open file" in reports_source
+        assert "reports.open_file" in reports_source
         assert "focus?: {" in reports_source
         assert "focus.openPreview" in reports_source
         assert "setSelectedPath(focus.path)" in reports_source
         assert "setPreviewOpen(true)" in reports_source
-        assert "Export copy" in reports_source
+        assert "reports.export_copy" in reports_source
         assert "report-empty-state" in reports_source
         assert "report-filter-empty-state" in reports_source
-        assert "Generate" in reports_source
-        assert "Clear filters" in reports_source
+        assert "reports.generate" in reports_source
+        assert "reports.clear_filters" in reports_source
         assert "resetReportFilters" in reports_source
         assert 'useState<"all" | "markdown" | "html">("all")' in reports_source
         assert "setKindFilter(preferences.reportFormat)" not in reports_source
@@ -896,9 +896,9 @@ class TestWebApp:
         assert "ConfirmDialog" in task_console_source
         assert "requiresRunConfirmation" in task_console_source
         assert 'command === "exploit" || command === "persistent"' in task_console_source
-        assert "Confirm raw task" in task_console_source
+        assert "console.confirm_raw_title" in task_console_source
         assert "confirmStopOpen" in task_console_source
-        assert "Stop current task" in task_console_source
+        assert "console.confirm_stop_title" in task_console_source
         assert "setConfirmStopOpen(true)" in task_console_source
         assert task_console_source.count('tone="danger"') >= 2
         assert "handleRunRequest" in task_console_source
@@ -911,7 +911,7 @@ class TestWebApp:
             encoding="utf-8"
         )
         assert "risk-empty-state" in risk_source
-        assert "New scan" in risk_source
+        assert "risk.new_scan" in risk_source
         assert "onOpenReports(generatedReport.path)" in risk_source
         assert "useQueryClient" in risk_source
         assert 'queryKey: ["reports"]' in risk_source
@@ -919,18 +919,18 @@ class TestWebApp:
         assert "原始 Target State" not in risk_source
         assert "taskOptionsToConstraints" in boundary_source
         assert "boundary-empty-state" in boundary_source
-        assert "Set scope on home" in boundary_source
-        assert "Open settings" in boundary_source
+        assert "boundary.set_scope_home" in boundary_source
+        assert "boundary.open_settings" in boundary_source
         assert "normalizeConstraints" in boundary_source
         assert "allowed_ports" in boundary_source
-        assert "Active task" in boundary_source
-        assert "Saved target" in boundary_source
+        assert "boundary.active_task_source" in boundary_source
+        assert "boundary.saved_target_source" in boundary_source
         assert "Target State" not in boundary_source
         assert "Constraint Audit" not in boundary_source
         assert "useQueryClient" in history_source
         assert 'tone="danger"' in history_source
         assert "history-empty-state" in history_source
-        assert "New scan" in history_source
+        assert "history.new_scan" in history_source
         assert "onOpenHome" in history_source
         assert "onOpenHome={() => navigateToView(\"home\")}" in app_source
         assert 'queryKey: ["target", targetValue]' in history_source
