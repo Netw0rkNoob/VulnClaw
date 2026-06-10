@@ -73,6 +73,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# AI tooling (local)
+.claude/
+CLAUDE.md
+
 # Local docs / local-only artifacts
 docs/
 .test-tmp/

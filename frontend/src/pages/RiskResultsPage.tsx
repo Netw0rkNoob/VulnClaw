@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { generateTargetReport } from "../api/web";
 import { SectionCard } from "../components/SectionCard";
 import { useTargetPreviewQuery, useTargetQuery, useTargetsQuery } from "../hooks/queries";
+import { useT, type TFunction } from "../i18n";
 import { loadUiPreferences, subscribeUiPreferences, type UiPreferences } from "../utils/preferences";
 import {
   countConstraintViolations,
@@ -65,95 +66,68 @@ function severityTone(severity: string): "danger" | "warn" | "ok" | "info" {
   return "info";
 }
 
-function extractEvidence(raw: Record<string, unknown>): string {
+function extractEvidence(raw: Record<string, unknown>, t: TFunction): string {
   const evidence = raw.evidence;
   if (typeof evidence === "string" && evidence.trim()) return evidence;
   if (Array.isArray(evidence) && evidence.length) return evidence.map(String).slice(0, 3).join(" / ");
-  return asText(raw.description, "Not summarized yet.");
+  return asText(raw.description, t("risk.not_summarized"));
 }
 
-function extractFindingCards(rawFindings: unknown): FindingCard[] {
+function extractFindingCards(rawFindings: unknown, t: TFunction): FindingCard[] {
   if (!Array.isArray(rawFindings)) return [];
   return rawFindings.slice(0, 24).map((item, index) => {
     const raw = item && typeof item === "object" ? item as Record<string, unknown> : {};
-    const title = asText(raw.title, `Finding ${index + 1}`);
+    const title = asText(raw.title, t("risk.default_finding", { index: String(index + 1) }));
     return {
       id: asText(raw.finding_id, `${title}-${index}`),
       title,
       severity: normalizeSeverity(raw.severity),
       status: asText(raw.verification_status, asText(raw.lifecycle_status, raw.verified ? "verified" : "pending")),
-      evidence: extractEvidence(raw),
-      impact: asText(raw.impact, asText(raw.risk, "Impact needs review.")),
-      recommendation: asText(raw.recommendation, asText(raw.remediation, "Validate and patch the issue.")),
-      type: asText(raw.vuln_type, asText(raw.category, "Uncategorized")),
+      evidence: extractEvidence(raw, t),
+      impact: asText(raw.impact, asText(raw.risk, t("risk.impact_needs_review"))),
+      recommendation: asText(raw.recommendation, asText(raw.remediation, t("risk.validate_patch"))),
+      type: asText(raw.vuln_type, asText(raw.category, t("risk.uncategorized"))),
     };
   });
 }
 
-function resultConclusion(verified: number, pending: number, manualReview: number): string {
-  if (verified > 0) return `Verified findings: ${verified}`;
-  if (manualReview > 0) return `Manual review required: ${manualReview}`;
-  if (pending > 0) return `Pending items: ${pending}`;
-  return "No confirmed findings yet";
+function resultConclusion(verified: number, pending: number, manualReview: number, t: TFunction): string {
+  if (verified > 0) return t("risk.conclusion_verified", { count: String(verified) });
+  if (manualReview > 0) return t("risk.conclusion_manual", { count: String(manualReview) });
+  if (pending > 0) return t("risk.conclusion_pending", { count: String(pending) });
+  return t("risk.conclusion_none");
 }
 
-function actionCardFromSignal(signal: string): ActionCard {
+function actionCardFromSignal(signal: string, t: TFunction): ActionCard {
   const normalized = signal.toLowerCase();
   if (normalized.includes("report")) {
-    return {
-      title: "Generate report",
-      copy: "Package the current assessment into Markdown or HTML.",
-      tone: "primary",
-    };
+    return { title: t("risk.action_generate_report"), copy: t("risk.action_generate_report_copy"), tone: "primary" };
   }
   if (normalized.includes("boundary") || normalized.includes("constraint")) {
-    return {
-      title: "Review scope",
-      copy: "Check host, port, path, and action limits.",
-      tone: "safe",
-    };
+    return { title: t("risk.action_review_scope"), copy: t("risk.action_review_scope_copy"), tone: "safe" };
   }
   if (normalized.includes("verify") || normalized.includes("manual")) {
-    return {
-      title: "Manual review",
-      copy: "Confirm high-value lines before expanding verification.",
-      tone: "warn",
-    };
+    return { title: t("risk.action_manual_review"), copy: t("risk.action_manual_review_copy"), tone: "warn" };
   }
   if (normalized.includes("scan") || normalized.includes("recon")) {
-    return {
-      title: "Continue scanning",
-      copy: "Keep collecting entry points and weak signals.",
-      tone: "primary",
-    };
+    return { title: t("risk.action_continue_scan"), copy: t("risk.action_continue_scan_copy"), tone: "primary" };
   }
-  return {
-    title: signal,
-    copy: "Follow the current recovery plan.",
-    tone: "primary",
-  };
+  return { title: signal, copy: t("risk.action_default_copy"), tone: "primary" };
 }
 
-function buildActionCards(actions: string[], pending: number, manualReview: number): ActionCard[] {
-  const cards = actions.slice(0, 6).map(actionCardFromSignal);
+function buildActionCards(actions: string[], pending: number, manualReview: number, t: TFunction): ActionCard[] {
+  const cards = actions.slice(0, 6).map((s) => actionCardFromSignal(s, t));
   if (!cards.length && (pending > 0 || manualReview > 0)) {
-    cards.push({
-      title: "Review pending items",
-      copy: "Resolve pending evidence before generating the final report.",
-      tone: "warn",
-    });
+    cards.push({ title: t("risk.action_review_pending"), copy: t("risk.action_review_pending_copy"), tone: "warn" });
   }
   if (!cards.length) {
-    cards.push({
-      title: "Generate report",
-      copy: "No next step is selected yet.",
-      tone: "safe",
-    });
+    cards.push({ title: t("risk.action_generate_default"), copy: t("risk.action_generate_default_copy"), tone: "safe" });
   }
   return cards;
 }
 
 export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, onOpenReports, onOpenBoundary }: RiskResultsPageProps) {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const targetsQuery = useTargetsQuery();
   const [localTarget, setLocalTarget] = useState("");
@@ -185,7 +159,7 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
   const target = targetQuery.data;
   const preview = previewQuery.data;
 
-  const findings = useMemo(() => extractFindingCards(target?.raw?.findings), [target]);
+  const findings = useMemo(() => extractFindingCards(target?.raw?.findings, t), [target, t]);
   const criticalOrHigh = findings.filter((item) => severityTone(item.severity) === "danger").length;
   const uniqueTypes = Array.from(new Set(findings.map((item) => item.type).filter(Boolean))).slice(0, 4);
   const portSignals = Array.from(new Set(findings.map((item) => {
@@ -198,8 +172,8 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
   );
   const nextActions = preview?.next_actions ?? [];
   const actionCards = useMemo(
-    () => buildActionCards(nextActions, target?.pending_count ?? 0, target?.manual_review_count ?? 0),
-    [nextActions, target?.pending_count, target?.manual_review_count],
+    () => buildActionCards(nextActions, target?.pending_count ?? 0, target?.manual_review_count ?? 0, t),
+    [nextActions, target?.pending_count, target?.manual_review_count, t],
   );
 
   async function handleGenerateReport() {
@@ -211,7 +185,7 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
       setGeneratedReport({ format: reportFormat, path: result.path });
       await queryClient.invalidateQueries({ queryKey: ["reports"] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Report generation failed");
+      setError(err instanceof Error ? err.message : t("error.report_failed"));
     } finally {
       setGenerating(false);
     }
@@ -220,11 +194,11 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
   return (
     <section className="risk-page">
       <SectionCard
-        title="Findings"
-        aside={<span className="status-badge">{target ? formatPhaseLabel(target.phase) : "Waiting"}</span>}
+        title={t("risk.findings")}
+        aside={<span className="status-badge">{target ? formatPhaseLabel(target.phase) : t("risk.waiting")}</span>}
       >
         <label className="field">
-          <span>Target</span>
+          <span>{t("risk.target")}</span>
           <select
             value={targetValue ?? ""}
             onChange={(event) => {
@@ -235,7 +209,7 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
               setError(null);
             }}
           >
-            <option value="">Select a target</option>
+            <option value="">{t("risk.select_target")}</option>
             {targetsQuery.data?.map((item) => (
               <option key={item.target} value={item.target}>
                 {item.target}
@@ -247,83 +221,83 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
         {target ? (
           <>
             <div className="goby-scan-summary">
-              <button type="button" className="text-btn inline-text-btn" onClick={onOpenHome}>« Back</button>
-              <strong>Scan</strong>
+              <button type="button" className="text-btn inline-text-btn" onClick={onOpenHome}>{t("risk.back")}</button>
+              <strong>{t("risk.scan")}</strong>
             </div>
 
             <div className="stats-grid goby-metric-grid">
               <article className="stat goby-metric-card">
-                <span className="stat-label">Asset</span>
+                <span className="stat-label">{t("risk.asset")}</span>
                 <strong>{Math.max(1, targetsQuery.data?.length ?? 0)}</strong>
               </article>
               <article className="stat goby-metric-card">
-                <span className="stat-label">Active IP</span>
+                <span className="stat-label">{t("risk.active_ip")}</span>
                 <strong>{targetValue ? 1 : 0}</strong>
               </article>
               <article className="stat goby-metric-card">
-                <span className="stat-label">Port</span>
+                <span className="stat-label">{t("risk.port")}</span>
                 <strong>{portSignals.length || target.pending_count}</strong>
               </article>
               <article className="stat goby-metric-card">
-                <span className="stat-label">Vulnerability</span>
+                <span className="stat-label">{t("risk.vulnerability")}</span>
                 <strong>{target.verified_count + target.pending_count}</strong>
               </article>
             </div>
 
             <div className="goby-intel-grid">
               <article className="goby-intel-card">
-                <header><strong>Hardware</strong><span>✓</span></header>
+                <header><strong>{t("risk.hardware")}</strong><span>✓</span></header>
                 <div className="goby-donut"><span>{Math.max(1, targetsQuery.data?.length ?? 0)}</span></div>
-                <p>{targetValue ?? "No asset"} 100%</p>
+                <p>{targetValue ?? t("risk.no_target_selected")} 100%</p>
               </article>
               <article className="goby-intel-card">
-                <header><strong>Software</strong><span>✓</span></header>
+                <header><strong>{t("risk.software")}</strong><span>✓</span></header>
                 <div className="goby-donut goby-donut-soft"><span>{uniqueTypes.length || findings.length}</span></div>
-                {(uniqueTypes.length ? uniqueTypes : ["Recon", "Scan", "Verify"]).slice(0, 3).map((item) => <p key={item}>{item}</p>)}
+                {(uniqueTypes.length ? uniqueTypes : [t("phase.recon"), t("phase.scan"), t("phase.verify")]).slice(0, 3).map((item) => <p key={item}>{item}</p>)}
               </article>
               <article className="goby-intel-card">
-                <header><strong>Port</strong><span>✓</span></header>
+                <header><strong>{t("risk.port")}</strong><span>✓</span></header>
                 {(portSignals.length ? portSignals : ["443", "80", "22"]).slice(0, 5).map((port) => (
                   <div key={port} className="goby-bar-row"><span>{port}</span><i /></div>
                 ))}
               </article>
               <article className="goby-intel-card goby-intel-danger">
-                <header><strong>Vulnerability</strong><span>✓</span></header>
+                <header><strong>{t("risk.vulnerability")}</strong><span>✓</span></header>
                 {findings.length ? findings.slice(0, 4).map((finding) => (
                   <p key={finding.id}>{finding.title}</p>
-                )) : <p>{resultConclusion(target.verified_count, target.pending_count, target.manual_review_count)}</p>}
+                )) : <p>{resultConclusion(target.verified_count, target.pending_count, target.manual_review_count, t)}</p>}
               </article>
             </div>
 
             <div className="button-row">
               <button type="button" className="primary-btn" disabled={generating} onClick={handleGenerateReport}>
-                {generating ? "Generating..." : "Generate report"}
+                {generating ? t("risk.generating") : t("risk.generate_report")}
               </button>
               <button type="button" className="secondary-btn" onClick={() => onOpenReports()}>
-                Open reports
+                {t("risk.open_reports")}
               </button>
               <button type="button" className="secondary-btn" onClick={onOpenBoundary}>
-                Open scope
+                {t("risk.open_scope")}
               </button>
             </div>
 
             {generatedReport && (
               <div className="report-delivery-card risk-delivery-card">
                 <div>
-                  <span>Status</span>
-                  <strong>Report generated</strong>
+                  <span>{t("risk.status")}</span>
+                  <strong>{t("risk.report_generated")}</strong>
                 </div>
                 <div>
-                  <span>Format</span>
+                  <span>{t("risk.format")}</span>
                   <strong>{generatedReport.format === "html" ? "HTML" : "Markdown"}</strong>
                 </div>
                 <div>
-                  <span>Path</span>
+                  <span>{t("risk.path")}</span>
                   <strong>{generatedReport.path}</strong>
                 </div>
                 <div className="risk-delivery-action">
                   <button className="primary-btn" onClick={() => onOpenReports(generatedReport.path)} type="button">
-                    Open report
+                    {t("risk.open_report")}
                   </button>
                 </div>
               </div>
@@ -333,11 +307,11 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
         ) : (
           <div className="goby-empty-results">
             <div className="goby-scan-summary">
-              <button type="button" className="text-btn inline-text-btn" onClick={onOpenHome}>« Back</button>
-              <strong>Scan</strong>
+              <button type="button" className="text-btn inline-text-btn" onClick={onOpenHome}>{t("risk.back")}</button>
+              <strong>{t("risk.scan")}</strong>
             </div>
             <div className="stats-grid goby-metric-grid">
-              {["Asset", "Active IP", "Port", "Vulnerability"].map((label) => (
+              {[t("risk.asset"), t("risk.active_ip"), t("risk.port"), t("risk.vulnerability")].map((label) => (
                 <article key={label} className="stat goby-metric-card">
                   <span className="stat-label">{label}</span>
                   <strong>0</strong>
@@ -345,7 +319,7 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
               ))}
             </div>
             <div className="goby-intel-grid">
-              {["Hardware", "Hardware Vendor", "Software", "Software Vendor"].map((label) => (
+              {[t("risk.hardware"), t("risk.hardware_vendor"), t("risk.software"), t("risk.software_vendor")].map((label) => (
                 <article key={label} className="goby-intel-card">
                   <header><strong>{label}</strong><span>○</span></header>
                   <div className="goby-placeholder-lines">
@@ -357,10 +331,10 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
               ))}
             </div>
             <div className="empty-state risk-empty-state">
-              <strong>{targetQuery.isLoading ? "Loading target..." : "No target selected"}</strong>
+              <strong>{targetQuery.isLoading ? t("risk.loading_target") : t("risk.no_target_selected")}</strong>
               {!targetQuery.isLoading && (
                 <button className="secondary-btn" type="button" onClick={onOpenHome}>
-                  New scan
+                  {t("risk.new_scan")}
                 </button>
               )}
             </div>
@@ -370,7 +344,7 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
 
       {target && (
         <div className="split-grid">
-          <SectionCard title="Findings">
+          <SectionCard title={t("risk.findings")}>
             <div className="risk-list">
               {findings.length ? (
                 findings.map((finding) => (
@@ -384,39 +358,39 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
                     </div>
                     <div className="risk-detail-grid">
                       <div>
-                        <strong>Type</strong>
+                        <strong>{t("risk.type")}</strong>
                         <span>{finding.type}</span>
                       </div>
                       <div>
-                        <strong>Evidence</strong>
+                        <strong>{t("risk.evidence")}</strong>
                         <span>{finding.evidence}</span>
                       </div>
                       <div>
-                        <strong>Impact</strong>
+                        <strong>{t("risk.impact")}</strong>
                         <span>{finding.impact}</span>
                       </div>
                       <div>
-                        <strong>Fix</strong>
+                        <strong>{t("risk.fix")}</strong>
                         <span>{finding.recommendation}</span>
                       </div>
                     </div>
                   </article>
                 ))
               ) : (
-                <div className="empty-state">No structured findings yet.</div>
+                <div className="empty-state">{t("risk.no_findings")}</div>
               )}
             </div>
           </SectionCard>
 
-          <SectionCard title="Next">
+          <SectionCard title={t("risk.next")}>
             <div className="list dense-list">
               <div className="list-item">
-                <strong>Resume plan</strong>
+                <strong>{t("risk.resume_plan")}</strong>
                 <span>{formatResumeStrategy(target.resume_strategy || preview?.resume_strategy)}</span>
-                <span className="muted-inline">{target.resume_reason || preview?.resume_reason || "No reason recorded"}</span>
+                <span className="muted-inline">{target.resume_reason || preview?.resume_reason || t("risk.no_reason")}</span>
               </div>
               <div className="list-item">
-                <strong>Recommended actions</strong>
+                <strong>{t("risk.recommended_actions")}</strong>
                 <div className="risk-action-grid">
                   {actionCards.map((item) => (
                     <article key={`${item.title}-${item.copy}`} className={`risk-action-card risk-action-card-${item.tone}`}>
@@ -427,15 +401,15 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
                 </div>
               </div>
               <div className="list-item">
-                <strong>Priority targets</strong>
+                <strong>{t("risk.priority_targets")}</strong>
                 {preview?.priority_targets.length ? (
                   preview.priority_targets.slice(0, 6).map((item) => <span key={item}>{item}</span>)
                 ) : (
-                  <span className="muted-inline">No priority targets.</span>
+                  <span className="muted-inline">{t("risk.no_priority")}</span>
                 )}
               </div>
               <div className="list-item">
-                <strong>Scope</strong>
+                <strong>{t("risk.scope")}</strong>
                 <span className="muted-inline">{formatConstraintSummary(target.constraints)}</span>
               </div>
             </div>
@@ -445,10 +419,10 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
 
       {target && (
         <SectionCard
-          title="Raw data"
+          title={t("risk.raw_data")}
           aside={
             <button type="button" className="text-btn inline-text-btn" onClick={() => setShowRaw((value) => !value)}>
-              {showRaw ? "Collapse" : "Expand"}
+              {showRaw ? t("risk.collapse") : t("risk.expand")}
             </button>
           }
         >
@@ -457,7 +431,7 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
               <pre>{JSON.stringify(target.raw, null, 2)}</pre>
             </div>
           ) : (
-            <div className="empty-state">Raw state collapsed.</div>
+            <div className="empty-state">{t("risk.raw_collapsed")}</div>
           )}
         </SectionCard>
       )}

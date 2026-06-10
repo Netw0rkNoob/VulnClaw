@@ -13,6 +13,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { TaskConsolePage } from "./pages/TaskConsolePage";
 import { createTask, openTaskStream, stopTask } from "./api/web";
 import { useConfigQuery } from "./hooks/queries";
+import { useT, type TFunction } from "./i18n";
 import type { TaskCommand, TaskEvent, TaskOptions, TaskRecord, TaskSummary } from "./types/api";
 import { formatTaskTitle } from "./utils/taskLabels";
 
@@ -25,43 +26,45 @@ interface ReportFocus {
   openPreview?: boolean;
 }
 
-const VIEW_META: Record<AppView, { eyebrow: string; title: string; copy: string }> = {
-  home: {
-    eyebrow: "SCAN",
-    title: "New Scan",
-    copy: "Enter a target and start.",
-  },
-  risk: {
-    eyebrow: "RESULTS",
-    title: "Findings",
-    copy: "Verified risks and evidence.",
-  },
-  reports: {
-    eyebrow: "REPORTS",
-    title: "Reports",
-    copy: "Preview and export.",
-  },
-  boundary: {
-    eyebrow: "SCOPE",
-    title: "Boundary",
-    copy: "Scope limits and blocked actions.",
-  },
-  history: {
-    eyebrow: "LOG",
-    title: "History",
-    copy: "Tasks and snapshots.",
-  },
-  settings: {
-    eyebrow: "CONFIG",
-    title: "Settings",
-    copy: "Runtime defaults.",
-  },
-  advanced: {
-    eyebrow: "CONTROL",
-    title: "Task Console",
-    copy: "Raw task controls.",
-  },
-};
+function buildViewMeta(t: TFunction): Record<AppView, { eyebrow: string; title: string; copy: string }> {
+  return {
+    home: {
+      eyebrow: t("view.scan.eyebrow"),
+      title: t("view.scan.title"),
+      copy: t("view.scan.copy"),
+    },
+    risk: {
+      eyebrow: t("view.findings.eyebrow"),
+      title: t("view.findings.title"),
+      copy: t("view.findings.copy"),
+    },
+    reports: {
+      eyebrow: t("view.reports.eyebrow"),
+      title: t("view.reports.title"),
+      copy: t("view.reports.copy"),
+    },
+    boundary: {
+      eyebrow: t("view.scope.eyebrow"),
+      title: t("view.scope.title"),
+      copy: t("view.scope.copy"),
+    },
+    history: {
+      eyebrow: t("view.history.eyebrow"),
+      title: t("view.history.title"),
+      copy: t("view.history.copy"),
+    },
+    settings: {
+      eyebrow: t("view.settings.eyebrow"),
+      title: t("view.settings.title"),
+      copy: t("view.settings.copy"),
+    },
+    advanced: {
+      eyebrow: t("view.console.eyebrow"),
+      title: t("view.console.title"),
+      copy: t("view.console.copy"),
+    },
+  };
+}
 
 const HASH_TO_VIEW: Record<string, AppView> = {
   home: "home",
@@ -85,6 +88,7 @@ function viewHash(view: AppView): string {
 export function App() {
   const configQuery = useConfigQuery();
   const queryClient = useQueryClient();
+  const { t } = useT();
   const [activeView, setActiveView] = useState<AppView>(() => viewFromHash());
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [activeTask, setActiveTask] = useState<TaskRecord | null>(null);
@@ -94,16 +98,18 @@ export function App() {
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
+  const VIEW_META = useMemo(() => buildViewMeta(t), [t]);
+
   const nav = useMemo(
     () => [
-      { key: "home" as const, label: "Scan", description: "", icon: "/icons/sidebar/scan.svg" },
-      { key: "risk" as const, label: "Findings", description: "", icon: "/icons/sidebar/findings.svg" },
-      { key: "reports" as const, label: "Reports", description: "", icon: "/icons/sidebar/reports.svg" },
-      { key: "boundary" as const, label: "Scope", description: "", icon: "/icons/sidebar/scope.svg" },
-      { key: "history" as const, label: "History", description: "", icon: "/icons/sidebar/history.svg" },
-      { key: "settings" as const, label: "Settings", description: "", icon: "/icons/sidebar/settings.svg" },
+      { key: "home" as const, label: t("nav.scan"), description: "", icon: "/icons/sidebar/scan.svg" },
+      { key: "risk" as const, label: t("nav.findings"), description: "", icon: "/icons/sidebar/findings.svg" },
+      { key: "reports" as const, label: t("nav.reports"), description: "", icon: "/icons/sidebar/reports.svg" },
+      { key: "boundary" as const, label: t("nav.scope"), description: "", icon: "/icons/sidebar/scope.svg" },
+      { key: "history" as const, label: t("nav.history"), description: "", icon: "/icons/sidebar/history.svg" },
+      { key: "settings" as const, label: t("nav.settings"), description: "", icon: "/icons/sidebar/settings.svg" },
     ],
-    [],
+    [t],
   );
 
   const latestEvent = taskEvents.length > 0 ? taskEvents[taskEvents.length - 1] : null;
@@ -168,10 +174,10 @@ export function App() {
         refreshTaskData(summary?.target ?? activeTask.target);
         pushToast(
           "success",
-          "Task finished",
-          "Review the risk results or generate a report.",
+          t("toast.task_finished"),
+          t("toast.task_finished_copy"),
           {
-            actionLabel: "Open results",
+            actionLabel: t("toast.open_results"),
             onAction: () => {
               setSelectedTarget(summary?.target ?? activeTask.target);
               navigateToView("risk");
@@ -182,15 +188,15 @@ export function App() {
       if (event.event === "task_failed") {
         setActiveTask((prev) => (prev && prev.task_id === event.task_id ? { ...prev, status: "failed" } : prev));
         refreshTaskData(activeTask.target);
-        pushToast("error", "Task failed", String(event.payload.message ?? event.payload.error ?? "Check advanced logs."), {
-          actionLabel: "Open console",
+        pushToast("error", t("toast.task_failed"), String(event.payload.message ?? event.payload.error ?? t("toast.task_failed_copy")), {
+          actionLabel: t("toast.open_console"),
           onAction: () => navigateToView("advanced"),
         });
       }
       if (event.event === "task_stopped") {
         setActiveTask((prev) => (prev && prev.task_id === event.task_id ? { ...prev, status: "stopped" } : prev));
         refreshTaskData(activeTask.target);
-        pushToast("info", "Task stopped", "Saved state and reports remain available.");
+        pushToast("info", t("toast.task_stopped"), t("toast.task_stopped_copy"));
       }
     });
     return () => source.close();
@@ -201,7 +207,7 @@ export function App() {
     setActiveTask(task);
     setSelectedTarget(task.target);
     setTaskEvents([]);
-    pushToast("success", "Task started", formatTaskTitle(task.command, task.target));
+    pushToast("success", t("toast.task_started"), formatTaskTitle(task.command, task.target));
     return task;
   }
 
@@ -210,7 +216,7 @@ export function App() {
     await stopTask(activeTask.task_id);
     setActiveTask((prev) => (prev ? { ...prev, status: "stopped" } : prev));
     refreshTaskData(activeTask.target);
-    pushToast("info", "Stop request sent", "VulnClaw is ending the current task.");
+    pushToast("info", t("toast.stop_sent"), t("toast.stop_sent_copy"));
   }
 
   function openBoundaryForActiveTask() {
@@ -240,12 +246,12 @@ export function App() {
     navigateToView(view);
   }
 
-  const quickActions: ShellAction[] = [
-    { label: "New scan", glyph: "+", active: activeView === "home", onClick: () => navigateToView("home") },
-    { label: "History", glyph: "T", active: activeView === "history", onClick: () => navigateToView("history") },
-    { label: "Reports", glyph: "R", active: activeView === "reports", onClick: () => openReports(activeTask?.target ?? selectedTarget) },
+  const quickActions: ShellAction[] = useMemo(() => [
+    { label: t("quick.new_scan"), glyph: "+", active: activeView === "home", onClick: () => navigateToView("home") },
+    { label: t("quick.history"), glyph: "T", active: activeView === "history", onClick: () => navigateToView("history") },
+    { label: t("quick.reports"), glyph: "R", active: activeView === "reports", onClick: () => openReports(activeTask?.target ?? selectedTarget) },
     {
-      label: "Assets",
+      label: t("quick.assets"),
       glyph: "A",
       active: activeView === "risk",
       onClick: () => {
@@ -254,32 +260,32 @@ export function App() {
       },
     },
     {
-      label: "Scope",
+      label: t("quick.scope"),
       glyph: "IP",
       active: activeView === "boundary",
       onClick: openBoundaryForActiveTask,
     },
     {
-      label: "Findings",
+      label: t("quick.findings"),
       glyph: "!",
       active: activeView === "risk",
       onClick: () => navigateToView("risk"),
     },
-    { label: "Console", glyph: "C", active: activeView === "advanced", onClick: () => navigateToView("advanced") },
+    { label: t("nav.console"), glyph: "C", active: activeView === "advanced", onClick: () => navigateToView("advanced") },
     {
-      label: "Refresh",
+      label: t("quick.refresh"),
       glyph: "F",
       onClick: () => refreshTaskData(activeTask?.target ?? selectedTarget),
     },
-  ];
+  ], [t, activeView, activeTask?.target, selectedTarget]);
 
-  const sidebarActions: ShellAction[] = [
+  const sidebarActions: ShellAction[] = useMemo(() => [
     hasStoppableTask
-      ? { label: "Stop task", glyph: "ST", onClick: () => setStopConfirmOpen(true) }
-      : { label: "Home", glyph: "H", active: activeView === "home", onClick: () => navigateToView("home") },
-    { label: "Settings", glyph: "S", active: activeView === "settings", onClick: () => openSettings("basic") },
-    { label: "Console", glyph: "C", active: activeView === "advanced", onClick: () => navigateToView("advanced") },
-  ];
+      ? { label: t("quick.stop_task"), glyph: "ST", onClick: () => setStopConfirmOpen(true) }
+      : { label: t("quick.home"), glyph: "H", active: activeView === "home", onClick: () => navigateToView("home") },
+    { label: t("nav.settings"), glyph: "S", active: activeView === "settings", onClick: () => openSettings("basic") },
+    { label: t("nav.console"), glyph: "C", active: activeView === "advanced", onClick: () => navigateToView("advanced") },
+  ], [t, hasStoppableTask, activeView]);
 
   return (
     <AppShell
@@ -377,10 +383,10 @@ export function App() {
 
       <ConfirmDialog
         open={stopConfirmOpen}
-        title="Stop current scan?"
-        copy="Stopping will end the current task, but saved state and reports will remain available."
+        title={t("confirm.stop_scan_title")}
+        copy={t("confirm.stop_scan_copy")}
         tone="danger"
-        confirmLabel="Stop task"
+        confirmLabel={t("confirm.stop_task_label")}
         onCancel={() => setStopConfirmOpen(false)}
         onConfirm={() => {
           setStopConfirmOpen(false);

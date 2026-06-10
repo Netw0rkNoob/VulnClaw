@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { t } from "../i18n";
 
 interface AppErrorBoundaryProps {
   children: ReactNode;
@@ -25,18 +26,16 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     return (
       <main className="app-fallback-page">
         <section className="app-fallback-card">
-          <span className="pill">UI guard</span>
-          <h1>VulnClaw UI hit a rendering error</h1>
-          <p>
-            Saved targets, reports, and task history remain intact. Reload the UI, then continue from History or Reports.
-          </p>
+          <span className="pill">{t("error_boundary.kicker")}</span>
+          <h1>{t("error_boundary.title")}</h1>
+          <p>{t("error_boundary.copy")}</p>
           <div className="app-fallback-actions">
             <button className="primary-btn" type="button" onClick={() => window.location.reload()}>
-              Reload UI
+              {t("error_boundary.reload")}
             </button>
           </div>
           <details>
-            <summary>Technical error</summary>
+            <summary>{t("error_boundary.technical")}</summary>
             <pre>{this.state.error.message}</pre>
           </details>
         </section>

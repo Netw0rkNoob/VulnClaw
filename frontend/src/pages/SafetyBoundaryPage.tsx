@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { SectionCard } from "../components/SectionCard";
 import { useConstraintAuditQuery, useTargetQuery, useTargetsQuery } from "../hooks/queries";
+import { useT, type TFunction } from "../i18n";
 import type { ConstraintAuditEventView, TaskOptions, TaskRecord } from "../types/api";
 import { loadUiPreferences, subscribeUiPreferences, type BoundaryDefaults } from "../utils/preferences";
 import { countConstraintViolations, formatActionList, formatPhaseLabel, formatSeverityLabel } from "../utils/taskLabels";
@@ -36,22 +37,22 @@ function stringifyValue(key: string, value: unknown): string {
   return "";
 }
 
-function boundaryLabel(key: string): string {
+function boundaryLabel(key: string, t: TFunction): string {
   const labels: Record<string, string> = {
-    only_host: "Host only",
-    only_path: "Path only",
-    only_port: "Port only",
-    allowed_hosts: "Host only",
-    allowed_paths: "Path only",
-    allowed_ports: "Port only",
-    blocked_host: "Block host",
-    blocked_path: "Block path",
-    blocked_hosts: "Block host",
-    blocked_paths: "Block path",
-    allow_actions: "Allow actions",
-    allowed_actions: "Allow actions",
-    block_actions: "Block actions",
-    blocked_actions: "Block actions",
+    only_host: t("boundary.host_only"),
+    only_path: t("boundary.path_only"),
+    only_port: t("boundary.port_only"),
+    allowed_hosts: t("boundary.host_only"),
+    allowed_paths: t("boundary.path_only"),
+    allowed_ports: t("boundary.port_only"),
+    blocked_host: t("boundary.block_host"),
+    blocked_path: t("boundary.block_path"),
+    blocked_hosts: t("boundary.block_host"),
+    blocked_paths: t("boundary.block_path"),
+    allow_actions: t("boundary.allow_actions"),
+    allowed_actions: t("boundary.allow_actions"),
+    block_actions: t("boundary.block_actions"),
+    blocked_actions: t("boundary.block_actions"),
   };
   return labels[key] ?? key;
 }
@@ -75,11 +76,11 @@ function normalizeConstraints(constraints: Record<string, unknown> | undefined):
   };
 }
 
-function buildBoundaryChips(constraints: Record<string, unknown> | undefined): BoundaryChip[] {
+function buildBoundaryChips(constraints: Record<string, unknown> | undefined, t: TFunction): BoundaryChip[] {
   if (!constraints) return [];
   return Object.entries(normalizeConstraints(constraints))
     .map(([key, value]) => ({
-      label: boundaryLabel(key),
+      label: boundaryLabel(key, t),
       value: stringifyValue(key, value),
       tone: boundaryTone(key),
     }))
@@ -117,13 +118,13 @@ function hasConstraintValue(value: unknown): boolean {
   return value !== undefined && value !== null && value !== false;
 }
 
-function boundaryReadiness(constraints: Record<string, unknown> | undefined): BoundaryReadiness {
+function boundaryReadiness(constraints: Record<string, unknown> | undefined, t: TFunction): BoundaryReadiness {
   const normalized = normalizeConstraints(constraints);
   if (!Object.values(normalized).some(hasConstraintValue)) {
     return {
       tone: "warn",
-      title: "Add a scope boundary",
-      copy: "No explicit host, port, path, or action limits are set.",
+      title: t("boundary.readiness_add_scope"),
+      copy: t("boundary.readiness_add_scope_desc"),
     };
   }
 
@@ -133,21 +134,21 @@ function boundaryReadiness(constraints: Record<string, unknown> | undefined): Bo
   if (hasPreciseScope && hasActionBoundary) {
     return {
       tone: "ok",
-      title: "Scope is clear",
-      copy: "Target and action boundaries are both defined.",
+      title: t("boundary.readiness_clear"),
+      copy: t("boundary.readiness_clear_desc"),
     };
   }
 
   return {
     tone: "warn",
-    title: "Boundary is active",
-    copy: hasPreciseScope ? "Add action limits for tighter control." : "Add a host, port, or path boundary for precision.",
+    title: t("boundary.readiness_active"),
+    copy: hasPreciseScope ? t("boundary.readiness_active_need_actions") : t("boundary.readiness_active_need_scope"),
   };
 }
 
-function formatTime(value: string): string {
+function formatTime(value: string, t: TFunction): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value || "Unknown";
+  if (Number.isNaN(date.getTime())) return value || t("boundary.unknown");
   return date.toLocaleString();
 }
 
@@ -159,6 +160,7 @@ function eventTone(event: ConstraintAuditEventView): "danger" | "warn" | "info" 
 }
 
 export function SafetyBoundaryPage({ selectedTarget, activeTask, onOpenHome, onOpenSettings, onSelectTarget }: SafetyBoundaryPageProps) {
+  const { t } = useT();
   const targetsQuery = useTargetsQuery();
   const auditQuery = useConstraintAuditQuery();
   const [localTarget, setLocalTarget] = useState("");
@@ -190,10 +192,10 @@ export function SafetyBoundaryPage({ selectedTarget, activeTask, onOpenHome, onO
     ? activeTaskConstraints
     : target?.constraints;
   const displayedConstraintsSource = activeTaskMatchesTarget && Object.values(activeTaskConstraints).some(hasConstraintValue)
-    ? "Active task"
-    : "Saved target";
-  const chips = useMemo(() => buildBoundaryChips(displayedConstraints), [displayedConstraints]);
-  const defaultChips = useMemo(() => buildBoundaryChips(defaultConstraints), [defaultConstraints]);
+    ? t("boundary.active_task_source")
+    : t("boundary.saved_target_source");
+  const chips = useMemo(() => buildBoundaryChips(displayedConstraints, t), [displayedConstraints, t]);
+  const defaultChips = useMemo(() => buildBoundaryChips(defaultConstraints, t), [defaultConstraints, t]);
   const targetEvents = useMemo(() => {
     const selected = targetValue;
     const events = audit?.recent_events ?? [];
@@ -201,17 +203,17 @@ export function SafetyBoundaryPage({ selectedTarget, activeTask, onOpenHome, onO
   }, [audit?.recent_events, targetValue]);
   const blockedCount = countConstraintViolations(target?.constraint_violation_events, target?.constraint_violations, targetEvents.length);
   const highSeverityCount = targetEvents.filter((event) => eventTone(event) === "danger").length;
-  const readiness = useMemo(() => boundaryReadiness(displayedConstraints), [displayedConstraints]);
-  const defaultReadiness = useMemo(() => boundaryReadiness(defaultConstraints), [defaultConstraints]);
+  const readiness = useMemo(() => boundaryReadiness(displayedConstraints, t), [displayedConstraints, t]);
+  const defaultReadiness = useMemo(() => boundaryReadiness(defaultConstraints, t), [defaultConstraints, t]);
 
   return (
     <section className="boundary-page">
       <SectionCard
-        title="Boundary"
-        aside={<span className="status-badge">{blockedCount} blocked</span>}
+        title={t("boundary.title")}
+        aside={<span className="status-badge">{t("boundary.blocked", { count: String(blockedCount) })}</span>}
       >
         <label className="field">
-          <span>Target</span>
+          <span>{t("boundary.target")}</span>
           <select
             value={targetValue ?? ""}
             onChange={(event) => {
@@ -220,7 +222,7 @@ export function SafetyBoundaryPage({ selectedTarget, activeTask, onOpenHome, onO
               onSelectTarget(value);
             }}
           >
-            <option value="">All targets</option>
+            <option value="">{t("boundary.all_targets")}</option>
             {targetsQuery.data?.map((item) => (
               <option key={item.target} value={item.target}>
                 {item.target}
@@ -231,37 +233,37 @@ export function SafetyBoundaryPage({ selectedTarget, activeTask, onOpenHome, onO
 
         <div className="boundary-hero">
           <div>
-            <span className="pill">Boundary watch</span>
-            <h3>{blockedCount > 0 ? "Blocked boundary attempts" : "No blocked attempts yet"}</h3>
+            <span className="pill">{t("boundary.watch")}</span>
+            <h3>{blockedCount > 0 ? t("boundary.blocked_attempts") : t("boundary.no_blocked")}</h3>
           </div>
           <div className="boundary-shield">
             <strong>{blockedCount}</strong>
-            <span>blocked</span>
+            <span>{t("boundary.blocked_label")}</span>
           </div>
         </div>
 
         <div className="stats-grid">
           <article className="stat">
-            <span className="stat-label">Audit hits</span>
+            <span className="stat-label">{t("boundary.audit_hits")}</span>
             <strong>{audit?.total_events ?? 0}</strong>
           </article>
           <article className="stat">
-            <span className="stat-label">High severity</span>
+            <span className="stat-label">{t("boundary.high_severity")}</span>
             <strong>{audit?.high_severity_events ?? 0}</strong>
           </article>
           <article className="stat">
-            <span className="stat-label">Current high</span>
+            <span className="stat-label">{t("boundary.current_high")}</span>
             <strong>{highSeverityCount}</strong>
           </article>
           <article className="stat">
-            <span className="stat-label">Rules</span>
+            <span className="stat-label">{t("boundary.rules")}</span>
             <strong>{chips.length}</strong>
           </article>
         </div>
       </SectionCard>
 
       <div className="split-grid">
-        <SectionCard title="Current scope" aside={<span className="status-badge">{displayedConstraintsSource}</span>}>
+        <SectionCard title={t("boundary.current_scope")} aside={<span className="status-badge">{displayedConstraintsSource}</span>}>
           <div className={`boundary-readiness boundary-readiness-${readiness.tone}`}>
             <strong>{readiness.title}</strong>
             <span>{readiness.copy}</span>
@@ -274,10 +276,10 @@ export function SafetyBoundaryPage({ selectedTarget, activeTask, onOpenHome, onO
               </div>
             )) : (
               <div className="empty-state boundary-empty-state">
-                <span>{targetQuery.isLoading ? "Loading target boundary..." : "No extra scope is set for this target."}</span>
+                <span>{targetQuery.isLoading ? t("boundary.loading_target") : t("boundary.no_scope_set")}</span>
                 {!targetQuery.isLoading && (
                   <button className="secondary-btn" type="button" onClick={onOpenHome}>
-                    Set scope on home
+                    {t("boundary.set_scope_home")}
                   </button>
                 )}
               </div>
@@ -285,7 +287,7 @@ export function SafetyBoundaryPage({ selectedTarget, activeTask, onOpenHome, onO
           </div>
         </SectionCard>
 
-        <SectionCard title="Defaults">
+        <SectionCard title={t("boundary.defaults")}>
           <div className={`boundary-readiness boundary-readiness-${defaultReadiness.tone}`}>
             <strong>{defaultReadiness.title}</strong>
             <span>{defaultReadiness.copy}</span>
@@ -298,97 +300,97 @@ export function SafetyBoundaryPage({ selectedTarget, activeTask, onOpenHome, onO
               </div>
             )) : (
               <div className="empty-state boundary-empty-state">
-                <span>No saved default boundary yet.</span>
+                <span>{t("boundary.no_defaults")}</span>
                 <button className="secondary-btn" type="button" onClick={onOpenSettings}>
-                  Open settings
+                  {t("boundary.open_settings")}
                 </button>
               </div>
             )}
           </div>
         </SectionCard>
 
-        <SectionCard title="Notes">
+        <SectionCard title={t("boundary.notes")}>
           <div className="boundary-explain-list">
             <div className="boundary-explain-item">
-              <strong>Checked every run</strong>
-              <span>Port, host, path, and action limits are revalidated before execution.</span>
+              <strong>{t("boundary.note_checked")}</strong>
+              <span>{t("boundary.note_checked_desc")}</span>
             </div>
             <div className="boundary-explain-item">
-              <strong>Blocked attempts are saved</strong>
-              <span>Stops are written to audit data for later review.</span>
+              <strong>{t("boundary.note_saved")}</strong>
+              <span>{t("boundary.note_saved_desc")}</span>
             </div>
             <div className="boundary-explain-item">
-              <strong>Deeper runs need tighter scope</strong>
-              <span>Deep or continuous modes work best with explicit boundaries.</span>
+              <strong>{t("boundary.note_deeper")}</strong>
+              <span>{t("boundary.note_deeper_desc")}</span>
             </div>
           </div>
         </SectionCard>
       </div>
 
-      <SectionCard title="Blocked attempts">
+      <SectionCard title={t("boundary.blocked_attempts_title")}>
         <div className="boundary-timeline">
           {targetEvents.length ? (
             targetEvents.map((event, index) => (
               <article key={`${event.timestamp}-${event.code}-${index}`} className={`boundary-event boundary-event-${eventTone(event)}`}>
                 <div className="boundary-event-time">
-                  <span>{formatTime(event.timestamp)}</span>
+                  <span>{formatTime(event.timestamp, t)}</span>
                 </div>
                 <div className="boundary-event-body">
                   <div className="boundary-event-head">
-                    <strong>{event.summary || "Blocked attempt"}</strong>
+                    <strong>{event.summary || t("boundary.blocked_attempt")}</strong>
                     <span className={`severity-badge severity-${eventTone(event)}`}>{formatSeverityLabel(event.severity)}</span>
                   </div>
-                  <p>{event.detail || "The action did not match the current boundary."}</p>
+                  <p>{event.detail || t("boundary.blocked_attempt_default")}</p>
                   <div className="boundary-event-meta">
-                    <span>Target: {event.target || "Unknown"}</span>
-                    <span>Action: {formatActionList(event.action ? [event.action] : undefined, "Unrecorded")}</span>
-                    <span>Tool: {event.tool_name || "Unrecorded"}</span>
-                    <span>Phase: {formatPhaseLabel(event.phase)}</span>
+                    <span>{t("home.target")}: {event.target || t("boundary.unknown")}</span>
+                    <span>{t("boundary.allow_actions")}: {formatActionList(event.action ? [event.action] : undefined, t("boundary.unrecorded"))}</span>
+                    <span>Tool: {event.tool_name || t("boundary.unrecorded")}</span>
+                    <span>{t("phase.none")}: {formatPhaseLabel(event.phase)}</span>
                   </div>
                 </div>
               </article>
             ))
           ) : (
-            <div className="empty-state">No blocked attempts recorded.</div>
+            <div className="empty-state">{t("boundary.no_blocked_recorded")}</div>
           )}
         </div>
       </SectionCard>
 
       <SectionCard
-        title="Technical audit"
+        title={t("boundary.technical_audit")}
         aside={
           <button type="button" className="text-btn inline-text-btn" onClick={() => setShowTechnical((value) => !value)}>
-            {showTechnical ? "Hide" : "Show"}
+            {showTechnical ? t("boundary.hide") : t("boundary.show")}
           </button>
         }
       >
         {showTechnical ? (
           <div className="split-grid no-top-gap">
             <article className="inset-card compact-card">
-              <h4>By source</h4>
+              <h4>{t("boundary.by_source")}</h4>
               <div className="list">
                 {audit && Object.entries(audit.by_source).length ? Object.entries(audit.by_source).map(([key, value]) => (
                   <div key={key} className="list-item">
                     <strong>{key}</strong>
                     <span>{value}</span>
                   </div>
-                )) : <div className="empty-state">No source data.</div>}
+                )) : <div className="empty-state">{t("boundary.no_source")}</div>}
               </div>
             </article>
             <article className="inset-card compact-card">
-              <h4>By rule</h4>
+              <h4>{t("boundary.by_rule")}</h4>
               <div className="list">
                 {audit && Object.entries(audit.by_code).length ? Object.entries(audit.by_code).map(([key, value]) => (
                   <div key={key} className="list-item">
                     <strong>{key}</strong>
                     <span>{value}</span>
                   </div>
-                )) : <div className="empty-state">No rule data.</div>}
+                )) : <div className="empty-state">{t("boundary.no_rule")}</div>}
               </div>
             </article>
           </div>
         ) : (
-          <div className="empty-state">Technical audit hidden.</div>
+          <div className="empty-state">{t("boundary.technical_hidden")}</div>
         )}
       </SectionCard>
     </section>

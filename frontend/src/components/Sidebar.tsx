@@ -1,3 +1,5 @@
+import { useT } from "../i18n";
+
 export interface NavItem<T extends string> {
   key: T;
   label: string;
@@ -22,6 +24,8 @@ interface SidebarProps<T extends string> {
 }
 
 export function Sidebar<T extends string>({ activeView, activeNavView = activeView, nav, footerActions, onSelectView }: SidebarProps<T>) {
+  const { t } = useT();
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -29,9 +33,9 @@ export function Sidebar<T extends string>({ activeView, activeNavView = activeVi
           <img src="/icons/sidebar/brand-shield.svg" alt="" aria-hidden="true" />
         </div>
         <div>
-          <div className="brand-kicker">VulnClaw</div>
-          <h1>VulnClaw</h1>
-          <p>Attack surface mapping</p>
+          <div className="brand-kicker">{t("brand.name")}</div>
+          <h1>{t("brand.name")}</h1>
+          <p>{t("brand.tagline")}</p>
         </div>
       </div>
 

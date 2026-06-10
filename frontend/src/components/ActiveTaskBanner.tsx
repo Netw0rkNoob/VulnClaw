@@ -1,3 +1,4 @@
+import { useT, type TFunction } from "../i18n";
 import type { TaskEvent, TaskRecord } from "../types/api";
 import { countConstraintViolations, formatEventLabel, formatPhaseLabel, formatTaskTitle } from "../utils/taskLabels";
 
@@ -11,14 +12,14 @@ interface ActiveTaskBannerProps {
   onStop: () => void;
 }
 
-function eventText(event: TaskEvent | null): string {
-  if (!event) return "Waiting for task events.";
+function eventText(event: TaskEvent | null, t: TFunction): string {
+  if (!event) return t("banner.waiting");
   const text = event.payload.text;
   const message = event.payload.message;
   const phase = event.payload.phase;
   if (typeof text === "string" && text.trim()) return text;
   if (typeof message === "string" && message.trim()) return message;
-  if (typeof phase === "string" && phase.trim()) return `Phase: ${formatPhaseLabel(phase)}`;
+  if (typeof phase === "string" && phase.trim()) return `${t("phase.none")}: ${formatPhaseLabel(phase)}`;
   return formatEventLabel(event.event);
 }
 
@@ -59,6 +60,8 @@ function blockedAttempts(task: TaskRecord, event: TaskEvent | null): number {
 }
 
 export function ActiveTaskBanner({ task, latestEvent, onOpenAdvanced, onOpenBoundary, onOpenReports, onOpenTarget, onStop }: ActiveTaskBannerProps) {
+  const { t } = useT();
+
   if (!task) return null;
 
   const progress = estimateProgress(task, latestEvent);
@@ -71,33 +74,33 @@ export function ActiveTaskBanner({ task, latestEvent, onOpenAdvanced, onOpenBoun
     <section className={`task-banner task-banner-${task.status}`}>
       <div className="task-banner-main">
         <div>
-          <span className="task-banner-kicker">Active scan</span>
+          <span className="task-banner-kicker">{t("banner.active_scan")}</span>
           <h3>{formatTaskTitle(task.command, task.target)}</h3>
-          <p>{eventText(latestEvent)}</p>
+          <p>{eventText(latestEvent, t)}</p>
         </div>
         <div className="task-banner-actions">
           <button type="button" className="secondary-btn" onClick={() => onOpenTarget(task.target)}>
-            Results
+            {t("banner.results")}
           </button>
           <button
             type="button"
             className={`secondary-btn ${blocked > 0 ? "boundary-alert-btn" : ""}`}
             onClick={onOpenBoundary}
-            aria-label={blocked > 0 ? `View ${blocked} blocked boundary attempts` : "View safety boundary"}
+            aria-label={blocked > 0 ? t("banner.blocked_count", { count: String(blocked) }) : t("banner.boundary")}
           >
-            {blocked > 0 ? `${blocked} blocked` : "Boundary"}
+            {blocked > 0 ? t("banner.blocked_count", { count: String(blocked) }) : t("banner.boundary")}
           </button>
           {isFailed ? (
             <button type="button" className="danger-btn" onClick={onOpenAdvanced}>
-              Open console
+              {t("banner.open_console")}
             </button>
           ) : isComplete ? (
             <button type="button" className="primary-btn" onClick={onOpenReports}>
-              Reports
+              {t("banner.reports")}
             </button>
           ) : (
             <button type="button" className="danger-btn" disabled={!canStop} onClick={onStop}>
-              Stop
+              {t("banner.stop")}
             </button>
           )}
         </div>

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { createTask, stopTask } from "../api/web";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useTasksQuery } from "../hooks/queries";
+import { useT, type TFunction } from "../i18n";
 import type { TaskCommand, TaskEvent, TaskOptions, TaskRecord } from "../types/api";
 import {
   formatActionLabel,
@@ -15,13 +16,15 @@ import {
 } from "../utils/taskLabels";
 import { parseOptionalPort } from "../utils/validation";
 
-const ACTION_OPTIONS = [
-  { value: "recon", copy: "Asset discovery and public signal collection." },
-  { value: "scan", copy: "Service and entry-point discovery." },
-  { value: "exploit", copy: "Verification actions requiring approval." },
-  { value: "persistent", copy: "Multi-round continuous checks." },
-  { value: "post_exploitation", copy: "Post-exploitation actions, usually blocked." },
-];
+function buildActionOptions(t: TFunction) {
+  return [
+    { value: "recon", copy: t("home.action_recon_copy") },
+    { value: "scan", copy: t("home.action_scan_copy") },
+    { value: "exploit", copy: t("home.action_exploit_copy") },
+    { value: "persistent", copy: t("home.action_persistent_copy") },
+    { value: "post_exploitation", copy: t("home.action_post_exploit_copy") },
+  ];
+}
 
 interface TaskConsolePageProps {
   activeTask: TaskRecord | null;
@@ -37,6 +40,8 @@ export function TaskConsolePage({
   onTaskCreated,
   onFocusTarget,
 }: TaskConsolePageProps) {
+  const { t } = useT();
+  const ACTION_OPTIONS = useMemo(() => buildActionOptions(t), [t]);
   const tasksQuery = useTasksQuery();
   const [command, setCommand] = useState<TaskCommand>("persistent");
   const [target, setTarget] = useState("");
@@ -69,13 +74,11 @@ export function TaskConsolePage({
     allow_actions: allowActions.length ? allowActions : undefined,
     block_actions: blockActions.length ? blockActions : undefined,
   });
-  const runConfirmCopy = [
-    "You are starting a raw task from the advanced console.",
-    `Target: ${target.trim() || "Not set"}`,
-    `Command: ${formatTaskCommand(command)} (${command})`,
-    `Scope: ${scopePreview}`,
-    "Confirm the target is authorized and the scope is correct.",
-  ].join("\n");
+  const runConfirmCopy = t("console.confirm_raw_copy", {
+    target: target.trim() || t("home.confirm_not_set"),
+    command: `${formatTaskCommand(command)} (${command})`,
+    scope: scopePreview,
+  });
 
   function renderEventText(item: TaskEvent): string {
     const payload = item.payload;
@@ -138,7 +141,7 @@ export function TaskConsolePage({
       }
       void handleRun();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid task parameters");
+      setError(err instanceof Error ? err.message : t("error.invalid_task_params"));
     }
   }
 
@@ -151,7 +154,7 @@ export function TaskConsolePage({
       onFocusTarget(task.target);
       await tasksQuery.refetch();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create task");
+      setError(err instanceof Error ? err.message : t("error.failed_to_start"));
     } finally {
       setSubmitting(false);
     }
@@ -163,7 +166,7 @@ export function TaskConsolePage({
       await stopTask(activeTask.task_id);
       await tasksQuery.refetch();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to stop task");
+      setError(err instanceof Error ? err.message : t("error.stop_failed"));
     }
   }
 
@@ -171,72 +174,72 @@ export function TaskConsolePage({
     <section className="card">
       <header className="card-header">
         <div>
-          <h3>Task Console</h3>
-          <p>Raw command inputs, SSE events, and advanced task parameters.</p>
+          <h3>{t("console.title")}</h3>
+          <p>{t("console.description")}</p>
         </div>
         <span className="status-badge">{formatTaskStatus(activeTask?.status)}</span>
       </header>
 
       <div className="form-grid">
         <label className="field">
-          <span>Command</span>
+          <span>{t("console.command")}</span>
           <select value={command} onChange={(event) => setCommand(event.target.value as TaskCommand)}>
-            <option value="run">Standard Scan</option>
-            <option value="recon">Quick Recon</option>
-            <option value="scan">Deep Scan</option>
-            <option value="exploit">Verification</option>
-            <option value="persistent">Continuous Scan</option>
+            <option value="run">{t("command.run")}</option>
+            <option value="recon">{t("command.recon")}</option>
+            <option value="scan">{t("command.scan")}</option>
+            <option value="exploit">{t("command.exploit")}</option>
+            <option value="persistent">{t("command.persistent")}</option>
           </select>
-          <small>API command: {command}</small>
+          <small>{t("console.api_command", { command })}</small>
         </label>
 
         <label className="field field-wide">
-          <span>Target</span>
+          <span>{t("console.target")}</span>
           <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="https://target.example" />
         </label>
 
         <label className="check-row">
           <input checked={resume} onChange={(event) => setResume(event.target.checked)} type="checkbox" />
-          <span>Resume target state</span>
+          <span>{t("console.resume_state")}</span>
         </label>
         <label className="field">
-          <span>Max rounds</span>
-          <input type="number" value={maxRounds} onChange={(event) => setMaxRounds(event.target.value ? Number(event.target.value) : "")} placeholder="Backend default" />
+          <span>{t("console.max_rounds")}</span>
+          <input type="number" value={maxRounds} onChange={(event) => setMaxRounds(event.target.value ? Number(event.target.value) : "")} placeholder={t("console.backend_default")} />
         </label>
         <label className="field">
-          <span>Rounds per cycle</span>
-          <input type="number" value={roundsPerCycle} onChange={(event) => setRoundsPerCycle(event.target.value ? Number(event.target.value) : "")} placeholder="Continuous only" />
+          <span>{t("console.rounds_per_cycle")}</span>
+          <input type="number" value={roundsPerCycle} onChange={(event) => setRoundsPerCycle(event.target.value ? Number(event.target.value) : "")} placeholder={t("console.continuous_only")} />
         </label>
         <label className="field">
-          <span>Max cycles</span>
-          <input type="number" value={maxCycles} onChange={(event) => setMaxCycles(event.target.value ? Number(event.target.value) : "")} placeholder="Continuous only" />
+          <span>{t("console.max_cycles")}</span>
+          <input type="number" value={maxCycles} onChange={(event) => setMaxCycles(event.target.value ? Number(event.target.value) : "")} placeholder={t("console.continuous_only")} />
         </label>
         <label className="field">
-          <span>CVE hint</span>
+          <span>{t("console.cve_hint")}</span>
           <input value={cve} onChange={(event) => setCve(event.target.value)} placeholder="CVE-2024-xxxx" />
         </label>
         <label className="field">
-          <span>Port only</span>
+          <span>{t("console.port_only")}</span>
           <input inputMode="numeric" value={onlyPort} onChange={(event) => setOnlyPort(event.target.value)} placeholder="443" />
         </label>
         <label className="field">
-          <span>Host only</span>
+          <span>{t("console.host_only")}</span>
           <input value={onlyHost} onChange={(event) => setOnlyHost(event.target.value)} placeholder="example.com" />
         </label>
         <label className="field field-wide">
-          <span>Path only</span>
+          <span>{t("console.path_only")}</span>
           <input value={onlyPath} onChange={(event) => setOnlyPath(event.target.value)} placeholder="/admin" />
         </label>
         <label className="field">
-          <span>Block host</span>
+          <span>{t("console.block_host")}</span>
           <input value={blockedHost} onChange={(event) => setBlockedHost(event.target.value)} placeholder="staging.example.com" />
         </label>
         <label className="field">
-          <span>Block path</span>
+          <span>{t("console.block_path")}</span>
           <input value={blockedPath} onChange={(event) => setBlockedPath(event.target.value)} placeholder="/internal" />
         </label>
         <div className="field field-wide">
-          <span>Allow actions</span>
+          <span>{t("console.allow_actions")}</span>
           <div className="action-choice-grid">
             {ACTION_OPTIONS.map((action) => (
               <button
@@ -250,10 +253,10 @@ export function TaskConsolePage({
               </button>
             ))}
           </div>
-          <small>{formatActionList(allowActions, "No explicit allow list")}</small>
+          <small>{formatActionList(allowActions, t("console.no_allow_list"))}</small>
         </div>
         <div className="field field-wide">
-          <span>Block actions</span>
+          <span>{t("console.block_actions")}</span>
           <div className="action-choice-grid">
             {ACTION_OPTIONS.map((action) => (
               <button
@@ -267,20 +270,20 @@ export function TaskConsolePage({
               </button>
             ))}
           </div>
-          <small>{formatActionList(blockActions, "No explicit block list")}</small>
+          <small>{formatActionList(blockActions, t("console.no_block_list"))}</small>
         </div>
         <label className="field field-wide">
-          <span>Command hint</span>
+          <span>{t("console.command_hint")}</span>
           <input value={cmd} onChange={(event) => setCmd(event.target.value)} placeholder="verification command, for example id" />
         </label>
       </div>
 
       <div className="button-row">
         <button className="primary-btn" disabled={submitting || !target.trim()} onClick={handleRunRequest} type="button">
-          {submitting ? "Launching..." : "Launch raw task"}
+          {submitting ? t("console.launching") : t("console.launch_raw")}
         </button>
         <button className="secondary-btn" disabled={!activeTask || activeTask.status !== "running"} onClick={() => setConfirmStopOpen(true)} type="button">
-          Stop task
+          {t("console.stop_task")}
         </button>
       </div>
 
@@ -288,10 +291,10 @@ export function TaskConsolePage({
 
       <ConfirmDialog
         open={confirmRunOpen}
-        title="Confirm raw task"
+        title={t("console.confirm_raw_title")}
         copy={runConfirmCopy}
         tone="danger"
-        confirmLabel="Launch"
+        confirmLabel={t("console.launch")}
         onCancel={() => setConfirmRunOpen(false)}
         onConfirm={() => {
           setConfirmRunOpen(false);
@@ -301,10 +304,13 @@ export function TaskConsolePage({
 
       <ConfirmDialog
         open={confirmStopOpen}
-        title="Stop current task"
-        copy={`The current task will stop. Saved target state and reports remain available.\nTarget: ${activeTask?.target ?? "Unknown"}\nTask: ${activeTask ? formatTaskTitle(activeTask.command, activeTask.target) : "None"}`}
+        title={t("console.confirm_stop_title")}
+        copy={t("console.confirm_stop_copy", {
+          target: activeTask?.target ?? t("boundary.unknown"),
+          task: activeTask ? formatTaskTitle(activeTask.command, activeTask.target) : "None",
+        })}
         tone="danger"
-        confirmLabel="Stop"
+        confirmLabel={t("console.stop")}
         onCancel={() => setConfirmStopOpen(false)}
         onConfirm={() => {
           setConfirmStopOpen(false);
@@ -314,7 +320,7 @@ export function TaskConsolePage({
 
       <div className="split-grid inner-grid">
         <article className="card inset-card">
-          <h4>Task log</h4>
+          <h4>{t("console.task_log")}</h4>
           <div className="list list-scroll">
             {tasksQuery.data?.slice(0, 8).map((task) => (
               <button
@@ -334,25 +340,25 @@ export function TaskConsolePage({
                 )}
               </button>
             ))}
-            {!tasksQuery.data?.length && <div className="empty-state">No tasks yet.</div>}
+            {!tasksQuery.data?.length && <div className="empty-state">{t("console.no_tasks")}</div>}
           </div>
         </article>
 
         <article className="card inset-card">
-          <h4>Live event stream</h4>
+          <h4>{t("console.live_events")}</h4>
           <div className="terminal terminal-scroll">
             {activeTask ? (
               <>
-                <div className="terminal-line">Task ID: {activeTask.task_id}</div>
-                <div className="terminal-line">Command: {formatTaskCommand(activeTask.command)} ({activeTask.command})</div>
-                <div className="terminal-line">Target: {activeTask.target}</div>
-                <div className="terminal-line dim">Phase: {formatPhaseLabel(activeTask.latest_phase)}</div>
+                <div className="terminal-line">{t("console.task_id", { id: activeTask.task_id })}</div>
+                <div className="terminal-line">{t("console.command_line", { command: formatTaskCommand(activeTask.command), raw: activeTask.command })}</div>
+                <div className="terminal-line">{t("console.target_line", { target: activeTask.target })}</div>
+                <div className="terminal-line dim">{t("console.phase_line", { phase: formatPhaseLabel(activeTask.latest_phase) })}</div>
                 {activeTask.summary?.constraints && Object.keys(activeTask.summary.constraints).length > 0 && (
-                  <div className="terminal-line dim">Boundary: {formatConstraintSummary(activeTask.summary.constraints)}</div>
+                  <div className="terminal-line dim">{t("console.boundary_line", { boundary: formatConstraintSummary(activeTask.summary.constraints) })}</div>
                 )}
               </>
             ) : (
-              <div className="terminal-line dim">No running task.</div>
+              <div className="terminal-line dim">{t("console.no_running")}</div>
             )}
 
             {latestEvents.map((item) => (

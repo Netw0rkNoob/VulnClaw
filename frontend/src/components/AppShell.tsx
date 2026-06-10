@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { TaskEvent, TaskRecord } from "../types/api";
+import { useT } from "../i18n";
 import { ActiveTaskBanner } from "./ActiveTaskBanner";
 import { Sidebar, type NavItem } from "./Sidebar";
 import { Topbar } from "./Topbar";
@@ -61,6 +62,8 @@ export function AppShell<T extends string>({
   onStopTask,
   children,
 }: AppShellProps<T>) {
+  const { t } = useT();
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -81,15 +84,15 @@ export function AppShell<T extends string>({
         {backendUnavailable && (
           <section className="connection-banner" role="status">
             <div>
-              <strong>Backend unavailable</strong>
+              <strong>{t("shell.backend_unavailable")}</strong>
               <span>
-                Start <code>vulnclaw web</code> and open the local address to load the live console.
+                {t("shell.backend_hint")}
               </span>
               {backendError && <small>{backendError}</small>}
             </div>
             {onRetryBackend && (
               <button className="secondary-btn" onClick={onRetryBackend} type="button">
-                Retry
+                {t("shell.retry")}
               </button>
             )}
           </section>

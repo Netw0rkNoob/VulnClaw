@@ -3,6 +3,7 @@ import { generateTargetReport, getReportDownloadUrl } from "../api/web";
 import { ReportPreview, ReportPreviewDialog } from "../components/ReportPreviewDialog";
 import { SectionCard } from "../components/SectionCard";
 import { useReportContentQuery, useReportsQuery, useTargetsQuery } from "../hooks/queries";
+import { useT, type TFunction } from "../i18n";
 import type { ReportListItem } from "../types/api";
 import { loadUiPreferences, subscribeUiPreferences } from "../utils/preferences";
 
@@ -16,6 +17,7 @@ interface ReportsPageProps {
 }
 
 export function ReportsPage({ selectedTarget, focus }: ReportsPageProps) {
+  const { t } = useT();
   const reportsQuery = useReportsQuery();
   const targetsQuery = useTargetsQuery();
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -75,7 +77,7 @@ export function ReportsPage({ selectedTarget, focus }: ReportsPageProps) {
   async function handleGenerate() {
     const target = reportTarget.trim();
     if (!target) {
-      setError("Select a target first.");
+      setError(t("error.select_target_first"));
       return;
     }
     try {
@@ -88,7 +90,7 @@ export function ReportsPage({ selectedTarget, focus }: ReportsPageProps) {
       setSelectedPath(result.path);
       setPreviewOpen(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Report generation failed");
+      setError(err instanceof Error ? err.message : t("error.report_failed"));
     } finally {
       setGenerating(false);
     }
@@ -98,9 +100,9 @@ export function ReportsPage({ selectedTarget, focus }: ReportsPageProps) {
     if (!selectedReport?.path) return;
     try {
       await navigator.clipboard.writeText(selectedReport.path);
-      setCopyStatus("Path copied.");
+      setCopyStatus(t("reports.path_copied"));
     } catch {
-      setCopyStatus("Clipboard unavailable.");
+      setCopyStatus(t("reports.clipboard_unavailable"));
     }
   }
 
@@ -117,7 +119,7 @@ export function ReportsPage({ selectedTarget, focus }: ReportsPageProps) {
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
-    setCopyStatus("Download started.");
+    setCopyStatus(t("reports.download_started"));
   }
 
   function handleOpenReportFile() {
@@ -135,23 +137,23 @@ export function ReportsPage({ selectedTarget, focus }: ReportsPageProps) {
   return (
     <section className="reports-page">
       <SectionCard
-        title="Reports"
-        aside={<span className="status-badge">{reports.length} files</span>}
+        title={t("reports.title")}
+        aside={<span className="status-badge">{t("reports.files", { count: String(reports.length) })}</span>}
       >
         <div className="report-hero">
           <div>
-            <span className="pill">Selected</span>
-            <h3>{selectedReport?.name ?? "No report selected"}</h3>
-            <p>{reportStatusCopy(selectedReport)}</p>
+            <span className="pill">{t("reports.selected")}</span>
+            <h3>{selectedReport?.name ?? t("reports.no_report_selected")}</h3>
+            <p>{reportStatusCopy(selectedReport, t)}</p>
           </div>
           <div className="report-actions">
             <label className="field report-target-field">
-              <span>Target</span>
+              <span>{t("reports.target")}</span>
               <input
                 list="report-targets"
                 value={reportTarget}
                 onChange={(event) => setReportTarget(event.target.value)}
-                placeholder="Select or enter target"
+                placeholder={t("reports.select_or_enter_target")}
               />
               <datalist id="report-targets">
                 {targetsQuery.data?.map((target) => (
@@ -160,53 +162,53 @@ export function ReportsPage({ selectedTarget, focus }: ReportsPageProps) {
               </datalist>
             </label>
             <label className="field report-format-field">
-              <span>Format</span>
+              <span>{t("reports.format")}</span>
               <select value={generateFormat} onChange={(event) => setGenerateFormat(event.target.value as "markdown" | "html")}>
-                <option value="markdown">Markdown</option>
-                <option value="html">HTML</option>
+                <option value="markdown">{t("reports.markdown")}</option>
+                <option value="html">{t("reports.html")}</option>
               </select>
             </label>
             <button className="primary-btn" disabled={!canGenerate} onClick={handleGenerate} type="button">
-              {generating ? "Generating..." : "Generate"}
+              {generating ? t("reports.generating") : t("reports.generate")}
             </button>
             <button className="secondary-btn" disabled={!selectedReport} onClick={() => setPreviewOpen(true)} type="button">
-              Preview
+              {t("reports.preview")}
             </button>
             <button className="secondary-btn" disabled={!selectedReport?.path} onClick={handleOpenReportFile} type="button">
-              Open file
+              {t("reports.open_file")}
             </button>
           </div>
         </div>
 
-        {status && <div className="success-box">Generated: {status}</div>}
+        {status && <div className="success-box">{t("reports.generated", { path: status })}</div>}
         {copyStatus && <div className="success-box">{copyStatus}</div>}
         {error && <div className="error-box">{error}</div>}
       </SectionCard>
 
       <div className="report-center-grid">
         <SectionCard
-          title="File list"
+          title={t("reports.file_list")}
           aside={<span className="status-badge">{filteredReports.length} / {reports.length}</span>}
         >
           <div className="report-filter-grid">
             <label className="field">
-              <span>Search</span>
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="target or filename" />
+              <span>{t("reports.search")}</span>
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("reports.search_placeholder")} />
             </label>
             <label className="field">
-              <span>Format</span>
+              <span>{t("reports.format_filter")}</span>
               <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as "all" | "markdown" | "html")}>
-                <option value="all">All</option>
-                <option value="markdown">Markdown</option>
-                <option value="html">HTML</option>
+                <option value="all">{t("reports.all")}</option>
+                <option value="markdown">{t("reports.markdown")}</option>
+                <option value="html">{t("reports.html")}</option>
               </select>
             </label>
             <label className="field">
-              <span>Time</span>
+              <span>{t("reports.time_filter")}</span>
               <select value={dateFilter} onChange={(event) => setDateFilter(event.target.value as "all" | "today" | "week")}>
-                <option value="all">All time</option>
-                <option value="today">Today</option>
-                <option value="week">Last 7 days</option>
+                <option value="all">{t("reports.all_time")}</option>
+                <option value="today">{t("reports.today")}</option>
+                <option value="week">{t("reports.last_7_days")}</option>
               </select>
             </label>
           </div>
@@ -219,24 +221,24 @@ export function ReportsPage({ selectedTarget, focus }: ReportsPageProps) {
                 onClick={() => setSelectedPath(report.path)}
               >
                 <strong>{report.name}</strong>
-                <span>{report.kind} - {formatSize(report.size_bytes ?? 0)}</span>
-                <span className="muted-inline">{formatDate(report.modified_at)}</span>
+                <span>{report.kind} - {formatSize(report.size_bytes ?? 0, t)}</span>
+                <span className="muted-inline">{formatDate(report.modified_at, t)}</span>
                 <span className="muted-inline">{report.path}</span>
               </button>
             ))}
             {!reports.length && (
               <div className="empty-state report-empty-state">
-                <strong>No reports yet</strong>
+                <strong>{t("reports.no_reports")}</strong>
                 <button className="secondary-btn" disabled={!canGenerate} onClick={handleGenerate} type="button">
-                  {generating ? "Generating..." : "Generate"}
+                  {generating ? t("reports.generating") : t("reports.generate")}
                 </button>
               </div>
             )}
             {Boolean(reports.length) && !filteredReports.length && (
               <div className="empty-state report-filter-empty-state">
-                <strong>No matches</strong>
+                <strong>{t("reports.no_matches")}</strong>
                 <button className="secondary-btn" onClick={resetReportFilters} type="button">
-                  Clear filters
+                  {t("reports.clear_filters")}
                 </button>
               </div>
             )}
@@ -244,20 +246,20 @@ export function ReportsPage({ selectedTarget, focus }: ReportsPageProps) {
         </SectionCard>
 
         <SectionCard
-          title="Preview"
+          title={t("reports.preview")}
           aside={
             <div className="report-preview-actions">
               <button className="text-btn inline-text-btn" disabled={!previewContent} onClick={handleDownload} type="button">
-                Export copy
+                {t("reports.export_copy")}
               </button>
               <button className="text-btn inline-text-btn" disabled={!selectedReport?.path} onClick={handleOpenReportFile} type="button">
-                Open file
+                {t("reports.open_file")}
               </button>
               <button className="text-btn inline-text-btn" disabled={!selectedReport?.path} onClick={() => void handleCopyPath()} type="button">
-                Copy path
+                {t("reports.copy_path")}
               </button>
               <button className="text-btn inline-text-btn" disabled={!selectedReport} onClick={() => setPreviewOpen(true)} type="button">
-                Expand
+                {t("reports.expand")}
               </button>
             </div>
           }
@@ -306,22 +308,22 @@ function matchesDateFilter(value: string | undefined, filter: "all" | "today" | 
   return date.getTime() >= weekAgo;
 }
 
-function formatDate(value: string | undefined): string {
-  if (!value) return "Unknown";
+function formatDate(value: string | undefined, t: TFunction): string {
+  if (!value) return t("reports.unknown_date");
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 }
 
-function formatSize(value: number): string {
-  if (!value) return "0 B";
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+function formatSize(value: number, t: TFunction): string {
+  if (!value) return `0 B`;
+  if (value < 1024) return t("reports.size_b", { size: String(value) });
+  if (value < 1024 * 1024) return t("reports.size_kb", { size: (value / 1024).toFixed(1) });
+  return t("reports.size_mb", { size: (value / 1024 / 1024).toFixed(1) });
 }
 
-function reportStatusCopy(report: ReportListItem | null): string {
-  if (!report) return "No report selected.";
-  const kind = report.kind === "html" ? "HTML report" : "Markdown report";
-  return `${kind} - ${formatSize(report.size_bytes ?? 0)} - ${formatDate(report.modified_at)}`;
+function reportStatusCopy(report: ReportListItem | null, t: TFunction): string {
+  if (!report) return t("reports.no_report_selected");
+  const kind = report.kind === "html" ? t("reports.html_report") : t("reports.markdown_report");
+  return t("reports.report_status", { kind, size: formatSize(report.size_bytes ?? 0, t), date: formatDate(report.modified_at, t) });
 }

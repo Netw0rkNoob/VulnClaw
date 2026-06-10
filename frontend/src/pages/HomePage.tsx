@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { TaskCommand, TaskEvent, TaskOptions, TaskRecord, TaskSummary } from "../types/api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { SectionCard } from "../components/SectionCard";
+import { useT, type TFunction } from "../i18n";
 import { loadUiPreferences, subscribeUiPreferences } from "../utils/preferences";
 import {
   countConstraintViolations,
@@ -27,57 +28,36 @@ interface HomePageProps {
   onOpenBoundary: () => void;
 }
 
-const MODES: Array<{
+interface ModeDef {
   key: CheckMode;
   title: string;
   copy: string;
   command: TaskCommand;
   allowActions?: string[];
   blockActions?: string[];
-}> = [
-  {
-    key: "quick",
-    title: "Quick",
-    copy: "Light discovery.",
-    command: "recon",
-    allowActions: ["recon"],
-    blockActions: ["exploit", "persistent"],
-  },
-  {
-    key: "standard",
-    title: "Standard",
-    copy: "Recommended scan.",
-    command: "run",
-    allowActions: ["recon", "scan"],
-    blockActions: ["post_exploitation"],
-  },
-  {
-    key: "deep",
-    title: "Deep",
-    copy: "More checks.",
-    command: "scan",
-    allowActions: ["recon", "scan", "exploit"],
-  },
-  {
-    key: "continuous",
-    title: "Loop",
-    copy: "Repeat scan.",
-    command: "persistent",
-    allowActions: ["recon", "scan", "persistent"],
-    blockActions: ["post_exploitation"],
-  },
-];
+}
 
-const ACTION_OPTIONS = [
-  { value: "recon", copy: "Asset discovery and public signal collection." },
-  { value: "scan", copy: "Service and entry-point identification." },
-  { value: "exploit", copy: "Verification actions that need explicit approval." },
-  { value: "persistent", copy: "Multi-round continuous checking." },
-  { value: "post_exploitation", copy: "Post-exploitation steps, usually blocked." },
-];
+function buildModes(t: TFunction): ModeDef[] {
+  return [
+    { key: "quick", title: t("home.mode_quick"), copy: t("home.mode_quick_copy"), command: "recon", allowActions: ["recon"], blockActions: ["exploit", "persistent"] },
+    { key: "standard", title: t("home.mode_standard"), copy: t("home.mode_standard_copy"), command: "run", allowActions: ["recon", "scan"], blockActions: ["post_exploitation"] },
+    { key: "deep", title: t("home.mode_deep"), copy: t("home.mode_deep_copy"), command: "scan", allowActions: ["recon", "scan", "exploit"] },
+    { key: "continuous", title: t("home.mode_loop"), copy: t("home.mode_loop_copy"), command: "persistent", allowActions: ["recon", "scan", "persistent"], blockActions: ["post_exploitation"] },
+  ];
+}
 
-function latestEventText(event: TaskEvent | null): string {
-  if (!event) return "Waiting for task events.";
+function buildActionOptions(t: TFunction) {
+  return [
+    { value: "recon", copy: t("home.action_recon_copy") },
+    { value: "scan", copy: t("home.action_scan_copy") },
+    { value: "exploit", copy: t("home.action_exploit_copy") },
+    { value: "persistent", copy: t("home.action_persistent_copy") },
+    { value: "post_exploitation", copy: t("home.action_post_exploit_copy") },
+  ];
+}
+
+function latestEventText(event: TaskEvent | null, t: TFunction): string {
+  if (!event) return t("home.waiting_events");
   const message = event.payload.message ?? event.payload.text;
   if (typeof message === "string" && message.trim()) return message;
   if (typeof event.payload.phase === "string" && event.payload.phase.trim()) {
@@ -97,11 +77,11 @@ function currentPhaseKey(task: TaskRecord | null, event: TaskEvent | null): stri
   return task.status === "running" ? "recon" : "scope";
 }
 
-function taskResultTitle(task: TaskRecord): string {
-  if (task.status === "completed") return "Scan complete";
-  if (task.status === "failed") return "Scan stopped by an error";
-  if (task.status === "stopped") return "Scan stopped";
-  return `Scanning ${task.target}`;
+function taskResultTitle(task: TaskRecord, t: TFunction): string {
+  if (task.status === "completed") return t("home.scan_complete");
+  if (task.status === "failed") return t("home.scan_error");
+  if (task.status === "stopped") return t("home.scan_stopped");
+  return t("home.scanning", { target: task.target });
 }
 
 function eventSummary(event: TaskEvent | null): TaskSummary | null {
@@ -117,8 +97,8 @@ function formatEventPayload(event: TaskEvent): string {
   return JSON.stringify(event.payload, null, 2);
 }
 
-function joinScopeItems(items: string[]): string {
-  return items.length ? items.join(" - ") : "Auto scope";
+function joinScopeItems(items: string[], t: TFunction): string {
+  return items.length ? items.join(" - ") : t("home.auto_scope");
 }
 
 function inferScopeFromTarget(value: string): { host: string; port: string; path: string } {
@@ -141,7 +121,10 @@ function uniqueActions(actions: Array<string | undefined>): string[] {
 }
 
 export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, onCreateTask, onOpenRisk, onOpenReports, onOpenBoundary }: HomePageProps) {
+  const { t } = useT();
   const preferences = loadUiPreferences();
+  const MODES = useMemo(() => buildModes(t), [t]);
+  const ACTION_OPTIONS = useMemo(() => buildActionOptions(t), [t]);
   const [target, setTarget] = useState(selectedTarget ?? "");
   const [mode, setMode] = useState<CheckMode>(() => preferences.defaultCheckMode);
   const [onlyPort, setOnlyPort] = useState(preferences.defaultBoundary.onlyPort);
@@ -183,12 +166,12 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
   const activeSummary = activeTask ? taskSummary(activeTask, latestEvent) : null;
   const boundaryBlockCount = countConstraintViolations(activeSummary?.constraint_violation_events, activeSummary?.constraint_violations);
   const scopePreview = joinScopeItems([
-    effectiveOnlyHost ? `host ${effectiveOnlyHost}${onlyHost.trim() ? "" : " (inferred)"}` : "",
-    effectiveOnlyPort ? `port ${effectiveOnlyPort}${onlyPort.trim() ? "" : " (inferred)"}` : "",
-    effectiveOnlyPath ? `path ${effectiveOnlyPath}${onlyPath.trim() ? "" : " (inferred)"}` : "",
-    blockedHost.trim() ? `block host ${blockedHost.trim()}` : "",
-    blockedPath.trim() ? `block path ${blockedPath.trim()}` : "",
-  ].filter(Boolean));
+    effectiveOnlyHost ? (onlyHost.trim() ? t("home.host_scope", { host: effectiveOnlyHost }) : t("home.host_scope_inferred", { host: effectiveOnlyHost })) : "",
+    effectiveOnlyPort ? (onlyPort.trim() ? t("home.port_scope", { port: effectiveOnlyPort }) : t("home.port_scope_inferred", { port: effectiveOnlyPort })) : "",
+    effectiveOnlyPath ? (onlyPath.trim() ? t("home.path_scope", { path: effectiveOnlyPath }) : t("home.path_scope_inferred", { path: effectiveOnlyPath })) : "",
+    blockedHost.trim() ? t("home.block_host_scope", { host: blockedHost.trim() }) : "",
+    blockedPath.trim() ? t("home.block_path_scope", { path: blockedPath.trim() }) : "",
+  ].filter(Boolean), t);
   const effectiveAllowActions = uniqueActions([...(allowActions.length ? allowActions : selectedMode.allowActions ?? []), selectedMode.command]);
   const effectiveBlockActions = uniqueActions(blockActions.length ? blockActions : selectedMode.blockActions ?? [])
     .filter((action) => action !== selectedMode.command);
@@ -196,10 +179,10 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
   const blockPreview = formatActionList(effectiveBlockActions);
   const requiresExtraCare = mode === "deep" || mode === "continuous";
   const confirmCopy = [
-    `Target: ${target.trim() || "Not set"}`,
-    `Mode: ${selectedMode.title}`,
-    `Scope: ${scopePreview}`,
-    requiresExtraCare ? "This scan may run longer." : "",
+    `${t("home.target")}: ${target.trim() || t("home.confirm_not_set")}`,
+    `${t("home.mode_label")}: ${selectedMode.title}`,
+    `${t("home.scope")}: ${scopePreview}`,
+    requiresExtraCare ? t("home.confirm_extra_care") : "",
   ].join("\n");
 
   function buildOptions(): TaskOptions {
@@ -234,7 +217,7 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
       setError(null);
       await onCreateTask(selectedMode.command, target.trim(), resume, buildOptions());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start task");
+      setError(err instanceof Error ? err.message : t("error.failed_to_start"));
     } finally {
       setSubmitting(false);
       setConfirmOpen(false);
@@ -245,12 +228,12 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
     try {
       parseOptionalPort(effectiveOnlyPort);
       if (mode === "continuous" && effectiveOnlyPath) {
-        setError("Continuous mode does not support a path-only scope.");
+        setError(t("home.continuous_no_path"));
         return;
       }
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid port format");
+      setError(err instanceof Error ? err.message : t("error.invalid_port"));
       return;
     }
     if (requiresExtraCare) {
@@ -262,11 +245,11 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
 
   const phaseKey = currentPhaseKey(activeTask, latestEvent);
   const phaseSteps = [
-    ["scope", "Scope"],
-    ["recon", "Recon"],
-    ["scan", "Scan"],
-    ["verify", "Verify"],
-    ["report", "Report"],
+    ["scope", t("phase.scope")],
+    ["recon", t("phase.recon")],
+    ["scan", t("phase.scan")],
+    ["verify", t("phase.verify")],
+    ["report", t("phase.report")],
   ] as const;
 
   return (
@@ -283,8 +266,8 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
             </div>
           </div>
           <div className="goby-welcome-copy">
-            <h2>Welcome to VulnClaw</h2>
-            <p>Attack surface mapping</p>
+            <h2>{t("home.welcome")}</h2>
+            <p>{t("home.tagline")}</p>
           </div>
           <button
             type="button"
@@ -292,21 +275,21 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
             disabled={submitting || !target.trim()}
             onClick={handleStart}
           >
-            {submitting ? "Starting" : "Scan"}
+            {submitting ? t("home.starting") : t("home.scan")}
           </button>
         </div>
 
         <div className="scan-launch goby-task-panel">
           <div className="goby-task-title">
             <span className="goby-task-icon">▣</span>
-            <strong>New Scan Task</strong>
-            <button type="button" className="text-btn inline-text-btn" onClick={() => setTarget("")} aria-label="Clear target">
+            <strong>{t("home.new_scan_task")}</strong>
+            <button type="button" className="text-btn inline-text-btn" onClick={() => setTarget("")} aria-label={t("home.clear_target")}>
               ×
             </button>
           </div>
           <div className="goby-task-form">
             <label className="field scan-target-field field-wide">
-              <span>IP/Domain</span>
+              <span>{t("home.ip_domain")}</span>
               <textarea
                 value={target}
                 onChange={(event) => setTarget(event.target.value)}
@@ -314,11 +297,11 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
               />
             </label>
             <label className="field field-wide">
-              <span>Black IP</span>
+              <span>{t("home.black_ip")}</span>
               <textarea value={blockedHost} onChange={(event) => setBlockedHost(event.target.value)} placeholder="192.0.2.10" />
             </label>
             <label className="field">
-              <span>Port</span>
+              <span>{t("home.port")}</span>
               <select value={mode} onChange={(event) => setMode(event.target.value as CheckMode)}>
                 {MODES.map((item) => (
                   <option key={item.key} value={item.key}>
@@ -328,7 +311,7 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
               </select>
             </label>
             <label className="field">
-              <span>Custom ports</span>
+              <span>{t("home.custom_ports")}</span>
               <input value={onlyPort} onChange={(event) => setOnlyPort(event.target.value)} inputMode="numeric" placeholder="21,22,80,443" />
             </label>
           </div>
@@ -350,11 +333,11 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
           <div className="scan-summary-row">
             <label className="check-row goby-printer-row">
               <input checked={resume} onChange={(event) => setResume(event.target.checked)} type="checkbox" />
-              <span>Resume previous state</span>
+              <span>{t("home.resume_previous")}</span>
             </label>
-            <span>{scopeCount ? `${scopeCount} bounds` : "Auto scope"}</span>
+            <span>{scopeCount ? t("home.bounds", { count: String(scopeCount) }) : t("home.auto_scope")}</span>
             <button type="button" className="text-btn inline-text-btn" onClick={() => setAdvancedOpen((value) => !value)}>
-              {advancedOpen ? "Hide advanced" : "Advanced"}
+              {advancedOpen ? t("home.hide_advanced") : t("home.advanced")}
             </button>
           </div>
 
@@ -364,49 +347,49 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
             disabled={submitting || !target.trim()}
             onClick={handleStart}
           >
-            {submitting ? "Starting..." : "Start"}
+            {submitting ? t("home.starting_btn") : t("home.start")}
           </button>
         </div>
       </div>
 
       {advancedOpen && (
-        <SectionCard title="Advanced">
+        <SectionCard title={t("home.advanced")}>
           <div className="form-grid compact-form">
             <label className="check-row">
               <input checked={resume} onChange={(event) => setResume(event.target.checked)} type="checkbox" />
-              <span>Resume previous state</span>
+              <span>{t("home.resume_previous")}</span>
             </label>
             <label className="field">
-              <span>Port</span>
+              <span>{t("home.port")}</span>
               <input value={onlyPort} onChange={(event) => setOnlyPort(event.target.value)} inputMode="numeric" placeholder="443" />
             </label>
             <label className="field">
-              <span>Host</span>
+              <span>{t("home.host")}</span>
               <input value={onlyHost} onChange={(event) => setOnlyHost(event.target.value)} placeholder="example.com" />
             </label>
             <label className="field">
-              <span>Path</span>
+              <span>{t("home.path")}</span>
               <input value={onlyPath} onChange={(event) => setOnlyPath(event.target.value)} placeholder="/admin" />
             </label>
             <label className="field">
-              <span>Block host</span>
+              <span>{t("home.block_host_field")}</span>
               <input value={blockedHost} onChange={(event) => setBlockedHost(event.target.value)} placeholder="staging.example.com" />
             </label>
             <label className="field">
-              <span>Block path</span>
+              <span>{t("home.block_path_field")}</span>
               <input value={blockedPath} onChange={(event) => setBlockedPath(event.target.value)} placeholder="/internal" />
             </label>
           </div>
           <div className="scope-summary">
-            <strong>Scope</strong>
+            <strong>{t("home.scope")}</strong>
             <span>{scopePreview}</span>
-            <strong>Allow</strong>
+            <strong>{t("home.allow")}</strong>
             <span>{allowPreview}</span>
-            <strong>Block</strong>
+            <strong>{t("home.block")}</strong>
             <span>{blockPreview}</span>
           </div>
           <details className="advanced-details">
-            <summary>Action rules</summary>
+            <summary>{t("home.action_rules")}</summary>
             <div className="action-boundary-panel">
               <div className="action-choice-grid">
                 {ACTION_OPTIONS.map((action) => (
@@ -439,16 +422,16 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
       )}
 
       {activeTask && (
-        <SectionCard title="Running" aside={<span className="status-badge">{formatTaskStatus(activeTask.status)}</span>}>
+        <SectionCard title={t("home.running")} aside={<span className="status-badge">{formatTaskStatus(activeTask.status)}</span>}>
           <div className="check-progress-card">
             <div className="check-progress-head">
               <div>
-                <span className="pill">Current task</span>
-                <h3>{taskResultTitle(activeTask)}</h3>
-                <p>{latestEventText(latestEvent)}</p>
+                <span className="pill">{t("home.current_task")}</span>
+                <h3>{taskResultTitle(activeTask, t)}</h3>
+                <p>{latestEventText(latestEvent, t)}</p>
               </div>
               <div className="check-progress-target">
-                <span>Target</span>
+                <span>{t("home.target")}</span>
                 <strong>{activeTask.target}</strong>
               </div>
             </div>
@@ -464,33 +447,33 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
               })}
             </div>
             <div className="next-actions">
-              <button type="button" className="primary-btn" onClick={onOpenRisk}>View results</button>
-              <button type="button" className="secondary-btn" onClick={onOpenReports}>View reports</button>
-              <button type="button" className="secondary-btn" onClick={onOpenBoundary}>View boundary</button>
+              <button type="button" className="primary-btn" onClick={onOpenRisk}>{t("home.view_results")}</button>
+              <button type="button" className="secondary-btn" onClick={onOpenReports}>{t("home.view_reports")}</button>
+              <button type="button" className="secondary-btn" onClick={onOpenBoundary}>{t("home.view_boundary")}</button>
             </div>
             {activeSummary && (
               <div className="stats-grid check-result-stats">
                 <article className="stat">
-                  <span className="stat-label">Verified</span>
+                  <span className="stat-label">{t("home.verified")}</span>
                   <strong>{activeSummary.verified_count}</strong>
                 </article>
                 <article className="stat">
-                  <span className="stat-label">Pending</span>
+                  <span className="stat-label">{t("home.pending")}</span>
                   <strong>{activeSummary.pending_count}</strong>
                 </article>
                 <article className="stat">
-                  <span className="stat-label">Boundary hits</span>
+                  <span className="stat-label">{t("home.boundary_hits")}</span>
                   <strong>{boundaryBlockCount}</strong>
                 </article>
                 <article className="stat">
-                  <span className="stat-label">Snapshot</span>
-                  <strong>{activeSummary.snapshot_id || "Saved"}</strong>
+                  <span className="stat-label">{t("home.snapshot")}</span>
+                  <strong>{activeSummary.snapshot_id || t("home.saved")}</strong>
                 </article>
               </div>
             )}
             <div className="technical-log-panel">
               <button type="button" className="text-btn technical-log-toggle" onClick={() => setTechnicalLogsOpen((value) => !value)}>
-                {technicalLogsOpen ? "Hide raw events" : "Show raw events"}
+                {technicalLogsOpen ? t("home.hide_raw_events") : t("home.show_raw_events")}
               </button>
               {technicalLogsOpen && (
                 <div className="technical-log-stream" aria-live="polite">
@@ -505,7 +488,7 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
                       </article>
                     ))
                   ) : (
-                    <div className="empty-state">No raw task events yet.</div>
+                    <div className="empty-state">{t("home.no_raw_events")}</div>
                   )}
                 </div>
               )}
@@ -516,9 +499,9 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Start deep scan?"
+        title={t("home.confirm_deep_title")}
         copy={confirmCopy}
-        confirmLabel="Start scan"
+        confirmLabel={t("home.confirm_scan_label")}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => {
           setConfirmOpen(false);
