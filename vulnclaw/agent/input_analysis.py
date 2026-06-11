@@ -84,6 +84,21 @@ def detect_target(user_input: str) -> Optional[str]:
     return None
 
 
+def _add_domain_variant(constraints: TaskConstraints, host: str) -> None:
+    """Add www/non-www variant of the host to allowed_hosts.
+
+    E.g. tutoubaby.com → also allow www.tutoubaby.com, and vice versa.
+    """
+    if host.startswith("www."):
+        bare = host[4:]
+        if bare not in constraints.allowed_hosts:
+            constraints.allowed_hosts.append(bare)
+    else:
+        www = f"www.{host}"
+        if www not in constraints.allowed_hosts:
+            constraints.allowed_hosts.append(www)
+
+
 def extract_task_constraints(user_input: str) -> TaskConstraints:
     """Extract structured hard constraints from natural-language user input."""
     text = user_input or ""
@@ -166,9 +181,11 @@ def extract_task_constraints(user_input: str) -> TaskConstraints:
                 host = host_match.group(1)
                 if host and host not in constraints.allowed_hosts:
                     constraints.allowed_hosts.append(host)
+                    _add_domain_variant(constraints, host)
         elif "." in target_lower:
             if target_lower not in constraints.allowed_hosts:
                 constraints.allowed_hosts.append(target_lower)
+                _add_domain_variant(constraints, target_lower)
 
     if (
         constraints.allowed_ports
