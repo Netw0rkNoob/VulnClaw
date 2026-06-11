@@ -50,12 +50,22 @@ async function readErrorDetail(response: Response): Promise<string> {
   try {
     const contentType = response.headers.get("content-type") ?? "";
     if (contentType.includes("application/json")) {
-      const payload = await response.json() as { detail?: unknown; message?: unknown; error?: unknown };
-      return summarizeErrorDetail(stringifyErrorValue(payload.detail ?? payload.message ?? payload.error));
+      const payload = await response.json() as { detail?: unknown; message?: unknown; error?: unknown; code?: unknown };
+      const rawDetail = payload.detail ?? payload.message ?? payload.error;
+      const code = payload.code;
+      const detailStr = stringifyErrorValue(rawDetail);
+      if (code) {
+        return `[${stringifyErrorValue(code)}] ${detailStr}`;
+      }
+      return summarizeErrorDetail(detailStr);
     }
-    return summarizeErrorDetail(await response.text());
+    const text = await response.text();
+    if (text) {
+      return summarizeErrorDetail(text);
+    }
+    return `Request failed with status ${response.status}`;
   } catch {
-    return "";
+    return `Request failed with status ${response.status}`;
   }
 }
 

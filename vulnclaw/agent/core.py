@@ -33,7 +33,7 @@ from vulnclaw.agent.input_analysis import (
     get_payload_examples,
 )
 from vulnclaw.agent.kb_context import build_kb_context
-from vulnclaw.agent.llm_client import call_llm
+from vulnclaw.agent.llm_client import StreamSink, call_llm
 from vulnclaw.agent.loop_controller import auto_pentest as run_auto_pentest
 from vulnclaw.agent.loop_controller import persistent_pentest as run_persistent_pentest
 from vulnclaw.agent.prompt_context import build_round_context, generate_attack_summary
@@ -256,7 +256,13 @@ class AgentCore:
 
     # ── Single-turn chat (for manual REPL interaction) ──────────────
 
-    async def chat(self, user_input: str, target: Optional[str] = None) -> AgentResult:
+    async def chat(
+        self,
+        user_input: str,
+        target: Optional[str] = None,
+        *,
+        stream_sink: Optional["StreamSink"] = None,
+    ) -> AgentResult:
         """Process a user message and return agent response (single turn).
 
         For multi-step tasks with targets, use auto_pentest() instead.
@@ -290,7 +296,7 @@ class AgentCore:
 
         # Call LLM
         try:
-            response_text = await call_llm(self, system_prompt)
+            response_text = await call_llm(self, system_prompt, stream_sink=stream_sink)
             result.output = response_text
 
             # Add assistant response to context

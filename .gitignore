@@ -35,6 +35,7 @@ Desktop.ini
 # VulnClaw runtime
 .vulnclaw/
 .workbuddy/
+.trae/
 sessions/
 reports/
 pocs/

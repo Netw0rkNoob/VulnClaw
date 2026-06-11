@@ -977,6 +977,23 @@ class TestAgentCore:
         assert "/admin" in constraints.allowed_paths
         assert constraints.strict_mode is True
 
+    def test_extract_task_constraints_url_with_trailing_dot_in_sentence(self):
+        """URL at end of sentence should not capture trailing period as part of host.
+
+        Regression test for issue #10: when a URL appears before a period ending
+        a sentence, detect_target() was capturing the period as part of the URL,
+        causing allowed_hosts to contain 'example.com.' with a trailing dot.
+        This then caused fetch scope checks to fail because urlparse().hostname
+        never returns a trailing dot per RFC 3986.
+        """
+        from vulnclaw.agent.input_analysis import extract_task_constraints
+
+        # The period after .com is sentence punctuation, not part of the URL
+        constraints = extract_task_constraints("对 http://example.com. 进行渗透测试")
+        assert "example.com" in constraints.allowed_hosts
+        # Must NOT contain trailing dot - urlparse().hostname never returns trailing dots
+        assert all(not h.endswith(".") for h in constraints.allowed_hosts)
+
     def test_round_context_includes_hard_constraints(self):
         from vulnclaw.agent.context import PentestPhase
 
@@ -1614,7 +1631,7 @@ class TestAgentCoreLoop:
         agent = self._make_agent()
         from vulnclaw.agent import loop_controller
 
-        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context):
+        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context, **kwargs):
             return "本轮未发现新漏洞，准备总结。\n[DONE]"
 
         monkeypatch.setattr(loop_controller, "call_llm_auto", _fake_call_llm_auto)
@@ -1636,7 +1653,7 @@ class TestAgentCoreLoop:
         ]
         call_idx = 0
 
-        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context):
+        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context, **kwargs):
             nonlocal call_idx
             text = round_responses[call_idx]
             call_idx += 1
@@ -1658,7 +1675,7 @@ class TestAgentCoreLoop:
         agent = self._make_agent()
         from vulnclaw.agent import loop_controller
 
-        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context):
+        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context, **kwargs):
             # Same wording every round, with an attack-path keyword
             return "尝试 sql注入测试，使用 UNION SELECT，未成功。"
 
@@ -1676,7 +1693,7 @@ class TestAgentCoreLoop:
         agent = self._make_agent()
         from vulnclaw.agent import loop_controller
 
-        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context):
+        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context, **kwargs):
             return "信息收集完成，切换到漏洞利用。\nphase: exploitation"
 
         monkeypatch.setattr(loop_controller, "call_llm_auto", _fake_call_llm_auto)
@@ -1722,7 +1739,7 @@ class TestAgentCoreLoop:
         agent = self._make_agent()
         from vulnclaw.agent import loop_controller
 
-        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context):
+        async def _fake_call_llm_auto(agent_obj, system_prompt, round_context, **kwargs):
             return "访问 https://victim.local/admin 访问失败，连接超时。"
 
         monkeypatch.setattr(loop_controller, "call_llm_auto", _fake_call_llm_auto)

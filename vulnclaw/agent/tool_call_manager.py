@@ -10,7 +10,8 @@ from typing import Any
 async def handle_tool_calls(agent: Any, message: Any) -> str:
     """Handle tool calls from the LLM response (legacy single-turn)."""
     results: list[str] = []
-    for tool_call in message.tool_calls:
+    # [修改] 2026-06-10 Nyaecho - 修复 tool_calls 属性访问问题，使用 getattr 防止 AttributeError
+    for tool_call in (getattr(message, "tool_calls", None) or []):
         func_name = tool_call.function.name
         func_args = safe_parse_tool_args(tool_call.function.arguments)
         tool_result = await agent._execute_mcp_tool(func_name, func_args)
@@ -25,7 +26,8 @@ async def handle_tool_calls_with_results(
     max_calls_per_round = 10
 
     seen: dict[str, dict[str, Any]] = {}
-    for tool_call in message.tool_calls:
+    # [修改] 2026-06-10 Nyaecho - 修复 tool_calls 属性访问问题，使用 getattr 防止 AttributeError
+    for tool_call in (getattr(message, "tool_calls", None) or []):
         func_name = tool_call.function.name
         func_args = safe_parse_tool_args(tool_call.function.arguments)
         args_key = json.dumps(func_args, sort_keys=True, ensure_ascii=False)
@@ -38,7 +40,8 @@ async def handle_tool_calls_with_results(
             }
 
     deduplicated = list(seen.values())
-    total_count = len(message.tool_calls)
+    # [修改] 2026-06-10 Nyaecho - 修复 tool_calls 属性访问问题，使用 getattr 防止 AttributeError
+    total_count = len(getattr(message, "tool_calls", None) or [])
     dedup_count = len(deduplicated)
 
     to_execute = deduplicated[:max_calls_per_round]

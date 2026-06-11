@@ -80,7 +80,7 @@ def detect_target(user_input: str) -> Optional[str]:
     ):
         match = re.search(pattern, user_input)
         if match:
-            return match.group(1).rstrip("/") if match.groups() else match.group(0)
+            return match.group(1).rstrip("/.") if match.groups() else match.group(0)
     return None
 
 

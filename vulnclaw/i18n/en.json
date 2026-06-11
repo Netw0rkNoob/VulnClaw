@@ -34,7 +34,7 @@
   "cli.init.step_api_key": "  2. Set API key: [bold]vulnclaw config set llm.api_key <your-key>[/]",
   "cli.init.step_cli": "  3. Start CLI: [bold]vulnclaw[/]",
   "cli.init.step_tui": "  4. Open TUI: [bold]vulnclaw tui[/]",
-  
+
   "help.title": "VulnClaw Help",
   "help.commands": "Built-in Commands",
   "help.target": "[cyan]target <host>[/]      Set the active target",
@@ -63,20 +63,20 @@
   "help.example_vuln": "[dim]Look for vulnerabilities[/]",
   "help.example_exploit": "[dim]Try to exploit CVE-202X-XXXX[/]",
   "help.example_report": "[dim]Generate a pentest report[/]",
-  
+
   "status.title": "Current Status",
   "status.target": "Target: [bold]{target}[/]",
   "status.phase": "Phase: [bold]{phase}[/]",
   "status.mcp_services": "MCP Services: [bold]{count}[/]",
   "status.tools": "Available Tools: [bold]{count}[/]",
   "status.thinking": "Thinking: {state}",
-  
+
   "auto_pentest.title": "Autonomous Pentest Result",
   "auto_pentest.finished": "[*] Autonomous pentest finished",
   "auto_pentest.rounds": "    Total rounds: {rounds}",
   "auto_pentest.steps": "    Steps executed: {steps}",
   "auto_pentest.findings": "    Findings: {findings}",
-  
+
   "persistent.title": "Persistent Pentest",
   "persistent.target": "Target: [bold]{target}[/]",
   "persistent.rounds": "Rounds per cycle: [bold]{rounds}[/]",
@@ -102,7 +102,7 @@
   "persistent.finished_summary": "\n[+] Persistent pentest finished: {cycles} cycles, {findings} findings",
   "cli.partial_report": "[+] Partial report: {path}",
   "cli.pentest_finished": "\n[+] Pentest finished with {findings} findings",
-  
+
   "tui.title": "VulnClaw TUI Workbench",
   "tui.desc": "Terminal graphical entry for authorized security testing: Confirm target and boundaries before starting.",
   "tui.mode_quick": "Quick Scan",
@@ -153,8 +153,8 @@
   "tui.constraints_violations": "Constraint Violations",
   "tui.last_command": "Last Command",
   "tui.history_error": "History Error",
-  "tui.command_preview": "[bold]Command Preview[/]\n{command}\n\n",
-  "tui.cli_note": "[dim]Original CLI/REPL is still the default; TUI only activates with vulnclaw tui.[/]",
+  "tui.command_preview": "Command Preview",
+  "tui.cli_note": "Original CLI/REPL is still the default; TUI only activates with vulnclaw tui.",
   "tui.confirm_title": "Pre-launch Confirmation",
   "tui.overview_title": "Run Overview",
   "tui.boundary_title": "Security Boundary",
@@ -168,7 +168,7 @@
   "tui.diagnostic_title": "Environment Diagnostic",
   "tui.diagnostic_item": "Check Item",
   "tui.diagnostic_status": "Status",
-  "tui.diagnostic_footer": "\n[dim]This is an inline TUI diagnostic summary. Run vulnclaw doctor for full details.[/]",
+  "tui.diagnostic_footer": "This is an inline TUI diagnostic summary. Run vulnclaw doctor for full details.",
   "tui.no_target": "No target selected",
   "tui.no_history": "No history yet",
   "tui.no_findings": "No findings recorded",
@@ -189,7 +189,7 @@
   "tui.enter_allowed_actions": "Allowed actions (comma-separated, leave empty for mode defaults)",
   "tui.enter_blocked_actions": "Blocked actions (comma-separated, leave empty for mode defaults)",
   "tui.resume_history": "Resume target history context",
-  "tui.please_set_target": "[yellow]Please set authorized target first.[/]",
+  "tui.please_set_target": "Please set authorized target first.",
   "tui.confirm_deep_mode": "{mode} may perform deeper or multi-round verification. Confirm target and scope are authorized?",
   "tui.target_not_set": "Not set",
   "tui.not_set": "Not set",
@@ -224,5 +224,6 @@
   "tui.findings_count": "Findings",
   "tui.snapshot_count": "Snapshots",
   "tui.report_generated": "Report Generated",
+  "tui.slash_hint": "Commands: /target /mode /scope /start /run /continue ...",
   "tui.read_error_short": "Read failed"
 }

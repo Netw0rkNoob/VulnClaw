@@ -34,7 +34,7 @@
   "cli.init.step_api_key": "  2. 设置 API Key: [bold]vulnclaw config set llm.api_key <your-key>[/]",
   "cli.init.step_cli": "  3. 启动 CLI: [bold]vulnclaw[/]",
   "cli.init.step_tui": "  4. 打开 TUI: [bold]vulnclaw tui[/]",
-  
+
   "help.title": "VulnClaw 帮助",
   "help.commands": "内置命令",
   "help.target": "[cyan]target <host>[/]      设置活动目标",
@@ -63,20 +63,20 @@
   "help.example_vuln": "[dim]查找漏洞[/]",
   "help.example_exploit": "[dim]尝试利用 CVE-202X-XXXX[/]",
   "help.example_report": "[dim]生成渗透测试报告[/]",
-  
+
   "status.title": "当前状态",
   "status.target": "目标: [bold]{target}[/]",
   "status.phase": "阶段: [bold]{phase}[/]",
   "status.mcp_services": "MCP 服务: [bold]{count}[/]",
   "status.tools": "可用工具: [bold]{count}[/]",
   "status.thinking": "推理: {state}",
-  
+
   "auto_pentest.title": "自主渗透测试结果",
   "auto_pentest.finished": "[*] 自主渗透测试完成",
   "auto_pentest.rounds": "    总轮数: {rounds}",
   "auto_pentest.steps": "    执行步骤: {steps}",
   "auto_pentest.findings": "    发现: {findings}",
-  
+
   "persistent.title": "持续渗透测试",
   "persistent.target": "目标: [bold]{target}[/]",
   "persistent.rounds": "每周期轮数: [bold]{rounds}[/]",
@@ -102,7 +102,7 @@
   "persistent.finished_summary": "\n[+] 持续渗透测试完成: {cycles} 个周期, {findings} 个发现",
   "cli.partial_report": "[+] 部分报告: {path}",
   "cli.pentest_finished": "\n[+] 渗透测试完成，共发现 {findings} 个问题",
-  
+
   "tui.title": "VulnClaw TUI 工作台",
   "tui.desc": "面向授权安全测试的终端图形化入口：先确认目标和边界，再启动检查。",
   "tui.mode_quick": "快速摸底",
@@ -153,8 +153,8 @@
   "tui.constraints_violations": "约束拦截",
   "tui.last_command": "上次命令",
   "tui.history_error": "历史读取",
-  "tui.command_preview": "[bold]命令预览[/]\n{command}\n\n",
-  "tui.cli_note": "[dim]原有 CLI / REPL 仍是默认入口；TUI 仅在显式运行 vulnclaw tui 时启用。[/]",
+  "tui.command_preview": "命令预览",
+  "tui.cli_note": "原有 CLI / REPL 仍是默认入口；TUI 仅在显式运行 vulnclaw tui 时启用。",
   "tui.confirm_title": "启动前确认",
   "tui.overview_title": "运行概览",
   "tui.boundary_title": "安全边界",
@@ -168,7 +168,7 @@
   "tui.diagnostic_title": "环境诊断",
   "tui.diagnostic_item": "检查项",
   "tui.diagnostic_status": "状态",
-  "tui.diagnostic_footer": "\n[dim]这是一份 TUI 内联诊断摘要；需要完整细节时仍可运行 vulnclaw doctor。[/]",
+  "tui.diagnostic_footer": "这是一份 TUI 内联诊断摘要；需要完整细节时仍可运行 vulnclaw doctor。",
   "tui.no_target": "未选择目标",
   "tui.no_history": "暂无历史",
   "tui.no_findings": "暂无风险记录",
@@ -189,7 +189,7 @@
   "tui.enter_allowed_actions": "允许动作（逗号分隔，留空使用模式默认值）",
   "tui.enter_blocked_actions": "禁止动作（逗号分隔，留空使用模式默认值）",
   "tui.resume_history": "沿用目标历史上下文",
-  "tui.please_set_target": "[yellow]请先设置授权目标。[/]",
+  "tui.please_set_target": "请先设置授权目标。",
   "tui.confirm_deep_mode": "{mode} 可能执行更深入或多轮验证。确认目标和范围均已授权？",
   "tui.target_not_set": "未设置",
   "tui.not_set": "未设置",
@@ -224,5 +224,6 @@
   "tui.findings_count": "风险数",
   "tui.snapshot_count": "快照数",
   "tui.report_generated": "报告已生成",
+  "tui.slash_hint": "命令: /target /mode /scope /start /run /continue ...",
   "tui.read_error_short": "读取失败"
 }

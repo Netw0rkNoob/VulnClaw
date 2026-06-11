@@ -166,8 +166,16 @@ def _format_tool_results_fallback(
     return "\n".join(parts)
 
 
-async def call_llm(agent: Any, system_prompt: str) -> str:
+async def call_llm(
+    agent: Any,
+    system_prompt: str,
+    *,
+    stream_sink: Optional["StreamSink"] = None,
+) -> str:
     """Call the LLM with the current context and system prompt (single turn)."""
+    if stream_sink is not None:
+        return await call_llm_stream(agent, system_prompt, stream_sink)
+
     client = agent._get_client()
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -328,6 +336,9 @@ async def call_llm_auto_stream(
 
 async def call_llm_auto(agent: Any, system_prompt: str, round_context: str) -> str:
     """Call the LLM in auto-pentest mode with round context appended."""
+    if stream_sink is not None:
+        return await call_llm_auto_stream(agent, system_prompt, round_context, stream_sink)
+
     client = agent._get_client()
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -426,3 +437,378 @@ async def call_llm_auto(agent: Any, system_prompt: str, round_context: str) -> s
             return f"[tool results processed] 继续分析错误: {e2}"
 
     return _prepend_retry_notice(extract_response(choice.message), retry_attempts)
+
+
+# === Stream LLM Call Helpers ===
+
+async def call_llm_stream(
+    agent: Any,
+    system_prompt: str,
+    stream_sink: Optional["StreamSink"] = None,
+) -> str:
+    """Call the LLM with streaming output.
+
+    Args:
+        agent: AgentCore instance
+        system_prompt: System prompt
+        stream_sink: Output sink for streaming (None = silent)
+
+    Returns:
+        Full response text (same as non-streaming version)
+    """
+    if stream_sink is None:
+        stream_sink = _NullSink()
+
+    client = agent._get_client()
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(agent.context.get_messages())
+    tools = agent._build_openai_tools()
+
+    kwargs = build_chat_completion_kwargs(agent, messages, tools)
+
+    try:
+        stream_sink.on_status("Thinking...")
+        response = client.chat.completions.create(**kwargs, stream=True)
+
+        full_text = ""
+        reasoning_buffer = ""
+
+        async for chunk in response:
+            if chunk.choices and len(chunk.choices) > 0:
+                delta = chunk.choices[0].delta
+
+                # Handle reasoning_content (DeepSeek R1, etc.)
+                reasoning = getattr(delta, "reasoning_content", None) or ""
+                if reasoning:
+                    reasoning_buffer += reasoning
+                    stream_sink.on_thinking_token(reasoning)
+
+                # Handle content
+                content = getattr(delta, "content", None) or ""
+                if content:
+                    # If we were collecting reasoning and now get content,
+                    # wrap the reasoning in tags
+                    if reasoning_buffer:
+                        full_text += f"<thinking>\n{reasoning_buffer}\n</thinking>\n"
+                        reasoning_buffer = ""
+
+                    stream_sink.on_content_token(content)
+                    full_text += content
+
+        # Flush any remaining reasoning
+        if reasoning_buffer:
+            full_text += f"<thinking>\n{reasoning_buffer}\n</thinking>\n"
+
+        stream_sink.on_stream_end()
+        return full_text
+
+    except Exception as e:
+        # Fallback to non-streaming on streaming-related errors or general failures
+        error_text = str(e).lower()
+        streaming_markers = [
+            "not supported",
+            "not implemented",
+            "streaming",
+            "async for",
+            "requires an object with __aiter__",
+        ]
+        if any(marker in error_text for marker in streaming_markers):
+            # Provider doesn't support streaming or other streaming error, fall back
+            pass
+        else:
+            # Other error, re-raise
+            raise
+
+    # Fallback: non-streaming with simulated streaming
+    # Use existing call_llm as fallback
+    response_fallback, _ = await _call_with_persistent_retries(
+        agent,
+        lambda: client.chat.completions.create(**kwargs),
+        "单轮",
+    )
+
+    choice = response_fallback.choices[0]
+    if choice.message.tool_calls:
+        # Has tool calls, need full handling
+        return await handle_tool_calls(agent, choice.message)
+
+    full_text = extract_response(choice.message)
+
+    # Simulate streaming output for fallback
+    if full_text:
+        stream_sink.on_content_token(full_text)
+    stream_sink.on_stream_end()
+
+    return full_text
+
+
+async def call_llm_auto_stream(
+    agent: Any,
+    system_prompt: str,
+    round_context: str,
+    stream_sink: Optional["StreamSink"] = None,
+) -> str:
+    """Call the LLM in auto-pentest mode with streaming output.
+
+    Args:
+        agent: AgentCore instance
+        system_prompt: System prompt
+        round_context: Round context for auto mode
+        stream_sink: Output sink for streaming (None = silent)
+
+    Returns:
+        Full response text
+    """
+    if stream_sink is None:
+        stream_sink = _NullSink()
+
+    client = agent._get_client()
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(agent.context.get_messages())
+    messages.append({"role": "user", "content": round_context})
+    tools = agent._build_openai_tools()
+
+    kwargs = build_chat_completion_kwargs(agent, messages, tools)
+
+    try:
+        # First LLM call with streaming
+        stream_sink.on_status("Thinking...")
+        response = client.chat.completions.create(**kwargs, stream=True)
+
+        full_text = ""
+        reasoning_buffer = ""
+        tool_calls_chunks: list[dict] = []
+
+        for chunk in response:
+            if chunk.choices and len(chunk.choices) > 0:
+                delta = chunk.choices[0].delta
+
+                # Handle reasoning_content
+                reasoning = getattr(delta, "reasoning_content", None) or ""
+                if reasoning:
+                    reasoning_buffer += reasoning
+                    stream_sink.on_thinking_token(reasoning)
+
+                # Handle content
+                content = getattr(delta, "content", None) or ""
+                if content:
+                    if reasoning_buffer:
+                        full_text += f"<thinking>\n{reasoning_buffer}\n</thinking>\n"
+                        reasoning_buffer = ""
+                    stream_sink.on_content_token(content)
+                    full_text += content
+
+                # Handle tool_calls
+                tc = getattr(delta, "tool_calls", None)
+                if tc:
+                    for tc_delta in tc:
+                        tool_calls_chunks.append({
+                            "index": getattr(tc_delta, "index", 0),
+                            "id": getattr(tc_delta, "id", None) or "",
+                            "function": {
+                                "name": getattr(tc_delta.function, "name", None) or "",
+                                "arguments": getattr(tc_delta.function, "arguments", None) or "",
+                            },
+                        })
+
+        stream_sink.on_stream_end()
+
+        # Flush reasoning
+        if reasoning_buffer:
+            full_text += f"<thinking>\n{reasoning_buffer}\n</thinking>\n"
+
+        # Check if we have tool calls
+        choice_dummy = type("obj", (object,), {"message": type("obj", (object,), {
+            "content": full_text,
+            "tool_calls": None,
+        })()})()
+
+        # Reconstruct message for tool call handling
+        # We need to check if there are tool calls from the accumulated chunks
+        if tool_calls_chunks:
+            # Build tool_calls from accumulated chunks
+            from openai.types.chat.chat_completion_message_tool_call import (
+                ChatCompletionMessageToolCall,
+                Function,
+            )
+
+            # Group chunks by index
+            tc_by_index: dict[int, dict] = {}
+            for tc_chunk in tool_calls_chunks:
+                idx = tc_chunk["index"]
+                if idx not in tc_by_index:
+                    tc_by_index[idx] = {"id": "", "function": {"name": "", "arguments": ""}}
+                tc_by_index[idx]["id"] += tc_chunk["id"]
+                tc_by_index[idx]["function"]["name"] += tc_chunk["function"]["name"]
+                tc_by_index[idx]["function"]["arguments"] += tc_chunk["function"]["arguments"]
+
+            tool_calls = [
+                ChatCompletionMessageToolCall(
+                    id=tc_data["id"],
+                    type="function",
+                    function=Function(
+                        name=tc_data["function"]["name"],
+                        arguments=tc_data["function"]["arguments"],
+                    ),
+                )
+                for tc_data in tc_by_index.values()
+                if tc_data["function"]["name"]
+            ]
+
+            if tool_calls:
+                # [修改] 流式聚合后 tool_calls 仅存在于 delta 片段中, 需回填到聚合消息对象以便后续处理
+                # Patch the dummy message with actual tool calls
+                choice_dummy.message.tool_calls = tool_calls
+                # Execute tool calls
+                for tc in tool_calls:
+                    stream_sink.on_tool_call(tc.function.name, tc.function.arguments[:200])
+
+                tool_results, skipped_info = await handle_tool_calls_with_results(agent, choice_dummy.message)
+
+                for tr in tool_results:
+                    if isinstance(tr, dict) and "content" in tr:
+                        content = tr["content"]
+                        if len(content) > 200:
+                            content = content[:200] + "..."
+                        stream_sink.on_tool_result(content)
+
+                # Continue with the messages including tool results
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": full_text,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in tool_calls
+                    ],
+                }
+                messages.append(assistant_msg)
+
+                for tool_result in tool_results:
+                    if isinstance(tool_result, dict) and "tool_call_id" in tool_result:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_result["tool_call_id"],
+                            "content": tool_result.get("content", ""),
+                        })
+
+                # Second LLM call (streaming) for summary
+                kwargs["messages"] = messages
+                stream_sink.on_status("Summarizing...")
+
+                try:
+                    response2 = client.chat.completions.create(**kwargs, stream=True)
+                    full_text = ""
+
+                    for chunk in response2:
+                        if chunk.choices and len(chunk.choices) > 0:
+                            delta = chunk.choices[0].delta
+                            reasoning = getattr(delta, "reasoning_content", None) or ""
+                            if reasoning:
+                                reasoning_buffer += reasoning
+                                stream_sink.on_thinking_token(reasoning)
+
+                            content = getattr(delta, "content", None) or ""
+                            if content:
+                                if reasoning_buffer:
+                                    full_text += f"<thinking>\n{reasoning_buffer}\n</thinking>\n"
+                                    reasoning_buffer = ""
+                                stream_sink.on_content_token(content)
+                                full_text += content
+
+                    if reasoning_buffer:
+                        full_text += f"<thinking>\n{reasoning_buffer}\n</thinking>\n"
+
+                    agent.context.add_assistant_message(full_text)
+                    stream_sink.on_stream_end()
+                    return full_text
+
+                except Exception as e2:
+                    error_text = str(e2).lower()
+                    if _is_non_retriable_llm_error(error_text):
+                        fallback = _format_tool_results_fallback(tool_results, skipped_info)
+                        agent.context.add_assistant_message(fallback)
+                        return fallback
+                    return f"[tool results processed] 继续分析错误: {e2}"
+
+        agent.context.add_assistant_message(full_text)
+        return full_text
+
+    except (NotImplementedError, ValueError, Exception) as e:
+        error_text = str(e).lower()
+        if any(
+            marker in error_text
+            for marker in ["not supported", "not implemented", "streaming"]
+        ):
+            pass
+        else:
+            raise
+
+    # Fallback to non-streaming
+    return await call_llm_auto(agent, system_prompt, round_context)
+
+
+# === Stream Output Protocol ===
+
+
+@runtime_checkable
+class StreamSink(Protocol):
+    """输出流接收器抽象。
+
+    LLM 调用层通过此接口将输出定向到不同目标（CLI/Web/静默）。
+    放在 llm_client.py 中符合 CONTRIBUTING.md 的模块放置原则。
+    """
+
+    def on_status(self, message: str) -> None:
+        """显示状态提示（如 "Thinking..."）。"""
+        ...
+
+    def on_thinking_token(self, token: str) -> None:
+        """接收思考过程的 token（可选择是否显示）。"""
+        ...
+
+    def on_content_token(self, token: str) -> None:
+        """接收正文 token。"""
+        ...
+
+    def on_tool_call(self, tool_name: str, args: str) -> None:
+        """显示工具调用提示。"""
+        ...
+
+    def on_tool_result(self, result_summary: str) -> None:
+        """显示工具结果摘要。"""
+        ...
+
+    def on_stream_end(self) -> None:
+        """流式结束回调（换行/清理）。"""
+        ...
+
+
+class _NullSink:
+    """空实现，确保无 sink 时不产生任何输出。"""
+
+    def on_status(self, message: str) -> None:
+        pass
+
+    def on_thinking_token(self, token: str) -> None:
+        pass
+
+    def on_content_token(self, token: str) -> None:
+        pass
+
+    def on_tool_call(self, tool_name: str, args: str) -> None:
+        pass
+
+    def on_tool_result(self, result_summary: str) -> None:
+        pass
+
+    def on_stream_end(self) -> None:
+        pass

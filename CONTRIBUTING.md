@@ -123,6 +123,99 @@ VulnClaw/
 
 修改 TUI 布局、快捷键、流式回调时，在 `textui/` 目录内修改，`cli/main.py` 仅做入口切换。避免把 TUI 渲染逻辑写进 `main.py`。
 
+### 3.1 修改 TUI 工作台时，看 `vulnclaw/cli/tui.py` 和 `vulnclaw/cli/tui_textual.py`
+
+适用场景：
+- TUI 仪表盘布局与渲染
+- 斜杠命令系统（`/target`、`/mode`、`/start` 等）
+- 命令面板（Command Palette）交互
+- 提示/确认状态机
+- TUI 配色主题
+
+**架构关系：**
+
+```
+main.py (Typer CLI)
+  └─ tui.py (run_tui → 委托)
+       └─ tui_textual.py (run_tui_textual → Textual App)
+            ├─ DashboardScreen
+            │   ├─ CommandPalette     (一级：斜杠补全下拉)
+            │   ├─ SecondaryPopup     (二级：参数输入弹窗)
+            │   └─ RichLog + spinner  (执行模式：输出区 + 拖尾动画)
+            └─ VulnClawApp
+```
+
+| 文件 | 职责 |
+|------|------|
+| `tui.py` | 数据类（`TuiState`、`TuiMode`、`TuiTaskDraft`）、Rich 仪表盘渲染（`build_dashboard`）、颜色常量（`C_PRIMARY` 等）、斜杠命令注册表（`SLASH_COMMANDS`）、入口 `run_tui()` |
+| `tui_textual.py` | Textual App 实现：`DashboardScreen`（布局 + 执行模式）、`CommandPalette`（一级下拉面板）、`SecondaryPopup`（二级弹窗）、`VulnClawApp`（CSS）、斜杠命令处理器、提示状态机、子进程执行引擎 |
+
+**斜杠命令系统：**
+
+命令通过函数装饰器 `@_register_handler("...")` 注册，`_dispatch()` 根据输入分发。命令签名：`fn(session: dict, args: str) -> str | None`。
+`SLASH_COMMANDS` 字典（`tui.py`）决定命令面板中可见的命令列表。
+
+- 返回 `"quit"` → 退出 TUI
+- 返回 `"launch"` → 启动渗透任务（TUI 内子进程执行，不再退回 CLI）
+- 返回 `None` → 设置提示状态（触发二级弹窗）
+
+支持内联参数：`/target example.com`、`/mode deep`、`/scope host=1.2.3.4`，无参数时弹出二级弹窗进行交互式输入。
+
+**提示状态机：**
+
+`session["_prompt"]` 元组类型（同时设置 `_show_popup = True` 触发二级弹窗）：
+- `("input", label, callback, default)` — 弹窗显示描述 + 输入框，Enter 确认
+- `("choice", label, choices, callback)` — 弹窗显示描述 + 选项列表，方向键选择 + Enter 确认
+- `("confirm", label, callback)` — 弹窗显示描述 + y/n，按键直接确认（y = True, n/esc = False）
+- `("message", text)` — 弹窗显示纯文本，Enter/Escape 关闭（回调为 None）
+- `("chain", fields, idx, callback)` — 弹窗显示链式多字段输入（如 scope 逐项设置），每步 Enter 进入下一字段，完成后触发 callback（可级联弹窗）
+
+**命令面板（CommandPalette）：**
+
+继承 `ListView`，输入 `/` 时弹出在输入框上方。`↑↓` 移动高亮指针（不填入输入框），`Tab`/`Enter` 选中补全。`show_commands()` 使用 `query_children(ListItem).remove()` 清空旧条目 + `mount()` 挂载新条目（标准 Textual API，替代旧版私有 `_nodes` 操作）。CSS 含 `.-highlight` 高亮样式（`#fab283 30%` 背景 + 白色文字）。方向键导航通过 `DashboardScreen.on_key` 拦截 `up`/`down` 后调用 `action_cursor_up/down`。
+
+**二级弹窗（SecondaryPopup）：**
+
+继承 `Vertical`，当斜杠命令缺少参数时自动弹出。五种子模式：
+| 模式 | 示例 | 组件 |
+|------|------|------|
+| `input` | `/target` | `Static` 描述 + `Input` 输入框 |
+| `choice` | `/mode` | `Static` 描述 + `ListView` 选项列表（方向键 + Enter） |
+| `confirm` | `/start`（深度验证） | `Static` 描述 + y/n 提示（按键直接确认） |
+| `message` | `/diag` | `Static` 描述（Enter/Escape 关闭） |
+| `chain` | `/scope` | 逐字段输入 `[1/7] → [2/7] → ...`，完成后级联触发下一个弹窗 |
+
+`_resolve(value)` 确认并调用回调修改状态，`_cancel()` 关闭弹窗不修改状态。Escape 键在弹窗打开时调用 `_cancel()`（不改变原值）。`_on_done` 回调确保弹窗关闭后仪表盘自动刷新。
+
+**Escape 键行为：**
+
+逐层关闭：二级弹窗 `_cancel()` → 命令面板 `hide_palette()` → prompt `_cancel_prompt()`。空闲状态下不再退出 TUI（仅 `/quit` 或 `Ctrl+C` 退出）。
+
+**执行模式：**
+
+`/run` 或 `/start` 返回 `"launch"` 时不退出 TUI，改为 TUI 内子进程执行：
+1. 隐藏仪表盘（`#dashboard.-hidden`），显示 `RichLog` 输出区（`#output-log.-active`）
+2. 输入框左侧显示**拖尾动画**：5 个方块无间距，领头 `[bold #fab283]■` 带两级拖尾（`[#fab283]■` + `[#808080]■`），0.12s 更新一帧，左右来回弹跳
+3. 禁用输入框，通过 `subprocess.Popen` 启动子进程（`python -m vulnclaw.cli.main <cmd> <args>`），`encoding="utf-8"` 避免 GBK 解码错误，实时流式读取 `stdout` 管道
+4. 后台线程读取子进程输出推入 `Queue`，主线程通过 `set_timer(0.3s)` 轮询写入 `RichLog`
+5. 执行完成：隐藏拖尾动画、启用输入框、重新加载配置
+6. `Ctrl+Shift+C` 复制输出日志到系统剪贴板（Windows: `clip`，macOS: `pbcopy`，Linux: `xclip`）
+
+**配色方案（opencode 风格）：**
+
+| 变量 | 色值 | 用途 |
+|------|------|------|
+| `C_PRIMARY` | `#fab283` | 菜单键、高亮选择 |
+| `C_SECONDARY` | `#5c9cf5` | 模式标签、信息标识 |
+| `C_ACCENT` | `#9d7cd8` | 标题、Header |
+| `C_SUCCESS` | `#7fd88f` | 已配置/成功状态 |
+| `C_WARNING` | `#f5a742` | 未设置/需关注 |
+| `C_ERROR` | `#e06c75` | 错误/无效输入 |
+| `C_MUTED` | `#808080` | 次要文字、描述 |
+| `C_BORDER` | `#484848` | 面板边框 |
+
+Textual CSS 中 UI 元素（Header、状态栏、输入框）使用终端自适应背景（`$background`、`$surface`、`$boost`），强调色硬编码上述色值。
+
 ### 4. 修改配置时，看 `vulnclaw/config/`
 
 - `schema.py`：配置模型定义

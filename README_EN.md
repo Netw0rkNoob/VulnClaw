@@ -8,7 +8,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![OpenAI Compatible](https://img.shields.io/badge/API-OpenAI_Compatible-green)](https://platform.openai.com/)
 [![MCP](https://img.shields.io/badge/Toolchain-MCP-orange)](https://modelcontextprotocol.io/)
-[![PyPI](https://img.shields.io/badge/PyPI-v0.2.9-blueviolet)](https://pypi.org/project/vulnclaw/)
+[![PyPI](https://img.shields.io/badge/PyPI-v0.3.0-blueviolet)](https://pypi.org/project/vulnclaw/)
 [![Security](https://img.shields.io/badge/Scope-Authorized_Only-red)](#-security-notice)
 <br>
 
@@ -20,7 +20,7 @@ Built on LLM Agent + MCP Toolchain + Pentest Skill orchestration,
 compatible with OpenAI / MiniMax / DeepSeek and similar models.
 Natural language input → automated "Recon → Vulnerability Discovery → Exploitation → Reporting".
 
-[Quick Start](#quick-start) · [Architecture](#-architecture) · [Skills](#-built-in-skills) · [Roadmap](#-roadmap)
+[Quick Start](#quick-start) · [Architecture](#-architecture) · [Skills](#-built-in-skills)
 
 </div>
 
@@ -599,22 +599,6 @@ vulnclaw config set session.show_thinking false  # hide thinking process (also i
 Priority: **Environment Variables > Config File > Built-in Defaults**
 
 Config file location: `~/.vulnclaw/config.yaml`.
-
----
-
-## Roadmap
-
-| Version   | Goal                                                                      | Status       |
-| --------- | ------------------------------------------------------------------------- | ------------ |
-| v0.1 MVP  | CLI + LLM Agent + basic MCP + Skills + Reports + Multi-Provider          | ✅ Done      |
-| v0.1.1    | `python_execute` + context compression + code audit strategy + anti-hallucination | ✅ Done      |
-| v0.1.2    | 3 CTF specialized Skills + 3 existing Skills updated + trigger words       | ✅ Done      |
-| v0.1.3    | Four-dimension recon model + RECON_MIN_ROUNDS + dimension completion self-check + social eng conditional trigger + osint-recon Skill | ✅ Done |
-| v0.1.4    | Pentest stability fixes (findings parsing / recon progression / summary filtering / nmap guardrails) | ✅ Done |
-| **v0.2.9**| **Current release: target-level result inheritance, target-state governance, and architecture docs sync** | ✅ **Current** |
-| v0.3      | Reverse engineering (IDA Pro) — Skills ready                              | 📋 Skills ✅ |
-| v0.4      | Knowledge base enhancement (ChromaDB vector retrieval + semantic skill routing)| 📋          |
-| v1.0      | Official release (PyPI + docs + CI/CD)                                    | 📋          |
 
 ---
 
