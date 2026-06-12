@@ -263,5 +263,12 @@
   "tui.exited_textual": "已退出 VulnClaw TUI。",
   "tui.invalid_choice": "无效选择: {choice}。可选: {options}",
   "tui.invalid_port_label": "无效端口 (1-65535)",
-  "tui.launch_summary_title": "启动摘要"
+  "tui.launch_summary_title": "启动摘要",
+  "tui.slash_language": "切换界面语言 (auto / zh / en)",
+  "tui.slash_lang": "切换界面语言 (auto / zh / en)",
+  "tui.prompt_select_language": "选择界面语言:",
+  "tui.language_auto": "自动 (跟随系统)",
+  "tui.language_zh": "中文",
+  "tui.language_en": "English",
+  "tui.language_switched": "界面语言已切换为: {lang}"
 }

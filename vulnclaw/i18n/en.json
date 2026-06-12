@@ -263,5 +263,12 @@
   "tui.exited_textual": "Exited VulnClaw TUI.",
   "tui.invalid_choice": "Invalid choice: {choice}. Options: {options}",
   "tui.invalid_port_label": "Invalid port (1-65535)",
-  "tui.launch_summary_title": "Launch Summary"
+  "tui.launch_summary_title": "Launch Summary",
+  "tui.slash_language": "Switch UI language (auto / zh / en)",
+  "tui.slash_lang": "Switch UI language (auto / zh / en)",
+  "tui.prompt_select_language": "Select UI language:",
+  "tui.language_auto": "Auto (follow system)",
+  "tui.language_zh": "Chinese",
+  "tui.language_en": "English",
+  "tui.language_switched": "UI language switched to: {lang}"
 }

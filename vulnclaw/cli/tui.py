@@ -56,6 +56,19 @@ def _init_tui_i18n() -> None:
 
 _init_tui_i18n()
 
+
+def rebuild_translations() -> None:
+    """Rebuild MODES, SLASH_COMMANDS, MENU_ITEMS after i18n language switch.
+
+    Call this after init_i18n() with a new language to update all
+    module-level globals that were built with _() translations.
+    """
+    global MODES, MENU_ITEMS, SLASH_COMMANDS
+    MODES = _build_modes()
+    MENU_ITEMS = _build_menu_items()
+    SLASH_COMMANDS = _build_slash_commands()
+
+
 CheckMode = Literal["quick", "standard", "deep", "continuous"]
 TaskCommand = Literal["recon", "run", "scan", "persistent"]
 
@@ -653,6 +666,7 @@ def _build_slash_commands() -> dict[str, str]:
         "report": _("tui.slash_report"),
         "diag": _("tui.slash_diag"),
         "config": _("tui.slash_config"),
+        "language": _("tui.slash_lang"),
         "quit": _("tui.slash_quit"),
     }
 
@@ -884,6 +898,14 @@ def _cmd_diagnostic(session: dict[str, Any], args: str) -> None:
     _set_prompt_message(session, text)
 
 
+_SUPPORTED_LANGUAGES = ["auto", "zh", "en"]
+
+
+def _get_language_labels() -> dict[str, str]:
+    """Return {lang_key: translated_label} for supported languages."""
+    return {c: _(f"tui.language_{c}") for c in _SUPPORTED_LANGUAGES}
+
+
 @_register_handler("config")
 @_register_handler("cfg")
 def _cmd_config(session: dict[str, Any], args: str) -> None:
@@ -911,6 +933,35 @@ def _cmd_config(session: dict[str, Any], args: str) -> None:
         _set_prompt_message(session, f"{_('tui.config_saved')}: {config.llm.provider}/{config.llm.model}")
 
     _set_prompt_choice(session, _("tui.prompt_select_provider", provider=current_provider), providers, _on_provider)
+
+
+@_register_handler("language")
+@_register_handler("lang")
+def _cmd_language(session: dict[str, Any], args: str) -> None:
+    lang = args.strip().lower() if args else ""
+    if lang in ("auto", "zh", "en"):
+        _apply_language_pt(session, lang)
+    else:
+        choices = list(_SUPPORTED_LANGUAGES)
+        labels = _get_language_labels()
+        choice_labels = [labels[c] for c in choices]
+
+        def _on_choice(value: str) -> None:
+            idx = choice_labels.index(value) if value in choice_labels else 0
+            _apply_language_pt(session, choices[idx])
+
+        _set_prompt_choice(session, _("tui.prompt_select_language"), choice_labels, _on_choice)
+
+
+def _apply_language_pt(session: dict[str, Any], lang: str) -> None:
+    """Apply language switch (prompt_toolkit backend)."""
+    session["config"].session.language = lang
+    save_config(session["config"])
+    init_i18n(lang=lang if lang != "auto" else None, config=session["config"])
+    rebuild_translations()
+
+    lang_labels = _get_language_labels()
+    session["_message"] = _("tui.language_switched", lang=lang_labels.get(lang, lang))
 
 
 # ── (kept for backward compatibility) ──
