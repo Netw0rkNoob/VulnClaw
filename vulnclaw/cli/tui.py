@@ -96,7 +96,7 @@ class TuiTargetOverview:
     findings_count: int = 0
     verified_count: int = 0
     pending_count: int = 0
-    constraints_summary: str = "Not recorded"
+    constraints_summary: str = field(default_factory=lambda: _("tui.constraints_not_recorded"))
     violations_count: int = 0
     last_command: str = ""
     error: str = ""
@@ -435,10 +435,10 @@ def _run_pt_tui(session: dict[str, Any]) -> Optional[str]:
         if not items:
             return []
         sel = session["_palette_idx"] % len(items)
-        result: list[tuple[str, str]] = []
         # Calculate dynamic box width: prefix (3) + cmd padded to 12 (12) + space (1) + max desc length
         max_desc = max((len(desc) for _, desc in items), default=32)
         box_inner = max(46, max_desc + 16)  # 46 is legacy minimum, 16 = prefix + cmd column + space
+        result: list[tuple[str, str]] = []
         result.append((f"fg:{C_BORDER} bg:#1e1e1e", "╭" + "─" * box_inner + "╮\n"))
         for i, (cmd, desc) in enumerate(items):
             prefix = "▸" if i == sel else " "
@@ -599,7 +599,7 @@ def _handle_prompt_response(session: dict[str, Any], prompt: tuple, text: str) -
             session["_prompt"] = None
             callback(text)
         else:
-            session["_message"] = f"Invalid choice: {text}. Options: {', '.join(choices)}"
+            session["_message"] = _("tui.invalid_choice", choice=text, options=", ".join(choices))
     elif ptype == "confirm":
         _label, callback = prompt[1], prompt[2]
         if text.lower() in ("y", "yes"):
@@ -640,19 +640,24 @@ def _handle_prompt_response(session: dict[str, Any], prompt: tuple, text: str) -
 # 命令映射关系: /target→原1, /mode→原2, /scope→原3, /start→原4...
 # /history→原5, /report→原6, /diag→原7, /config→原8, /quit→原q
 
-SLASH_COMMANDS: dict[str, str] = {
-    "target": "Set authorized target URL / domain / IP",
-    "mode": "Select check mode (quick / standard / deep / continuous)",
-    "scope": "Configure test scope boundaries",
-    "run": "Start authorized security check",
-    # [新增] 2026-06-10 Nyaecho - TUI命令面板新增 /continue 斜杠命令入口
-    "continue": "Resume previous execution",
-    "history": "View target history summary",
-    "report": "Generate target report",
-    "diag": "Run environment diagnostic",
-    "config": "Configure LLM provider / model / API key",
-    "quit": "Exit TUI",
-}
+def _build_slash_commands() -> dict[str, str]:
+    """Build SLASH_COMMANDS dict with translated descriptions."""
+    return {
+        "target": _("tui.slash_target"),
+        "mode": _("tui.slash_mode"),
+        "scope": _("tui.slash_scope"),
+        "run": _("tui.slash_run"),
+        # [新增] 2026-06-10 Nyaecho - TUI命令面板新增 /continue 斜杠命令入口
+        "continue": _("tui.slash_continue"),
+        "history": _("tui.slash_history"),
+        "report": _("tui.slash_report"),
+        "diag": _("tui.slash_diag"),
+        "config": _("tui.slash_config"),
+        "quit": _("tui.slash_quit"),
+    }
+
+
+SLASH_COMMANDS: dict[str, str] = _build_slash_commands()
 
 
 def _build_slash_completer() -> Any:
@@ -733,7 +738,7 @@ def _cmd_target(session: dict[str, Any], args: str) -> None:
         if value:
             state.target = value
 
-    _set_prompt_input(session, "Target URL / domain / IP:", _on_value, default=state.target)
+    _set_prompt_input(session, _("tui.prompt_target"), _on_value, default=state.target)
 
 
 @_register_handler("mode")
@@ -748,7 +753,7 @@ def _cmd_mode(session: dict[str, Any], args: str) -> None:
     def _on_choice(value: str) -> None:
         state.mode = value
 
-    _set_prompt_choice(session, "Select mode:", choices, _on_choice)
+    _set_prompt_choice(session, _("tui.prompt_select_mode"), choices, _on_choice)
 
 
 @_register_handler("scope")
@@ -759,20 +764,20 @@ def _cmd_scope(session: dict[str, Any], args: str) -> None:
         _parse_scope_args(state, args)
         return
     fields = [
-        ("only_host", "Only Test Host", state.only_host or ""),
-        ("only_port", "Only Test Port (1-65535, empty=unrestricted)", state.only_port),
-        ("only_path", "Only Test Path", state.only_path or ""),
-        ("blocked_host", "Blocked Host", state.blocked_host or ""),
-        ("blocked_path", "Blocked Path", state.blocked_path or ""),
-        ("__allow_actions", "Allowed Actions (comma-sep)", ",".join(state.allow_actions)),
-        ("__block_actions", "Blocked Actions (comma-sep)", ",".join(state.block_actions)),
+        ("only_host", _("tui.prompt_only_host"), state.only_host or ""),
+        ("only_port", _("tui.prompt_only_port"), state.only_port),
+        ("only_path", _("tui.prompt_only_path"), state.only_path or ""),
+        ("blocked_host", _("tui.prompt_blocked_host"), state.blocked_host or ""),
+        ("blocked_path", _("tui.prompt_blocked_path"), state.blocked_path or ""),
+        ("__allow_actions", _("tui.prompt_allowed_actions"), ",".join(state.allow_actions)),
+        ("__block_actions", _("tui.prompt_blocked_actions"), ",".join(state.block_actions)),
     ]
 
     def _on_resume_confirm(yes: bool) -> None:
         state.resume = yes
 
     def _ask_resume() -> None:
-        _set_prompt_confirm(session, f"Resume? (y/n, current: {'yes' if state.resume else 'no'})", _on_resume_confirm)
+        _set_prompt_confirm(session, _("tui.prompt_resume", state=_("tui.on") if state.resume else _("tui.off")), _on_resume_confirm)
 
     _set_prompt_chain(session, fields, 0, _ask_resume)
 
@@ -891,13 +896,13 @@ def _cmd_config(session: dict[str, Any], args: str) -> None:
             nonlocal config
             session["config"] = apply_provider_preset(config, value)
             config = session["config"]
-        _set_prompt_input(session, f"Model (current: {config.llm.model}):", _on_model, default=config.llm.model)
+        _set_prompt_input(session, _("tui.prompt_enter_model", model=config.llm.model), _on_model, default=config.llm.model)
 
     def _on_model(value: str) -> None:
         if value:
             config.llm.model = value.strip()
         key_status = _("tui.api_key_configured") if config.llm.api_key else _("tui.api_key_not_configured")
-        _set_prompt_input(session, f"API Key ({key_status}, enter to keep):", _on_apikey)
+        _set_prompt_input(session, _("tui.prompt_enter_apikey", status=key_status), _on_apikey)
 
     def _on_apikey(value: str) -> None:
         if value:
@@ -905,7 +910,7 @@ def _cmd_config(session: dict[str, Any], args: str) -> None:
         save_config(config)
         _set_prompt_message(session, f"{_('tui.config_saved')}: {config.llm.provider}/{config.llm.model}")
 
-    _set_prompt_choice(session, f"Provider (current: {current_provider}):", providers, _on_provider)
+    _set_prompt_choice(session, _("tui.prompt_select_provider", provider=current_provider), providers, _on_provider)
 
 
 # ── (kept for backward compatibility) ──
@@ -1150,9 +1155,9 @@ def _parse_optional_port(value: str) -> int | None:
     try:
         port = int(value)
     except ValueError as exc:
-        raise ValueError("端口必须是 1-65535 之间的数字") from exc
+        raise ValueError(_("tui.error_invalid_port")) from exc
     if port < 1 or port > 65535:
-        raise ValueError("端口必须是 1-65535 之间的数字")
+        raise ValueError(_("tui.error_invalid_port"))
     return port
 
 
@@ -1318,7 +1323,9 @@ def _confirm_and_launch(state: TuiState, launcher: TaskLauncher) -> None:
         Prompt.ask(_("tui.task_returned"), default="")
 
 
-def _build_task_summary_panel(draft: TuiTaskDraft, *, title: str = "启动摘要") -> Panel:
+def _build_task_summary_panel(draft: TuiTaskDraft, *, title: str | None = None) -> Panel:
+    if title is None:
+        title = _("tui.launch_summary_title")
     lines = [
         f"{_('tui.target')}: [bold {C_PRIMARY}]{draft.target}[/]",
         f"{_('tui.command')}: [bold {C_SECONDARY}]{draft.command}[/]",

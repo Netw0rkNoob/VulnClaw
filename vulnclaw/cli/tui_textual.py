@@ -219,7 +219,7 @@ class SecondaryPopup(Vertical):
             f"[{C_MUTED}]{text}[/]"
         )
         hint = Static(
-            f"  [{C_MUTED}]Enter to dismiss[/]",
+            f"  [{C_MUTED}]{_('tui.enter_to_dismiss')}[/]",
             id="popup-hint",
         )
         self.mount(hint)
@@ -274,7 +274,7 @@ class SecondaryPopup(Vertical):
                         state.only_port = value
                     except ValueError:
                         self.query_one("#popup-desc", Static).update(
-                            f"[bold {C_ERROR}]Invalid port (1-65535)[/]\n  [{C_MUTED}]{fld_title}[/]"
+                            f"[bold {C_ERROR}]{_('tui.invalid_port_label')}[/]\n  [{C_MUTED}]{fld_title}[/]"
                         )
                         inp = self.query_one("#popup-input", Input)
                         inp.value = ""
@@ -376,7 +376,7 @@ def _h_target(session: dict[str, Any], args: str) -> str | None:
         state.target = args.strip()
         return None
     def cb(v): state.target = v if v else state.target
-    _set_prompt(session, "input", "Target URL/IP:", cb, state.target)
+    _set_prompt(session, "input", _("tui.prompt_target"), cb, state.target)
     return None
 
 
@@ -388,7 +388,7 @@ def _h_mode(session: dict[str, Any], args: str) -> str | None:
         state.mode = args
         return None
     def cb(v): state.mode = v
-    _set_prompt(session, "choice", "Select mode:", list(MODES.keys()), cb)
+    _set_prompt(session, "choice", _("tui.prompt_select_mode"), list(MODES.keys()), cb)
     return None
 
 
@@ -424,16 +424,16 @@ def _h_scope(session: dict[str, Any], args: str) -> str | None:
                     state.resume = v.lower() in ("true", "yes", "1", "on")
         return None
     fields = [
-        ("only_host", "Only Test Host", state.only_host or ""),
-        ("only_port", "Only Test Port", state.only_port),
-        ("only_path", "Only Test Path", state.only_path or ""),
-        ("blocked_host", "Blocked Host", state.blocked_host or ""),
-        ("blocked_path", "Blocked Path", state.blocked_path or ""),
-        ("__allow_actions", "Allowed Actions (csv)", ",".join(state.allow_actions)),
-        ("__block_actions", "Blocked Actions (csv)", ",".join(state.block_actions)),
+        ("only_host", _("tui.prompt_only_host"), state.only_host or ""),
+        ("only_port", _("tui.prompt_only_port"), state.only_port),
+        ("only_path", _("tui.prompt_only_path"), state.only_path or ""),
+        ("blocked_host", _("tui.prompt_blocked_host"), state.blocked_host or ""),
+        ("blocked_path", _("tui.prompt_blocked_path"), state.blocked_path or ""),
+        ("__allow_actions", _("tui.prompt_allowed_actions"), ",".join(state.allow_actions)),
+        ("__block_actions", _("tui.prompt_blocked_actions"), ",".join(state.block_actions)),
     ]
     def on_resume(yes): state.resume = yes
-    def ask(): _set_prompt(session, "confirm", f"Resume? (y/n, current={'yes' if state.resume else 'no'})", on_resume)
+    def ask(): _set_prompt(session, "confirm", _("tui.prompt_resume", state=_("tui.on") if state.resume else _("tui.off")), on_resume)
     _set_prompt(session, "chain", fields, 0, ask)
     return None
 
@@ -514,13 +514,13 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
         if v and v != cur:
             config = apply_provider_preset(config, v)
             session["config"] = config
-        _set_prompt(session, "input", f"Model (current: {config.llm.model}):", on_model, config.llm.model)
+        _set_prompt(session, "input", _("tui.prompt_enter_model", model=config.llm.model), on_model, config.llm.model)
 
     def on_model(v):
         if v:
             session["config"].llm.model = v.strip()
         ks = _("tui.api_key_configured") if session["config"].llm.api_key else _("tui.api_key_not_configured")
-        _set_prompt(session, "input", f"API Key ({ks}, enter to keep):", on_apikey)
+        _set_prompt(session, "input", _("tui.prompt_enter_apikey", status=ks), on_apikey)
 
     def on_apikey(v):
         if v:
@@ -528,7 +528,7 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
         save_config(session["config"])
         _set_prompt(session, "message", f"{_('tui.config_saved')}: {session['config'].llm.provider}/{session['config'].llm.model}")
 
-    _set_prompt(session, "choice", f"Provider (current: {cur}):", providers, on_provider)
+    _set_prompt(session, "choice", _("tui.prompt_select_provider", provider=cur), providers, on_provider)
     return None
 
 
@@ -544,7 +544,7 @@ def _h_continue(session: dict[str, Any], args: str) -> str | None:
         session["_nl_text"] = history if history else None
         session["_continuing"] = True
         return "launch"
-    session["_message"] = "No previous execution to continue"
+    session["_message"] = _("tui.no_previous_execution")
     return None
 
 
@@ -863,10 +863,10 @@ class DashboardScreen(Screen):
         inp.focus()
         if self._interrupted:
             self.query_one("#output-log", RichLog).write(
-                f"\n[{C_WARNING}]Execution interrupted (Esc). Type /continue to resume.[/]\n"
+                f"\n[{C_WARNING}]{_('tui.execution_interrupted')}[/]\n"
             )
         hint = self.query_one("#exec-hint", Static)
-        hint.update(f"[{C_MUTED}]Esc to interrupt  |  /continue to resume[/]")
+        hint.update(f"[{C_MUTED}]{_('tui.exec_hint')}[/]")
         hint.add_class("-active")
         config = load_config()
         if config:
@@ -906,7 +906,7 @@ class DashboardScreen(Screen):
                 self._set_bar("")
                 cb(text)
             else:
-                self._set_bar(f"Invalid: {text}. Options: {', '.join(choices)}", C_ERROR)
+                self._set_bar(_("tui.invalid_choice", choice=text, options=", ".join(choices)), C_ERROR)
                 return
         elif ptype == "confirm":
             _, label, cb = p
@@ -966,7 +966,7 @@ class DashboardScreen(Screen):
 
         lines: list[str] = []
         lines.append(f"[bold {C_ACCENT}]Target[/]")
-        lines.append(f"[{C_PRIMARY}]{state.target or '(not set)'}[/]")
+        lines.append(f"[{C_PRIMARY}]{state.target or _('tui.not_set_sidebar')}[/]")
         lines.append("")
         lines.append(f"[bold {C_ACCENT}]Mode[/]")
         lines.append(f"[{C_SECONDARY}]{mode.label}[/]")
@@ -1002,7 +1002,7 @@ class DashboardScreen(Screen):
             lines.append("")
 
         res_color = "green" if state.resume else C_WARNING
-        lines.append(f"Resume [{res_color}]{'on' if state.resume else 'off'}[/]")
+        lines.append(f"Resume [{res_color}]{_('tui.on') if state.resume else _('tui.off')}[/]")
 
         provider = getattr(self._s["config"].llm, "provider", "?")
         model = getattr(self._s["config"].llm, "model", "?")
@@ -1227,4 +1227,4 @@ def run_tui_textual(*, launcher=None, once=False, initial_state=None) -> None:
             session["_launch"] = False
 
     from rich.console import Console
-    Console().print(f"[{C_MUTED}]Exited VulnClaw TUI.[/]")
+    Console().print(f"[{C_MUTED}]{_('tui.exited_textual')}[/]")
