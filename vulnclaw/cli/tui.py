@@ -436,16 +436,19 @@ def _run_pt_tui(session: dict[str, Any]) -> Optional[str]:
             return []
         sel = session["_palette_idx"] % len(items)
         result: list[tuple[str, str]] = []
-        result.append((f"fg:{C_BORDER} bg:#1e1e1e", "╭" + "─" * 46 + "╮\n"))
+        # Calculate dynamic box width: prefix (3) + cmd padded to 12 (12) + space (1) + max desc length
+        max_desc = max((len(desc) for _, desc in items), default=32)
+        box_inner = max(46, max_desc + 16)  # 46 is legacy minimum, 16 = prefix + cmd column + space
+        result.append((f"fg:{C_BORDER} bg:#1e1e1e", "╭" + "─" * box_inner + "╮\n"))
         for i, (cmd, desc) in enumerate(items):
             prefix = "▸" if i == sel else " "
             if i == sel:
                 result.append((f"fg:{C_PRIMARY} bold bg:#2a2a2a", f" {prefix} /{cmd:<12}"))
-                result.append((f"fg:{C_MUTED} bg:#2a2a2a", f" {desc[:32]}\n"))
+                result.append((f"fg:{C_MUTED} bg:#2a2a2a", f" {desc}\n"))
             else:
                 result.append((f"fg:{C_PRIMARY} bold bg:#1e1e1e", f" {prefix} /{cmd:<12}"))
-                result.append((f"fg:{C_MUTED} bg:#1e1e1e", f" {desc[:32]}\n"))
-        result.append((f"fg:{C_BORDER} bg:#1e1e1e", "╰" + "─" * 46 + "╯"))
+                result.append((f"fg:{C_MUTED} bg:#1e1e1e", f" {desc}\n"))
+        result.append((f"fg:{C_BORDER} bg:#1e1e1e", "╰" + "─" * box_inner + "╯"))
         return result
 
     def _select_palette(_buff: Buffer | None = None) -> None:

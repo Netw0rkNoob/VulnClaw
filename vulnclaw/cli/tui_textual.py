@@ -103,7 +103,7 @@ class CommandPalette(ListView):
         for cmd, desc in SLASH_COMMANDS.items():
             if cmd.startswith(prefix):
                 item = ListItem(Static(
-                    f"[bold {C_PRIMARY}]/{cmd}[/]  [{C_MUTED}]{desc[:40]}[/]"
+                    f"[bold {C_PRIMARY}]/{cmd}[/]  [{C_MUTED}]{desc}[/]"
                 ))
                 self.mount(item)
                 self._commands.append(cmd)
