@@ -132,7 +132,7 @@ class SecondaryPopup(Vertical):
 
     Supports input / choice / confirm / message / chain modes.
     """
-
+    can_focus = True
     def __init__(self, **kwargs: Any):
         kwargs.setdefault("id", "sec-popup")
         super().__init__(**kwargs)
@@ -205,7 +205,7 @@ class SecondaryPopup(Vertical):
             f"[bold {C_PRIMARY}]{label}[/]"
         )
         hint = Static(
-            f"  [{C_SUCCESS}]y[/] / [{C_ERROR}]n[/]  [/]",
+            f"  [{C_SUCCESS}]y[/] / [{C_ERROR}]n[/]",
             id="popup-hint",
         )
         self.mount(hint)
@@ -233,6 +233,13 @@ class SecondaryPopup(Vertical):
         self._cb = callback
         self._chain_fields = fields
         self._chain_idx = idx
+        # Create the Input widget once for the entire chain lifecycle.
+        # This eliminates the try/except workaround in _render_chain_step()
+        # and prevents focus-loss issues on Windows from widget destruction/recreation.
+        if idx < len(fields):
+            fld_default = fields[idx][2]
+            inp = Input(value=fld_default if fld_default else "", id="popup-input")
+            self.mount(inp)
         self._render_chain_step()
 
     def _render_chain_step(self) -> None:
@@ -253,8 +260,8 @@ class SecondaryPopup(Vertical):
         self.query_one("#popup-desc", Static).update(
             f"[bold {C_PRIMARY}][{idx + 1}/{len(fields)}] {fld_title}[/]"
         )
-        inp = Input(value=fld_default, id="popup-input")
-        self.mount(inp)
+        inp = self.query_one("#popup-input", Input)
+        inp.value = fld_default if fld_default else ""
         self.add_class("open")
         inp.focus()
 
@@ -285,7 +292,6 @@ class SecondaryPopup(Vertical):
                     state.only_port = ""
             else:
                 setattr(state, fld, value if value else "")
-        self._clear_dynamic()
         self._chain_idx += 1
         self._render_chain_step()
 
