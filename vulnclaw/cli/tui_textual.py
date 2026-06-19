@@ -254,7 +254,9 @@ class SecondaryPopup(Vertical):
             if self._on_done:
                 on_done = self._on_done
                 self._on_done = None
-                on_done()
+                # Same rationale as _resolve: defer on_done so pending
+                # async Widget.remove() calls can finish first.
+                self.app.call_later(on_done)
             return
         fld, fld_title, fld_default = fields[idx]
         self.query_one("#popup-desc", Static).update(
@@ -304,7 +306,12 @@ class SecondaryPopup(Vertical):
         if self._on_done:
             on_done = self._on_done
             self._on_done = None
-            on_done()
+            # Defer on_done so that async Widget.remove() triggered by
+            # _dismiss() → _clear_dynamic() can complete the actual DOM
+            # removal before we try to mount a new widget with the same ID.
+            # Without this, Textual raises DuplicateIds because the old
+            # widget is still in _nodes_by_id when mount() runs.
+            self.app.call_later(on_done)
 
     def _cancel(self) -> None:
         self._cb = None
@@ -312,7 +319,9 @@ class SecondaryPopup(Vertical):
         if self._on_done:
             on_done = self._on_done
             self._on_done = None
-            on_done()
+            # Same rationale as _resolve: defer on_done so pending
+            # async Widget.remove() calls can finish first.
+            self.app.call_later(on_done)
 
     def _dismiss(self) -> None:
         self.remove_class("open")
