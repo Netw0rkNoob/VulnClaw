@@ -515,7 +515,7 @@ class TestMCPLifecycleManager:
         manager._start_server(
             "chrome-devtools", MCPServerConfig(**BUILTIN_MCP_SERVERS["chrome-devtools"])
         )
-        result = await manager.call_tool("navigate", {"url": "https://example.com"})
+        result = await manager.call_tool("chrome_navigate", {"url": "https://example.com"})
 
         assert result["ok"] is False
         assert result["server"] == "chrome-devtools"

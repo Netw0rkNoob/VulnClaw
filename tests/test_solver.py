@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from vulnclaw.agent import solver
@@ -8,7 +9,11 @@ from vulnclaw.agent.blackboard import Blackboard, IntentStatus
 
 def _fake_agent(tool_outputs: list[str] | None = None):
     state = SimpleNamespace(board=Blackboard(), save=lambda: None)
-    context = SimpleNamespace(state=state, add_user_message=lambda *a: None)
+    context = SimpleNamespace(
+        state=state,
+        add_user_message=lambda *a: None,
+        add_assistant_message=lambda *a: None,
+    )
     queue = list(tool_outputs or [])
 
     async def _execute(tool_name, tool_args):
@@ -156,6 +161,96 @@ async def test_solve_rejects_ungrounded_completion(monkeypatch):
     assert "complete_rejected" in events
 
 
+async def test_solve_rejects_negated_completion_claim(monkeypatch):
+    """模型把「未达成」写进 complete 字段 → 绝不能误判达成（复现 i004 误报）。"""
+    reason_calls = {"n": 0}
+
+    async def fake_reason(agent, board, max_intents):
+        reason_calls["n"] += 1
+        if reason_calls["n"] == 1:
+            # complete=true 但 reason 是否定结论（应被否定闸门拦截）
+            return {
+                "complete": True,
+                "reason": "f001 仅确认端口与指纹，未达到 goal 要求的渗透完成标准",
+                "evidence": ["f001"],
+            }
+        return {"complete": False}  # 之后不再提出 → 前沿耗尽
+
+    async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None):
+        return True, "x"
+
+    monkeypatch.setattr(solver, "reason_step", fake_reason)
+    monkeypatch.setattr(solver, "explore_step", fake_explore)
+
+    events: list[str] = []
+    result = await solver.solve(
+        _fake_agent(),
+        origin="t",
+        goal="渗透分析站点",  # 非 flag 目标，旧逻辑无任何闸门会误判达成
+        max_steps=10,
+        on_event=lambda kind, payload: events.append(kind),
+    )
+
+    assert result.completed is False
+    assert "complete_rejected" in events
+    assert "completed" not in events
+
+
+async def test_solve_rejects_completion_without_explicit_bool(monkeypatch):
+    """旧式 {"complete": "<文字>"}（非显式 true）一律按未达成处理。"""
+
+    async def fake_reason(agent, board, max_intents):
+        return {"complete": "我认为已经分析完了"}
+
+    async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None):
+        return True, "x"
+
+    monkeypatch.setattr(solver, "reason_step", fake_reason)
+    monkeypatch.setattr(solver, "explore_step", fake_explore)
+
+    events: list[str] = []
+    result = await solver.solve(
+        _fake_agent(),
+        origin="t",
+        goal="渗透分析站点",
+        max_steps=10,
+        on_event=lambda kind, payload: events.append(kind),
+    )
+
+    assert result.completed is False
+    assert "complete_rejected" in events
+
+
+async def test_solve_completes_nonflag_goal_with_evidence(monkeypatch):
+    """非 flag 目标：complete=true + 无否定理由 + 引用真实 fact → 正常达成。"""
+
+    async def fake_reason(agent, board, max_intents):
+        return {
+            "complete": True,
+            "reason": "f001 已确认存在未授权访问接口，目标达成",
+            "evidence": ["f001"],
+        }
+
+    async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None):
+        return True, "x"
+
+    monkeypatch.setattr(solver, "reason_step", fake_reason)
+    monkeypatch.setattr(solver, "explore_step", fake_explore)
+
+    events: list[str] = []
+    result = await solver.solve(
+        _fake_agent(),
+        origin="t",
+        goal="检测未授权访问",
+        max_steps=10,
+        on_event=lambda kind, payload: events.append(kind),
+    )
+
+    assert result.completed is True
+    assert "completed" in events
+    assert "未授权访问" in result.board.complete_reason
+
+
 async def test_solve_stops_when_frontier_exhausted(monkeypatch):
     async def fake_reason_noop(agent, board, max_intents):
         return {}  # never proposes intents
@@ -198,9 +293,12 @@ async def test_solve_abandons_unproductive_intent(monkeypatch):
 
 
 async def test_solve_respects_safety_step_budget(monkeypatch):
+    counter = {"n": 0}
+
     async def fake_reason(agent, board, max_intents):
-        # always propose a fresh intent -> would loop forever without the cap
-        return {"intents": [{"from": [], "description": "endless"}]}
+        counter["n"] += 1
+        # each intent has a unique description to avoid dedup filtering
+        return {"intents": [{"from": [], "description": f"unique direction {counter['n']}"}]}
 
     async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None):
         return True, "step fact"
@@ -213,3 +311,184 @@ async def test_solve_respects_safety_step_budget(monkeypatch):
     assert result.completed is False
     assert result.reason == "触达安全预算上限"
     assert result.steps == 3
+
+
+# ── Parallel exploration tests ──────────────────────────────────────
+
+
+async def test_solve_parallel_explores_multiple_intents(monkeypatch):
+    """3 intents proposed → all 3 explored concurrently → each produces a fact."""
+    reason_calls = {"n": 0}
+
+    async def fake_reason(agent, board, max_intents):
+        reason_calls["n"] += 1
+        if reason_calls["n"] == 1:
+            return {"intents": [
+                {"from": [], "description": "sqli probe"},
+                {"from": [], "description": "xss probe"},
+                {"from": [], "description": "ssrf probe"},
+            ]}
+        return {"complete": True, "reason": "all probed", "evidence": ["f001"]}
+
+    async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None, skip_context_write=False):
+        await asyncio.sleep(0)
+        return True, f"found via {intent.description}"
+
+    monkeypatch.setattr(solver, "reason_step", fake_reason)
+    monkeypatch.setattr(solver, "explore_step", fake_explore)
+
+    events: list[str] = []
+    result = await solver.solve(
+        _fake_agent(), origin="t", goal="test", max_steps=10, max_parallel=3,
+        on_event=lambda kind, payload: events.append(kind),
+    )
+
+    assert events.count("explore_start") == 3
+    concluded = [i for i in result.board.intents if i.status == IntentStatus.CONCLUDED]
+    assert len(concluded) == 3
+
+
+async def test_solve_parallel_evidence_isolation(monkeypatch):
+    """Each parallel worker gets its own evidence buffer, no cross-contamination."""
+    collected_evidence: dict[str, list[str]] = {}
+
+    async def fake_reason(agent, board, max_intents):
+        if not board.intents:
+            return {"intents": [
+                {"from": [], "description": "path A"},
+                {"from": [], "description": "path B"},
+            ]}
+        return {}
+
+    async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None, skip_context_write=False):
+        marker = f"evidence_for_{intent.id}"
+        evidence_buffer.append(marker)
+        collected_evidence[intent.id] = list(evidence_buffer)
+        await asyncio.sleep(0)
+        return True, f"result {intent.id}"
+
+    monkeypatch.setattr(solver, "reason_step", fake_reason)
+    monkeypatch.setattr(solver, "explore_step", fake_explore)
+
+    await solver.solve(_fake_agent(), origin="t", goal="g", max_steps=10, max_parallel=2)
+
+    if "i001" in collected_evidence and "i002" in collected_evidence:
+        assert "evidence_for_i002" not in collected_evidence["i001"]
+        assert "evidence_for_i001" not in collected_evidence["i002"]
+
+
+async def test_solve_parallel_one_failure_others_continue(monkeypatch):
+    """One intent raises an exception, others complete normally."""
+    async def fake_reason(agent, board, max_intents):
+        if not board.intents:
+            return {"intents": [
+                {"from": [], "description": "will fail"},
+                {"from": [], "description": "will succeed"},
+            ]}
+        return {}
+
+    call_count = {"n": 0}
+
+    async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None, skip_context_write=False):
+        call_count["n"] += 1
+        if "fail" in intent.description:
+            raise RuntimeError("simulated crash")
+        return True, "success result"
+
+    monkeypatch.setattr(solver, "reason_step", fake_reason)
+    monkeypatch.setattr(solver, "explore_step", fake_explore)
+
+    events: list[str] = []
+    result = await solver.solve(
+        _fake_agent(), origin="t", goal="g", max_steps=10, max_parallel=2,
+        on_event=lambda kind, payload: events.append(kind),
+    )
+
+    assert "error" in events
+    concluded = [i for i in result.board.intents if i.status == IntentStatus.CONCLUDED]
+    abandoned = [i for i in result.board.intents if i.status == IntentStatus.ABANDONED]
+    assert len(concluded) == 1
+    assert len(abandoned) >= 1
+
+
+async def test_solve_parallel_board_fact_ids_sequential(monkeypatch):
+    """Concurrent conclude operations produce unique, sequential fact IDs."""
+    async def fake_reason(agent, board, max_intents):
+        if not board.intents:
+            return {"intents": [
+                {"from": [], "description": f"dir {i}"} for i in range(3)
+            ]}
+        return {}
+
+    async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None, skip_context_write=False):
+        await asyncio.sleep(0)
+        return True, f"fact from {intent.id}"
+
+    monkeypatch.setattr(solver, "reason_step", fake_reason)
+    monkeypatch.setattr(solver, "explore_step", fake_explore)
+
+    result = await solver.solve(_fake_agent(), origin="t", goal="g", max_steps=10, max_parallel=3)
+
+    fact_ids = [f.id for f in result.board.facts]
+    assert len(fact_ids) == len(set(fact_ids)), f"duplicate fact IDs: {fact_ids}"
+
+
+async def test_solve_serial_fallback(monkeypatch):
+    """With only 1 open intent, solve takes the serial path (no gather overhead)."""
+    async def fake_reason(agent, board, max_intents):
+        if not board.intents:
+            return {"intents": [{"from": [], "description": "single path"}]}
+        return {}
+
+    async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None, skip_context_write=False):
+        return True, "serial result"
+
+    monkeypatch.setattr(solver, "reason_step", fake_reason)
+    monkeypatch.setattr(solver, "explore_step", fake_explore)
+
+    result = await solver.solve(_fake_agent(), origin="t", goal="g", max_steps=10, max_parallel=3)
+
+    concluded = [i for i in result.board.intents if i.status == IntentStatus.CONCLUDED]
+    assert len(concluded) == 1
+
+
+async def test_solve_parallel_max_caps_batch(monkeypatch):
+    """max_parallel=2 caps the batch even when 3 intents are open."""
+    explored_intents: list[str] = []
+
+    async def fake_reason(agent, board, max_intents):
+        if not board.intents:
+            return {"intents": [
+                {"from": [], "description": f"path {i}"} for i in range(3)
+            ]}
+        return {}
+
+    async def fake_explore(agent, board, intent, *, max_tool_rounds, evidence_buffer, stream_sink=None, skip_context_write=False):
+        explored_intents.append(intent.id)
+        return True, f"done {intent.id}"
+
+    monkeypatch.setattr(solver, "reason_step", fake_reason)
+    monkeypatch.setattr(solver, "explore_step", fake_explore)
+
+    await solver.solve(_fake_agent(), origin="t", goal="g", max_steps=10, max_parallel=2)
+
+    assert len(explored_intents) == 3
+
+
+# ── Blackboard seq restore test ─────────────────────────────────────
+
+
+def test_blackboard_seq_restores_from_existing_facts():
+    """After deserialisation, fact/intent seq counters recover from existing items."""
+    board = Blackboard()
+    board.add_fact("first", source="test")
+    board.add_fact("second", source="test")
+    board.add_intent("intent one")
+
+    data = board.model_dump()
+    restored = Blackboard.model_validate(data)
+
+    new_fact = restored.add_fact("third", source="test")
+    assert new_fact.id == "f003"
+    new_intent = restored.add_intent("intent two")
+    assert new_intent.id == "i002"

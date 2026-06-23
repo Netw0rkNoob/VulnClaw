@@ -256,11 +256,20 @@ RECON_INSTRUCTION = """\
 | `syn` | SYN 半开扫描（需管理员权限） |
 示例：`nmap_scan(target="192.168.1.1", scan_type="service", timing=4)`
 
+**⭐ 信息收集专用内置工具（优先于 python_execute 手写爆破/抓取）**
+- 空间测绘资产发现 → `space_search(engine="fofa"|"hunter"|"quake"|"shodan"|"all", domain="目标主域")`：被动获取 IP/端口/子域/指纹，不接触目标
+- 子域名枚举 → `subdomain_enum(domain="目标主域")`：空间测绘被动聚合 + 字典 DNS 爆破，自动去重
+- JS 信息收集 → `js_recon(url="目标URL")`：抓页面+全部 .js，提取 API 接口/路径/关联域名/硬编码密钥，**默认自动对收集到的接口做未授权探测**，用真实端点反哺后续测试
+- 未授权访问验证 → `unauth_test(base_url, endpoints=[...])`：对 JS/目录收集到的接口逐个无凭据请求，判定是否未授权可访问；给 auth_header 可做有/无 token 差分确认
+- 目录/文件枚举 → `dir_enum(url="目标URL", extensions=["php","jsp","bak","zip"])`：并发字典爆破，自带 404 基线与全局伪装识别、状态码过滤
+> 标准链路：`js_recon` 拿接口 →（自动/手动）`unauth_test` 逐个验未授权 → `dir_enum` 补攻击面 → 有主域再 `subdomain_enum`/`space_search` 扩面。**JS 里收集到的每个接口都要过一遍未授权**，不要只列不测，也不要用 python_execute 凭空猜接口。
+
 ### 维度二：网站信息
 - [ ] 网站架构（OS + 中间件 + 数据库 + 语言 + 框架 → 完整技术栈）
 - [ ] Web 指纹（CMS 类型、前端框架、JS 库、模板引擎）
 - [ ] WAF 检测（wafw00f 逻辑 + 响应特征匹配 — WAF 拦截页面/特殊响应头）
-- [ ] 敏感目录 & 敏感文件（常见目录字典 + 状态码筛选 200/403/401）
+- [ ] 敏感目录 & 敏感文件（用 `dir_enum`：字典爆破 + 状态码筛选 200/403/401）
+- [ ] JS 端点/密钥提取（用 `js_recon`：API 路径、关联域名、硬编码 AK/SK/token/JWT）
 - [ ] 源码泄露（.git/.svn/.DS_Store/.env/web.config/备份文件/.bak/.swp/.old）
 - [ ] 旁站查询（同 IP 反查域名 — 同服务器上的其他站点）
 - [ ] C 段查询（同网段存活主机扫描 — 255 个 IP 探测）
@@ -268,7 +277,7 @@ RECON_INSTRUCTION = """\
 ### 维度三：域名信息
 - [ ] WHOIS 注册信息（注册人/注册商/NS 服务器/注册日期/到期日期）
 - [ ] ICP 备案信息（工信部备案查询 — 仅中国大陆域名）
-- [ ] 子域名发现（crt.sh + 爆破 + 搜索引擎 + DNS 区域传送）
+- [ ] 子域名发现（用 `subdomain_enum` / `space_search`：空间测绘 + 爆破 + crt.sh）
 - [ ] DNS 记录全量（A/CNAME/MX/TXT/NS/SPF/SOA）
 - [ ] 证书透明度日志（crt.sh / Censys / certspotter）
 - [ ] **子域名渗透**：发现子域名后，主动对每个子域名进行渗透测试（端口扫描 + Web 指纹 + 漏洞发现）

@@ -129,6 +129,21 @@ async def execute_mcp_tool(agent: Any, tool_name: str, args: dict[str, Any]) -> 
     if tool_name == "brute_force_login":
         return await execute_brute_force(agent, args)
 
+    if tool_name in {"space_search", "subdomain_enum", "js_recon", "dir_enum", "unauth_test"}:
+        from vulnclaw.agent import recon_tools
+
+        dispatch = {
+            "space_search": recon_tools.execute_space_search,
+            "subdomain_enum": recon_tools.execute_subdomain_enum,
+            "js_recon": recon_tools.execute_js_recon,
+            "dir_enum": recon_tools.execute_dir_enum,
+            "unauth_test": recon_tools.execute_unauth_test,
+        }
+        try:
+            return await dispatch[tool_name](agent, args)
+        except Exception as e:
+            return f"[!] 工具执行错误 ({tool_name}): {e}"
+
     if not agent.mcp_manager:
         return f"[!] MCP 管理器未初始化，无法执行工具: {tool_name}"
 
@@ -156,7 +171,10 @@ async def execute_mcp_tool(agent: Any, tool_name: str, args: dict[str, Any]) -> 
                 return f"[{error_type}] {message}\n[suggestion] {suggestion}".strip()
             return f"[{error_type}] {message}".strip()
 
-        return str(result)
+        text = str(result)
+        if text.strip() in ("undefined", "null", "None"):
+            return f"[!] 工具 {tool_name} 返回空结果 (undefined)，调用可能失败"
+        return text
     except Exception as e:
         return f"[!] 工具执行错误 ({tool_name}): {e}"
 
@@ -455,6 +473,163 @@ def build_openai_tools(mcp_manager: Any) -> list[dict[str, Any]]:
                         },
                     },
                     "required": ["url", "password_field", "passwords"],
+                },
+            },
+        }
+    )
+
+    tools.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "space_search",
+                "description": (
+                    "空间测绘资产搜索（FOFA/Hunter/Quake/Shodan/ZoomEye/0.zone 零零信安）。"
+                    "信息收集阶段用于被动发现目标资产、IP、端口、子域、标题、组件指纹，不直接接触目标。"
+                    "给 domain 自动按各引擎语法构造 domain 查询；也可传完整 query 语法。"
+                    "engine=all 时并发查询所有已配置 key 的引擎。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "engine": {
+                            "type": "string",
+                            "description": "fofa/hunter/quake/shodan/zoomeye/zerozone/all，默认 fofa",
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "引擎原生查询语法，如 'domain=\"x.com\"'、'app=\"Struts2\"'（可选）",
+                        },
+                        "domain": {
+                            "type": "string",
+                            "description": "目标主域名，自动构造各引擎 domain 查询（query 未给时使用）",
+                        },
+                        "size": {"type": "integer", "description": "返回条数，默认 100"},
+                    },
+                },
+            },
+        }
+    )
+
+    tools.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "subdomain_enum",
+                "description": (
+                    "子域名枚举。先用已配置的空间测绘引擎被动聚合，再用内置小字典做 DNS 解析爆破，"
+                    "返回去重后的存活子域名列表。优先于 python_execute 自己写爆破。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {"type": "string", "description": "主域名，如 nju.edu.cn"},
+                        "brute": {
+                            "type": "boolean",
+                            "description": "是否启用内置字典 DNS 爆破（默认 true）",
+                        },
+                    },
+                    "required": ["domain"],
+                },
+            },
+        }
+    )
+
+    tools.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "js_recon",
+                "description": (
+                    "JS 信息收集（参考 URLFinder）。抓取目标页面及其引用的全部 .js 文件，"
+                    "提取 API 接口/路径、关联域名、绝对 URL，以及疑似硬编码密钥（AK/SK、token、JWT、私钥等）。"
+                    "默认 auto_probe=true：自动对收集到的同源接口逐个做未授权访问探测（仅安全 GET，跳过破坏性接口）。"
+                    "信息收集阶段优先调用，用真实提取的端点反哺后续测试，而非凭空猜接口。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "目标页面 URL"},
+                        "max_js": {
+                            "type": "integer",
+                            "description": "最多抓取的 JS 文件数（默认 30）",
+                        },
+                        "auto_probe": {
+                            "type": "boolean",
+                            "description": "是否自动对收集到的接口做未授权探测（默认 true）",
+                        },
+                        "auth_header": {
+                            "type": "string",
+                            "description": "可选鉴权头做差分对比，如 'Authorization: Bearer xxx'，验证无 token 是否也能拿到数据",
+                        },
+                    },
+                    "required": ["url"],
+                },
+            },
+        }
+    )
+
+    tools.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "unauth_test",
+                "description": (
+                    "未授权访问探测。对一批接口（通常来自 js_recon 收集的端点）逐个无凭据请求，"
+                    "按状态码/响应体/内容类型判定：⚠疑似未授权(返回数据) / ✓已鉴权拦截 / ↪跳转登录 / —不存在。"
+                    "提供 auth_header 时做有/无 token 差分对比，无 token 也能拿到同样数据则判定 🔴未授权确认。"
+                    "严守读写分离：仅发安全 GET，自动跳过 delete/update/sms 等破坏性接口，不批量遍历 ID。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "base_url": {"type": "string", "description": "目标基础 URL（确定同源范围）"},
+                        "endpoints": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "待测接口路径/URL 列表（来自 js_recon 的接口/路径）",
+                        },
+                        "auth_header": {
+                            "type": "string",
+                            "description": "可选鉴权头做差分，如 'Authorization: Bearer xxx' 或 'Cookie: session=...'",
+                        },
+                        "max_endpoints": {
+                            "type": "integer",
+                            "description": "最多探测的接口数（默认 60）",
+                        },
+                    },
+                    "required": ["base_url", "endpoints"],
+                },
+            },
+        }
+    )
+
+    tools.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "dir_enum",
+                "description": (
+                    "目录/文件枚举（参考 dirsearch）。并发字典爆破，自带 404 基线与全局伪装响应识别"
+                    "（随机路径返回 200 即判定伪装并停止）、状态码与响应长度过滤。"
+                    "仅做安全的 GET 探测，不碰 delete/update 等破坏性路径。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "目标基础 URL，如 https://x.com/"},
+                        "extensions": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "扩展名展开，如 ['php','jsp','bak','zip']（可选）",
+                        },
+                        "wordlist": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "追加的自定义路径（基于命名规律的启发式字典，可选）",
+                        },
+                    },
+                    "required": ["url"],
                 },
             },
         }

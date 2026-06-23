@@ -6,6 +6,7 @@ import asyncio
 import subprocess
 import time
 from contextlib import suppress
+from datetime import timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -20,6 +21,16 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     ClientSession = None
     StdioServerParameters = None
     stdio_client = None
+
+try:
+    from mcp.client.streamable_http import streamablehttp_client
+except ImportError:  # pragma: no cover - optional runtime dependency
+    streamablehttp_client = None
+
+# Transport type aliases that map to the MCP Streamable HTTP client.
+HTTP_TRANSPORT_TYPES = frozenset(
+    {"streamable-http", "streamable_http", "streamablehttp", "http"}
+)
 
 
 class MCPLifecycleManager:
@@ -233,6 +244,21 @@ class MCPLifecycleManager:
             self._register_known_tools(name)
             return True
 
+        if transport.type in HTTP_TRANSPORT_TYPES:
+            self.registry.set_server_health(name, HealthStatus.STARTING.value)
+            attached = self._try_attach_http_client(name, config)
+            self.registry.set_server_attach_result(name, attempted=True, succeeded=attached)
+            self.registry.set_server_running(name, running=attached)
+            self.registry.set_server_execution_mode(name, "http" if attached else "placeholder")
+            self.registry.set_server_health(
+                name,
+                HealthStatus.HEALTHY.value if attached else HealthStatus.DEGRADED.value,
+            )
+            # 探测失败时回退到静态已知工具，至少让 LLM 能看到工具名
+            if not attached:
+                self._register_known_tools(name)
+            return True
+
         self.registry.set_server_health(name, "unavailable")
         return False
 
@@ -309,29 +335,143 @@ class MCPLifecycleManager:
 
         return False
 
-    def _probe_stdio_server(
+    def _try_attach_http_client(self, name: str, config: MCPServerConfig) -> bool:
+        """Validate a Streamable HTTP MCP server and mark it for lazy connection.
+
+        Many HTTP MCP servers (Chrome DevTools, etc.) only support **one concurrent
+        session**.  If we probe (connect + initialize + list_tools + disconnect) at
+        startup, the server may not release the session cleanly, causing the real
+        persistent session created on the first tool call to fail with
+        "Already connected to a transport".
+
+        To avoid this, we only validate the URL and do a lightweight HTTP reachability
+        check here.  The real MCP session (with tool discovery) is created lazily by
+        ``_get_or_create_persistent_http_session`` on the first actual tool call.
+        """
+        if ClientSession is None or streamablehttp_client is None:
+            self.registry.set_server_error(
+                name, "MCP Python SDK is not installed", error_type="sdk_unavailable"
+            )
+            return False
+
+        url = config.transport.url or ""
+        if not url:
+            self.registry.set_server_error(
+                name, "streamable-http transport is missing url", error_type="config_error"
+            )
+            return False
+
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            self.registry.set_server_error(
+                name, f"invalid streamable-http url: {url}", error_type="config_error"
+            )
+            return False
+
+        # Lightweight reachability check (no MCP session, no session slot consumed)
+        reachable = self._check_http_reachable(url, self._startup_timeout_seconds(config))
+        if not reachable:
+            self.registry.set_server_error(
+                name, f"streamable-http server unreachable at {url}", error_type="attach_failed"
+            )
+            return False
+
+        self._mcp_clients[name] = {"kind": "http-lazy", "config": config}
+        self._register_known_tools(name)
+        return True
+
+    def _check_http_reachable(self, url: str, timeout_s: float) -> bool:
+        """Quick HTTP GET to verify the server is up (no MCP protocol, no session)."""
+        try:
+            import httpx
+
+            r = httpx.get(url, timeout=min(timeout_s, 10), verify=False)
+            # Any response (even 400/405) means the server is alive
+            return True
+        except Exception:
+            return False
+
+    def _probe_http_server(
         self, config: MCPServerConfig
     ) -> tuple[bool, str, list[dict[str, Any]]]:
-        """Run a one-shot stdio MCP probe to validate the server can initialize."""
+        """One-shot Streamable HTTP probe with a hard timeout (never hangs)."""
+        timeout_s = self._startup_timeout_seconds(config)
+        return self._run_probe(self._async_probe_http_server(config), timeout_s)
+
+    async def _async_probe_http_server(
+        self, config: MCPServerConfig
+    ) -> tuple[bool, str, list[dict[str, Any]]]:
+        url = config.transport.url or ""
+        headers = config.transport.env or None
+        connect_s = self._startup_timeout_seconds(config)
+        read_s = self._tool_timeout_seconds(config)
+        try:
+            async with streamablehttp_client(
+                url, headers=headers, timeout=connect_s, sse_read_timeout=read_s
+            ) as (read_stream, write_stream, _get_session_id):
+                async with ClientSession(
+                    read_stream, write_stream, read_timeout_seconds=timedelta(seconds=read_s)
+                ) as session:
+                    await session.initialize()
+                    tools = await session.list_tools()
+                    tool_defs = self._normalize_mcp_tools(getattr(tools, "tools", []) or [])
+                    return True, f"initialized with {len(tool_defs)} tools", tool_defs
+        except BaseException as exc:
+            # 从 ExceptionGroup 中提取根因（anyio TaskGroup 把真实异常包了一层）
+            detail = str(exc)
+            if hasattr(exc, "exceptions"):
+                subs = list(getattr(exc, "exceptions", []))
+                if subs:
+                    detail = "; ".join(str(s) for s in subs)
+            if "already connected" in detail.lower():
+                detail += " (请重启 MCP 服务或关闭旧客户端连接)"
+            return False, detail, []
+
+    def _run_probe(
+        self, coro: Any, timeout_s: float
+    ) -> tuple[bool, str, list[dict[str, Any]]]:
+        """Run an async probe, handling both 'no loop' and 'loop already running' cases.
+
+        When called from within an active event loop (e.g. VulnClaw's REPL under
+        asyncio.run), ``asyncio.run()`` would fail.  We fall back to creating a
+        *new* event loop on a background thread so the probe can complete without
+        blocking the caller's loop.
+        """
+        import concurrent.futures
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
 
-        if loop and loop.is_running():
-            return False, "stdio probe skipped because an event loop is already running", []
+        if loop is None or not loop.is_running():
+            try:
+                return asyncio.run(asyncio.wait_for(coro, timeout=timeout_s))
+            except asyncio.TimeoutError:
+                return False, f"probe timed out after {timeout_s:.0f}s", []
+            except Exception as exc:
+                return False, str(exc), []
 
-        timeout_s = self._startup_timeout_seconds(config)
+        # A loop is already running — run the probe on a worker thread with its
+        # own event loop so we don't deadlock the caller.
+        def _in_thread():
+            return asyncio.run(asyncio.wait_for(coro, timeout=timeout_s))
+
         try:
-            return asyncio.run(
-                asyncio.wait_for(self._async_probe_stdio_server(config), timeout=timeout_s)
-            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_in_thread)
+                return future.result(timeout=timeout_s + 5)
         except asyncio.TimeoutError:
-            return False, f"stdio attach timed out after {timeout_s:.0f}s", []
-        except RuntimeError as exc:
+            return False, f"probe timed out after {timeout_s:.0f}s", []
+        except Exception as exc:
             return False, str(exc), []
-        except Exception as exc:  # pragma: no cover - defensive
-            return False, str(exc), []
+
+    def _probe_stdio_server(
+        self, config: MCPServerConfig
+    ) -> tuple[bool, str, list[dict[str, Any]]]:
+        """Run a one-shot stdio MCP probe to validate the server can initialize."""
+        timeout_s = self._startup_timeout_seconds(config)
+        return self._run_probe(self._async_probe_stdio_server(config), timeout_s)
 
     @staticmethod
     def _startup_timeout_seconds(config: MCPServerConfig) -> float:
@@ -339,6 +479,18 @@ class MCPLifecycleManager:
         raw = getattr(config.transport, "startup_timeout", None)
         if not raw or raw <= 0:
             return 30.0
+        return float(raw) / 1000.0
+
+    @staticmethod
+    def _tool_timeout_seconds(config: MCPServerConfig) -> float:
+        """Resolve the per-call tool timeout (config is in ms) to seconds, defaulting to 300s.
+
+        This bounds how long a single tool call waits for the server's (possibly
+        streamed) response, so a silent server can never deadlock the agent.
+        """
+        raw = getattr(config.transport, "tool_timeout", None)
+        if not raw or raw <= 0:
+            return 300.0
         return float(raw) / 1000.0
 
     async def _async_probe_stdio_server(
@@ -353,11 +505,12 @@ class MCPLifecycleManager:
 
         try:
             async with stdio_client(server) as (read_stream, write_stream):
-                session = ClientSession(read_stream, write_stream)
-                await session.initialize()
-                tools = await session.list_tools()
-                tool_defs = self._normalize_mcp_tools(getattr(tools, "tools", []) or [])
-                return True, f"initialized with {len(tool_defs)} tools", tool_defs
+                # async with ClientSession 启动 _receive_loop，否则 initialize() 不会有人读响应而卡死。
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    tools = await session.list_tools()
+                    tool_defs = self._normalize_mcp_tools(getattr(tools, "tools", []) or [])
+                    return True, f"initialized with {len(tool_defs)} tools", tool_defs
         except Exception as exc:
             return False, str(exc), []
 
@@ -444,11 +597,15 @@ class MCPLifecycleManager:
             env=transport.env,
         )
 
+        timeout_s = self._tool_timeout_seconds(config)
         async with stdio_client(server) as (read_stream, write_stream):
-            session = ClientSession(read_stream, write_stream)
-            await session.initialize()
-            result = await session.call_tool(tool_name, arguments=arguments)
-            return result
+            async with ClientSession(
+                read_stream, write_stream, read_timeout_seconds=timedelta(seconds=timeout_s)
+            ) as session:
+                await session.initialize()
+                return await asyncio.wait_for(
+                    session.call_tool(tool_name, arguments=arguments), timeout=timeout_s
+                )
 
     async def _get_or_create_persistent_stdio_session(self, server_name: str) -> Any:
         """Create and cache a persistent stdio-backed MCP session for the current loop."""
@@ -473,10 +630,15 @@ class MCPLifecycleManager:
             args=transport.args or [],
             env=transport.env,
         )
+        timeout_s = self._tool_timeout_seconds(config)
 
         cm = stdio_client(server)
         read_stream, write_stream = await cm.__aenter__()
-        session = ClientSession(read_stream, write_stream)
+        session = ClientSession(
+            read_stream, write_stream, read_timeout_seconds=timedelta(seconds=timeout_s)
+        )
+        # 进入 ClientSession 上下文以启动 _receive_loop；否则后续调用读不到响应而卡死。
+        await session.__aenter__()
         await session.initialize()
 
         self._mcp_clients[server_name] = {
@@ -487,6 +649,120 @@ class MCPLifecycleManager:
             "context_manager": cm,
         }
         return session
+
+    async def _get_or_create_persistent_http_session(self, server_name: str) -> Any:
+        """Create and cache a persistent Streamable HTTP MCP session for the current loop.
+
+        First call establishes the session AND discovers real tools (replacing the
+        static placeholders registered at startup).  Subsequent calls in the same
+        event loop return the cached session.
+
+        If the connect/initialize fails (e.g. "Already connected"), the error is
+        raised to the caller so the tool_call_manager can handle it as a service
+        error — it never crashes the entire solve loop.
+        """
+        if streamablehttp_client is None or ClientSession is None:
+            raise RuntimeError("MCP Python SDK is not installed")
+
+        client_meta = self._mcp_clients.get(server_name)
+        current_loop = asyncio.get_running_loop()
+
+        if isinstance(client_meta, dict) and client_meta.get("kind") == "persistent-http":
+            if client_meta.get("loop") is current_loop and client_meta.get("session") is not None:
+                return client_meta["session"]
+
+        config = None
+        if isinstance(client_meta, dict):
+            config = client_meta.get("config")
+        if config is None:
+            config = self.config.mcp.servers.get(server_name)
+        if config is None:
+            raise RuntimeError(f"missing MCP config for server {server_name}")
+
+        url = config.transport.url or ""
+        if not url:
+            raise RuntimeError(f"streamable-http transport for {server_name} is missing url")
+        headers = config.transport.env or None
+        connect_s = self._startup_timeout_seconds(config)
+        read_s = self._tool_timeout_seconds(config)
+
+        cm = None
+        session = None
+        try:
+            cm = streamablehttp_client(
+                url, headers=headers, timeout=connect_s, sse_read_timeout=read_s
+            )
+            read_stream, write_stream, _get_session_id = await cm.__aenter__()
+            session = ClientSession(
+                read_stream, write_stream, read_timeout_seconds=timedelta(seconds=read_s)
+            )
+            await session.__aenter__()
+            await session.initialize()
+        except BaseException as exc:
+            # Clean up partial state
+            if session is not None:
+                with suppress(Exception):
+                    await session.__aexit__(None, None, None)
+            if cm is not None:
+                with suppress(Exception):
+                    await cm.__aexit__(None, None, None)
+            # Extract root cause from ExceptionGroup
+            detail = str(exc)
+            if hasattr(exc, "exceptions"):
+                subs = list(getattr(exc, "exceptions", []))
+                if subs:
+                    detail = "; ".join(str(s) for s in subs)
+            raise RuntimeError(
+                f"streamable-http session for {server_name} failed: {detail}"
+            ) from None
+
+        # 首次连接时发现真实工具并替换启动时注册的静态占位工具
+        try:
+            tools = await session.list_tools()
+            tool_defs = self._normalize_mcp_tools(getattr(tools, "tools", []) or [])
+            if tool_defs:
+                self._register_runtime_tools(server_name, tool_defs)
+        except Exception:
+            pass
+
+        self._mcp_clients[server_name] = {
+            "kind": "persistent-http",
+            "config": config,
+            "loop": current_loop,
+            "session": session,
+            "context_manager": cm,
+        }
+        self.registry.set_server_running(server_name, running=True)
+        self.registry.set_server_health(server_name, HealthStatus.HEALTHY.value)
+        return session
+
+    async def _get_or_create_session(self, server_name: str) -> Any:
+        """Return a persistent MCP session, dispatching by the server's transport type."""
+        config = self.config.mcp.servers.get(server_name)
+        client_meta = self._mcp_clients.get(server_name)
+        if config is None and isinstance(client_meta, dict):
+            config = client_meta.get("config")
+        transport_type = (
+            config.transport.type if config and config.transport else ""
+        ).lower()
+        if transport_type in HTTP_TRANSPORT_TYPES:
+            return await self._get_or_create_persistent_http_session(server_name)
+        return await self._get_or_create_persistent_stdio_session(server_name)
+
+    def _is_sdk_attachable(self, server_name: str) -> bool:
+        """Whether this server can be driven over a real MCP SDK transport."""
+        config = self.config.mcp.servers.get(server_name)
+        client_meta = self._mcp_clients.get(server_name)
+        if config is None and isinstance(client_meta, dict):
+            config = client_meta.get("config")
+        if config is None or config.transport is None:
+            return False
+        ttype = (config.transport.type or "").lower()
+        if ttype in HTTP_TRANSPORT_TYPES:
+            return streamablehttp_client is not None and ClientSession is not None
+        if ttype == "stdio":
+            return stdio_client is not None and ClientSession is not None
+        return False
 
     def _is_process_alive(self, server_name: str) -> bool:
         """Return True if the server's tracked subprocess (if any) is still running.
@@ -553,14 +829,33 @@ class MCPLifecycleManager:
             and state.health_status == HealthStatus.HEALTHY.value
         )
 
+    @staticmethod
+    def _is_persistent_session(client_meta: Any) -> bool:
+        if not isinstance(client_meta, dict):
+            return False
+        return client_meta.get("kind") in ("persistent-stdio", "persistent-http")
+
+    async def _aclose_session_meta(self, client_meta: Any) -> None:
+        """Exit a persistent session then its transport context manager (order matters)."""
+        if not self._is_persistent_session(client_meta):
+            return
+        session = client_meta.get("session")
+        if session is not None:
+            try:
+                await session.__aexit__(None, None, None)
+            except BaseException:
+                pass
+        cm = client_meta.get("context_manager")
+        if cm is not None:
+            try:
+                await cm.__aexit__(None, None, None)
+            except BaseException:
+                pass
+
     async def _teardown_server(self, server_name: str) -> None:
         """Close any cached session and kill any tracked process for a server."""
         client_meta = self._mcp_clients.pop(server_name, None)
-        if isinstance(client_meta, dict) and client_meta.get("kind") == "persistent-stdio":
-            cm = client_meta.get("context_manager")
-            if cm is not None:
-                with suppress(Exception):
-                    await cm.__aexit__(None, None, None)
+        await self._aclose_session_meta(client_meta)
 
         proc = self._processes.pop(server_name, None)
         if proc is not None:
@@ -653,18 +948,8 @@ class MCPLifecycleManager:
             ],
             "chrome-devtools": [
                 {
-                    "name": "new_page",
-                    "description": "Open a new browser page",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "url": {"type": "string", "description": "URL to navigate to"},
-                        },
-                    },
-                },
-                {
-                    "name": "navigate",
-                    "description": "Navigate to a URL in the current page",
+                    "name": "chrome_navigate",
+                    "description": "Navigate Chrome to a URL. After navigating, use chrome_read_page or chrome_get_web_content to read the page content.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -674,22 +959,111 @@ class MCPLifecycleManager:
                     },
                 },
                 {
-                    "name": "screenshot",
+                    "name": "chrome_read_page",
+                    "description": "Read the current page content (HTML, text, links, forms). Use this AFTER chrome_navigate to get page data.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "format": {"type": "string", "description": "Output format: text, html, links, forms", "default": "text"},
+                        },
+                    },
+                },
+                {
+                    "name": "chrome_screenshot",
                     "description": "Take a screenshot of the current page",
                     "inputSchema": {"type": "object", "properties": {}},
                 },
                 {
-                    "name": "evaluate_js",
-                    "description": "Evaluate JavaScript in the browser",
+                    "name": "chrome_javascript",
+                    "description": "Execute JavaScript in the browser and return the result",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "expression": {
-                                "type": "string",
-                                "description": "JS expression to evaluate",
-                            },
+                            "code": {"type": "string", "description": "JavaScript code to execute"},
                         },
-                        "required": ["expression"],
+                        "required": ["code"],
+                    },
+                },
+                {
+                    "name": "chrome_get_web_content",
+                    "description": "Get structured web content from the current page (headings, links, images, meta tags)",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "URL to get content from (optional, uses current page if omitted)"},
+                        },
+                    },
+                },
+                {
+                    "name": "chrome_console",
+                    "description": "Get browser console messages (errors, warnings, logs)",
+                    "inputSchema": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "chrome_network_request",
+                    "description": "Send an HTTP request through the browser context (with cookies/session)",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "URL"},
+                            "method": {"type": "string", "description": "HTTP method"},
+                            "headers": {"type": "object", "description": "Headers"},
+                            "body": {"type": "string", "description": "Request body"},
+                        },
+                        "required": ["url"],
+                    },
+                },
+                {
+                    "name": "chrome_click_element",
+                    "description": "Click an element on the page by CSS selector or text",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "selector": {"type": "string", "description": "CSS selector or text to click"},
+                        },
+                        "required": ["selector"],
+                    },
+                },
+                {
+                    "name": "chrome_fill_or_select",
+                    "description": "Fill in a form field or select an option",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "selector": {"type": "string", "description": "CSS selector of the input"},
+                            "value": {"type": "string", "description": "Value to fill"},
+                        },
+                        "required": ["selector", "value"],
+                    },
+                },
+                {
+                    "name": "chrome_pentest_http",
+                    "description": "Analyze HTTP security: CORS, CSP, HSTS, cookie flags, security headers",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "URL to analyze"},
+                        },
+                    },
+                },
+                {
+                    "name": "chrome_pentest_js_analyze",
+                    "description": "Analyze JavaScript for security issues: eval, innerHTML, postMessage, secrets",
+                    "inputSchema": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "chrome_pentest_cookies",
+                    "description": "Analyze cookies for security: HttpOnly, Secure, SameSite flags",
+                    "inputSchema": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "chrome_pentest_headers",
+                    "description": "Check HTTP response security headers",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "URL to check"},
+                        },
                     },
                 },
             ],
@@ -765,12 +1139,13 @@ class MCPLifecycleManager:
         """Stop a single MCP server (synchronous; safe to call without a running loop)."""
         self.registry.set_server_health(name, HealthStatus.STOPPING.value)
         client_meta = self._mcp_clients.pop(name, None)
-        if isinstance(client_meta, dict) and client_meta.get("kind") == "persistent-stdio":
-            cm = client_meta.get("context_manager")
+        if self._is_persistent_session(client_meta):
             loop = client_meta.get("loop")
-            if cm is not None and loop is not None and not loop.is_closed():
+            if loop is not None and not loop.is_closed():
                 try:
-                    future = asyncio.run_coroutine_threadsafe(cm.__aexit__(None, None, None), loop)
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._aclose_session_meta(client_meta), loop
+                    )
                     future.result(timeout=5)
                 except Exception:
                     pass
@@ -949,6 +1324,39 @@ class MCPLifecycleManager:
                         suggestion="Start the Burp MCP service and verify the proxy integration is ready.",
                     )
 
+            # 通用路径：任何经 SDK attach 成功的 stdio/streamable-http 服务（如自定义
+            # streamable-mcp-server）都走真实会话调用，而不是回落到 unsupported。
+            if self._is_sdk_attachable(server_name):
+                try:
+                    content, structured = await self._call_attached_server(
+                        server_name, tool_name, arguments
+                    )
+                    self.registry.record_tool_call(server_name, success=True)
+                    self.registry.set_server_health(server_name, "healthy")
+                    return self._tool_result(
+                        ok=True,
+                        server=server_name,
+                        tool=tool_name,
+                        execution_mode=mode,
+                        content=content,
+                        structured_content=structured,
+                    )
+                except Exception as exc:
+                    message = str(exc)
+                    self.registry.record_tool_call(server_name, success=False)
+                    self.registry.set_server_error(
+                        server_name, message, error_type="service_unavailable"
+                    )
+                    return self._tool_result(
+                        ok=False,
+                        server=server_name,
+                        tool=tool_name,
+                        execution_mode=mode,
+                        error_type="service_unavailable",
+                        message=message,
+                        suggestion="Verify the MCP server is reachable and the tool name/args are valid.",
+                    )
+
             message = (
                 f"MCP tool '{tool_name}' is registered in {mode} mode but is not executable yet."
             )
@@ -1021,22 +1429,29 @@ class MCPLifecycleManager:
             return str(value) if value else "[-] 未找到"
         return "[!] 未知 memory 工具"
 
+    async def _call_attached_server(
+        self, server_name: str, tool_name: str, args: dict
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Call a tool on an attached SDK server (stdio or streamable-http).
+
+        The call is bounded by the server's tool_timeout so a silent/streaming
+        server can never deadlock the agent loop.
+        """
+        session = await self._get_or_create_session(server_name)
+        config = self.config.mcp.servers.get(server_name)
+        timeout_s = self._tool_timeout_seconds(config) if config else 300.0
+        result = await asyncio.wait_for(
+            session.call_tool(tool_name, arguments=args), timeout=timeout_s
+        )
+        rendered, structured, is_error = self._render_mcp_call_result(result)
+        if is_error:
+            raise RuntimeError(rendered or f"{server_name} call returned an error")
+        return rendered, structured
+
     async def _call_chrome(self, tool_name: str, args: dict) -> tuple[str, dict[str, Any] | None]:
         """Execute a Chrome DevTools tool call."""
-        session = await self._get_or_create_persistent_stdio_session("chrome-devtools")
-        result = await session.call_tool(tool_name, arguments=args)
-        rendered, _, is_error = self._render_mcp_call_result(result)
-        if is_error:
-            raise RuntimeError(rendered or "chrome-devtools call returned an error")
-        _, structured, _ = self._render_mcp_call_result(result)
-        return rendered, structured
+        return await self._call_attached_server("chrome-devtools", tool_name, args)
 
     async def _call_burp(self, tool_name: str, args: dict) -> tuple[str, dict[str, Any] | None]:
         """Execute a Burp Suite tool call."""
-        session = await self._get_or_create_persistent_stdio_session("burp")
-        result = await session.call_tool(tool_name, arguments=args)
-        rendered, _, is_error = self._render_mcp_call_result(result)
-        if is_error:
-            raise RuntimeError(rendered or "burp call returned an error")
-        _, structured, _ = self._render_mcp_call_result(result)
-        return rendered, structured
+        return await self._call_attached_server("burp", tool_name, args)

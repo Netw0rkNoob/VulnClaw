@@ -430,6 +430,7 @@ class AgentCore:
 
         resolved_goal = goal or user_input
         origin = detected_target or self.context.state.target or user_input
+        max_parallel = getattr(self.config.session, "solve_max_parallel", 1)
         return await run_solve(
             self,
             origin=origin,
@@ -437,6 +438,7 @@ class AgentCore:
             max_steps=max_steps,
             max_intents=max_intents,
             max_tool_rounds=max_tool_rounds,
+            max_parallel=max_parallel,
             stream_sink=stream_sink,
             on_event=on_event,
         )

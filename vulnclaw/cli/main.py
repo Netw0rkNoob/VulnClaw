@@ -184,14 +184,19 @@ def _make_solve_event_printer(target_console):
     def on_event(kind: str, payload: dict) -> None:
         if kind == "reason":
             decision = payload.get("decision") or {}
-            if decision.get("complete"):
-                target_console.print("[green]✓ Reason: 目标达成[/green]")
+            complete_flag = decision.get("complete")
+            if complete_flag is not None and complete_flag is not False:
+                # 完成声明留给校验后的 completed / complete_rejected 事件输出，
+                # 避免「先打目标达成、后被拒绝」的错位
+                pass
             elif decision.get("intents"):
                 target_console.print(
                     f"[cyan]◆ Reason:[/cyan] 提出 {len(decision['intents'])} 个新探索方向"
                 )
             else:
                 target_console.print("[dim]◆ Reason: 暂不新增方向[/dim]")
+        elif kind == "completed":
+            target_console.print("[green]✓ Reason: 目标达成[/green]")
         elif kind == "explore_start":
             target_console.print(
                 f"[yellow]▶ Explore {payload['intent_id']}:[/yellow] {payload['description'][:90]}"
@@ -259,6 +264,12 @@ def _run_repl() -> None:
     mcp_manager = MCPLifecycleManager(config)
     started = mcp_manager.start_enabled_servers()
     console.print(_("cli.mcp_registered", count=started))
+    # Report any servers that failed to attach so the user knows immediately
+    for srv_name, srv_state in mcp_manager.registry.get_all_servers().items():
+        if srv_state.health_status in ("degraded", "unavailable") and srv_state.execution_mode in ("placeholder",):
+            err_msg = getattr(srv_state, "error", "") or ""
+            if err_msg:
+                console.print(f"[yellow]  ⚠ {srv_name}: {err_msg[:120]}[/yellow]")
 
     # Initialize agent
     agent = AgentCore(config, mcp_manager)

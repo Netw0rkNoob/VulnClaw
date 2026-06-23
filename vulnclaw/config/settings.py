@@ -244,6 +244,23 @@ def _overlay_env(config: VulnClawConfig) -> VulnClawConfig:
     if v := os.environ.get("VULNCLAW_SAFETY_PYTHON_EXECUTE_AUDIT_ENABLED"):
         config.safety.python_execute_audit_enabled = v.lower() in ("1", "true", "yes", "on")
 
+    # ── Recon: space-mapping API keys ────────────────────────────────
+    # Accept both the short form (FOFA_KEY) and the prefixed form
+    # (VULNCLAW_RECON_FOFA_KEY); short form wins if both are set.
+    for field, names in {
+        "fofa_email": ("FOFA_EMAIL", "VULNCLAW_RECON_FOFA_EMAIL"),
+        "fofa_key": ("FOFA_KEY", "VULNCLAW_RECON_FOFA_KEY"),
+        "hunter_key": ("HUNTER_KEY", "VULNCLAW_RECON_HUNTER_KEY"),
+        "quake_key": ("QUAKE_KEY", "VULNCLAW_RECON_QUAKE_KEY"),
+        "zoomeye_key": ("ZOOMEYE_KEY", "VULNCLAW_RECON_ZOOMEYE_KEY"),
+        "shodan_key": ("SHODAN_KEY", "VULNCLAW_RECON_SHODAN_KEY"),
+        "zerozone_key": ("ZEROZONE_KEY", "VULNCLAW_RECON_ZEROZONE_KEY"),
+    }.items():
+        for env_name in names:
+            if v := os.environ.get(env_name):
+                setattr(config.recon, field, v)
+                break
+
     return config
 
 

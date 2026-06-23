@@ -222,7 +222,7 @@ class TestAutoRestart:
         m.registry.register_server("chrome-devtools")
         m.registry.register_tool(
             "chrome-devtools",
-            {"name": "navigate", "description": "", "inputSchema": {"type": "object"}},
+            {"name": "chrome_navigate", "description": "", "inputSchema": {"type": "object"}},
         )
         m.config.mcp.servers["chrome-devtools"] = MCPServerConfig(
             **BUILTIN_MCP_SERVERS["chrome-devtools"]
@@ -247,7 +247,7 @@ class TestAutoRestart:
         monkeypatch.setattr(m, "_restart_server", fake_restart)
         monkeypatch.setattr(m, "_get_or_create_persistent_stdio_session", fake_session)
 
-        await m.call_tool("navigate", {"url": "https://example.com"})
+        await m.call_tool("chrome_navigate", {"url": "https://example.com"})
 
         assert restarted["called"] is True
 
@@ -361,6 +361,83 @@ class TestStats:
         stats = m.registry.get_server_stats("memory")
         assert stats["call_count"] == 1
         assert stats["avg_latency_ms"] >= 0.0
+
+
+def _http_server_config(name: str = "streamable-mcp-server") -> MCPServerConfig:
+    return MCPServerConfig(
+        name=name,
+        enabled=True,
+        transport={"type": "streamable-http", "url": "http://127.0.0.1:12306/mcp"},
+    )
+
+
+class TestStreamableHttp:
+    def test_attach_success_registers_known_tools(self, monkeypatch):
+        m = _manager()
+        cfg = _http_server_config("chrome-devtools")
+        m.config.mcp.servers["chrome-devtools"] = cfg
+        m.registry.register_server("chrome-devtools")
+
+        monkeypatch.setattr(m, "_check_http_reachable", lambda url, timeout: True)
+
+        assert m._start_server("chrome-devtools", cfg) is True
+        state = m.registry.get_all_servers()["chrome-devtools"]
+        assert state.running is True
+        assert state.execution_mode == "http"
+        assert state.health_status == HealthStatus.HEALTHY.value
+        # Static known tools registered at startup; real tools discovered lazily on first call
+        assert "chrome_navigate" in m.list_available_tools()
+
+    def test_attach_failure_degrades_and_falls_back(self, monkeypatch):
+        m = _manager()
+        cfg = _http_server_config("chrome-devtools")
+        m.config.mcp.servers["chrome-devtools"] = cfg
+        m.registry.register_server("chrome-devtools")
+
+        monkeypatch.setattr(m, "_check_http_reachable", lambda url, timeout: False)
+
+        assert m._start_server("chrome-devtools", cfg) is True
+        state = m.registry.get_all_servers()["chrome-devtools"]
+        assert state.running is False
+        assert state.health_status == HealthStatus.DEGRADED.value
+        assert "chrome_navigate" in m.list_available_tools()
+
+    async def test_get_or_create_session_dispatches_http(self, monkeypatch):
+        m = _manager()
+        m.config.mcp.servers["streamable-mcp-server"] = _http_server_config()
+        sentinel = object()
+
+        async def fake_http(name):
+            assert name == "streamable-mcp-server"
+            return sentinel
+
+        monkeypatch.setattr(m, "_get_or_create_persistent_http_session", fake_http)
+        got = await m._get_or_create_session("streamable-mcp-server")
+        assert got is sentinel
+
+    async def test_call_tool_routes_streamable_http_server(self, monkeypatch):
+        m = _manager()
+        m.config.mcp.servers["streamable-mcp-server"] = _http_server_config()
+        m.registry.register_server("streamable-mcp-server")
+        m.registry.register_tool(
+            "streamable-mcp-server",
+            {"name": "do_thing", "description": "", "inputSchema": {"type": "object"}},
+        )
+        m.registry.set_server_execution_mode("streamable-mcp-server", "http")
+
+        class DummySession:
+            async def call_tool(self, tool_name, arguments=None):
+                return {"echo": tool_name, "args": arguments}
+
+        async def fake_http(name):
+            return DummySession()
+
+        monkeypatch.setattr(m, "_get_or_create_persistent_http_session", fake_http)
+
+        result = await m.call_tool("do_thing", {"x": 1})
+        assert result["ok"] is True
+        assert result["server"] == "streamable-mcp-server"
+        assert "do_thing" in str(result["content"])
 
 
 def test_smoke_event_loop_isolation():

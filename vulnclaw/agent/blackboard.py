@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -37,22 +38,45 @@ class BoardIntent(BaseModel):
     note: str = ""  # 放弃原因 / 备注
 
 
+class ToolCallRecord(BaseModel):
+    """已执行工具调用的紧凑记录——防止跨 intent 重复调用同一工具+同一参数。"""
+    tool: str
+    key_args: str = ""
+    intent_id: str = ""
+    status: int = 0
+    note: str = ""
+
+
 class Blackboard(BaseModel):
-    """Fact/Intent 图。从 origin 增长到 goal。"""
+    """Fact/Intent 图。从 origin 增长到 goal。
+
+    参考 Cairn：除了 Fact/Intent，还维护一份 **tool_calls 执行日志**，
+    每次 explore 中调用的工具都会记录到这里。Reason 和 Explore 的上下文
+    prompt 均包含此日志的摘要，使 LLM 能看到"已经做过什么"并避免重复。
+    """
 
     origin: str = ""
     goal: str = ""
     facts: list[BoardFact] = Field(default_factory=list)
     intents: list[BoardIntent] = Field(default_factory=list)
+    tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     completed: bool = False
     complete_reason: str = ""
-    _fact_seq: int = 0
-    _intent_seq: int = 0
+    fact_seq: int = Field(default=0, exclude=True)
+    intent_seq: int = Field(default=0, exclude=True)
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.facts and self.fact_seq == 0:
+            nums = [int(f.id[1:]) for f in self.facts if f.id[1:].isdigit()]
+            self.fact_seq = max(nums) if nums else len(self.facts)
+        if self.intents and self.intent_seq == 0:
+            nums = [int(i.id[1:]) for i in self.intents if i.id[1:].isdigit()]
+            self.intent_seq = max(nums) if nums else len(self.intents)
 
     # ── Fact ────────────────────────────────────────────────────────
     def add_fact(self, description: str, source: str = "") -> BoardFact:
-        self._fact_seq += 1
-        fact = BoardFact(id=f"f{self._fact_seq:03d}", description=description.strip(), source=source)
+        self.fact_seq += 1
+        fact = BoardFact(id=f"f{self.fact_seq:03d}", description=description.strip(), source=source)
         self.facts.append(fact)
         return fact
 
@@ -64,10 +88,10 @@ class Blackboard(BaseModel):
 
     # ── Intent ──────────────────────────────────────────────────────
     def add_intent(self, description: str, from_facts: list[str] | None = None) -> BoardIntent:
-        self._intent_seq += 1
+        self.intent_seq += 1
         valid_from = [fid for fid in (from_facts or []) if self.get_fact(fid)]
         intent = BoardIntent(
-            id=f"i{self._intent_seq:03d}",
+            id=f"i{self.intent_seq:03d}",
             from_facts=valid_from,
             description=description.strip(),
         )
@@ -112,6 +136,37 @@ class Blackboard(BaseModel):
         self.completed = True
         self.complete_reason = reason.strip()
 
+    # ── Tool call memory ───────────────────────────────────────────
+    def record_tool_call(
+        self, tool: str, key_args: str, intent_id: str = "",
+        status: int = 0, note: str = "",
+    ) -> None:
+        self.tool_calls.append(ToolCallRecord(
+            tool=tool, key_args=key_args[:200], intent_id=intent_id,
+            status=status, note=note[:120],
+        ))
+        if len(self.tool_calls) > 200:
+            del self.tool_calls[:100]
+
+    def has_called(self, tool: str, key_args: str) -> bool:
+        return any(
+            tc.tool == tool and tc.key_args == key_args[:200]
+            for tc in self.tool_calls
+        )
+
+    def tool_call_summary(self, max_lines: int = 40) -> str:
+        if not self.tool_calls:
+            return ""
+        seen: dict[str, str] = {}
+        for tc in self.tool_calls:
+            key = f"{tc.tool}({tc.key_args})"
+            if key not in seen:
+                seen[key] = f"  {tc.intent_id or '-'}: {tc.tool}({tc.key_args})" + (
+                    f" → {tc.note}" if tc.note else ""
+                )
+        lines = list(seen.values())[-max_lines:]
+        return "\n".join(lines)
+
     # ── 渲染 ────────────────────────────────────────────────────────
     def to_prompt_graph(self, *, include_concluded: bool = True) -> str:
         """把图渲染成给 LLM 阅读的紧凑文本（YAML 风格）。"""
@@ -135,6 +190,11 @@ class Blackboard(BaseModel):
                 lines.append(f"  - {intent.id} [{intent.status.value}]{frm}{res}: {intent.description}{note}")
         else:
             lines.append("  (暂无)")
+
+        tc_summary = self.tool_call_summary(30)
+        if tc_summary:
+            lines.append("executed_tools (禁止重复调用已执行的工具+参数):")
+            lines.append(tc_summary)
 
         return "\n".join(lines)
 

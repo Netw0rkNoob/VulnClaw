@@ -125,11 +125,13 @@ class LLMConfig(BaseModel):
 class MCPTransportConfig(BaseModel):
     """MCP server transport configuration."""
 
-    type: str = Field(description="Transport type: stdio, sse")
+    type: str = Field(description="Transport type: stdio, sse, streamable-http")
     command: str | None = Field(default=None, description="Command to start the server (stdio)")
     args: list[str] | None = Field(default=None, description="Command arguments")
-    url: str | None = Field(default=None, description="Server URL (sse)")
-    env: dict[str, str] | None = Field(default=None, description="Environment variables")
+    url: str | None = Field(default=None, description="Server URL (sse / streamable-http)")
+    env: dict[str, str] | None = Field(
+        default=None, description="Environment variables (stdio) / HTTP headers (streamable-http)"
+    )
     startup_timeout: int = Field(default=30000, description="Startup timeout in ms")
     tool_timeout: int = Field(default=300000, description="Tool call timeout in ms")
 
@@ -148,6 +150,35 @@ class MCPServersConfig(BaseModel):
     """All MCP servers configuration."""
 
     servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+
+
+class ReconConfig(BaseModel):
+    """Information-gathering configuration: space-mapping API keys + recon knobs.
+
+    Keys are read here OR from environment variables (FOFA_KEY, HUNTER_KEY,
+    QUAKE_KEY, ZOOMEYE_KEY, SHODAN_KEY, ZEROZONE_KEY) — never hard-coded. Put real
+    keys in ~/.vulnclaw/config.yaml (gitignored), not in source.
+    """
+
+    fofa_email: str = Field(default="", description="FOFA account email")
+    fofa_key: str = Field(default="", description="FOFA API key")
+    hunter_key: str = Field(default="", description="Hunter (奇安信鹰图) API key")
+    quake_key: str = Field(default="", description="Quake (360) API token")
+    zoomeye_key: str = Field(default="", description="ZoomEye (钟馗之眼) API key")
+    shodan_key: str = Field(default="", description="Shodan API key")
+    zerozone_key: str = Field(default="", description="零零信安 0.zone API key")
+    http_timeout: float = Field(default=15.0, description="Per-request HTTP timeout (s)")
+    max_concurrency: int = Field(default=20, description="Max concurrent recon requests")
+    space_size: int = Field(default=100, description="Default result size per space-mapping query")
+    dir_wordlist_path: str = Field(
+        default="", description="Optional path to a custom directory-bruteforce wordlist"
+    )
+    dir_max_requests: int = Field(
+        default=1500, description="Hard cap on requests per directory-enumeration call"
+    )
+    js_max_files: int = Field(
+        default=30, description="Max JavaScript files fetched per js_recon call"
+    )
 
 
 class SafetyConfig(BaseModel):
@@ -213,6 +244,9 @@ class SessionConfig(BaseModel):
     solve_max_tool_rounds: int = Field(
         default=6, description="Max tool-calling rounds per intent exploration"
     )
+    solve_max_parallel: int = Field(
+        default=3, description="Max intents explored concurrently per solve batch (1=serial)"
+    )
     show_thinking: bool = Field(
         default=False, description="Show LLM thinking/reasoning output (default: off)"
     )
@@ -270,6 +304,7 @@ class VulnClawConfig(BaseModel):
     mcp: MCPServersConfig = Field(default_factory=MCPServersConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    recon: ReconConfig = Field(default_factory=ReconConfig)
 
     model_config = ConfigDict(
         env_prefix="VULNCLAW_",
