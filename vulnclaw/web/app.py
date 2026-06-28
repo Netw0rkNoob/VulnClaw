@@ -31,6 +31,7 @@ from vulnclaw.web.task_manager import WebTaskManager
 try:
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+    from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
     FASTAPI_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised in CLI dry-run and tests
@@ -39,6 +40,7 @@ except ImportError:  # pragma: no cover - exercised in CLI dry-run and tests
     FileResponse = None  # type: ignore[assignment]
     JSONResponse = None  # type: ignore[assignment]
     StreamingResponse = None  # type: ignore[assignment]
+    TrustedHostMiddleware = None  # type: ignore[assignment]
     FASTAPI_AVAILABLE = False
 
 
@@ -81,6 +83,7 @@ def create_app():
         )
 
     app = FastAPI(title="VulnClaw Web UI", version="0.3.2")
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "::1"])
 
     @app.get("/api/health")
     async def health():
@@ -223,6 +226,8 @@ def create_app():
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         return {"status": "ok", "path": path}
 
     @app.get("/")

@@ -57,9 +57,12 @@ def generate_target_report(
         output_path=str(_default_report_path(target, normalized_format)),
     )
     if output_path:
-        destination = Path(output_path)
+        destination = Path(output_path).resolve()
+        sessions_root = SESSIONS_DIR.resolve()
+        if sessions_root not in destination.parents and destination != sessions_root:
+            raise PermissionError(f"Output path is outside sessions dir: {destination}")
         destination.write_text(Path(path).read_text(encoding="utf-8"), encoding="utf-8")
-        return str(destination.resolve())
+        return str(destination)
     return str(Path(path).resolve())
 
 
