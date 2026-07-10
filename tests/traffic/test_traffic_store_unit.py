@@ -11,39 +11,18 @@ from pathlib import Path
 
 import pytest
 
+from tests.traffic import _make_exchange
 from vulnclaw.traffic.models import (
     SOURCE_BROWSER,
     SOURCE_MANUAL_REPLAY,
     SOURCE_PROXY,
-    CapturedExchange,
     CapturedRequest,
     CapturedResponse,
 )
 from vulnclaw.traffic.store import TrafficStore, compute_request_id
 
-
-def _make_exchange(
-    method: str = "GET",
-    url: str = "https://example.com/api/test",
-    headers: dict | None = None,
-    body: bytes = b"",
-    status: int = 200,
-    response_body: bytes = b'{"ok": true}',
-) -> CapturedExchange:
-    """Helper to construct a CapturedExchange for testing."""
-    request = CapturedRequest(
-        method=method,
-        url=url,
-        headers=headers or {"User-Agent": "test-agent"},
-        body=body,
-    )
-    response = CapturedResponse(
-        status=status,
-        headers={"Content-Type": "application/json"},
-        body=response_body,
-        reason="OK",
-    )
-    return CapturedExchange(request=request, response=response)
+# ``_make_exchange`` is re-exported from ``tests.traffic`` so the helper is
+# defined once; this file deliberately does not redefine it locally.
 
 
 class TestComputeRequestId:

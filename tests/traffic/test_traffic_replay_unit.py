@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.traffic import _make_exchange
 from vulnclaw.traffic.models import (
     SOURCE_MANUAL_REPLAY,
     CapturedExchange,
@@ -21,27 +22,8 @@ from vulnclaw.traffic.models import (
 from vulnclaw.traffic.replay import ReplayError, _apply_overrides, replay_request
 from vulnclaw.traffic.store import TrafficStore
 
-
-def _make_exchange(
-    method: str = "GET",
-    url: str = "https://example.com/api/test",
-    headers: dict | None = None,
-    body: bytes = b"",
-) -> CapturedExchange:
-    """Helper to construct a CapturedExchange for testing."""
-    request = CapturedRequest(
-        method=method,
-        url=url,
-        headers=headers or {"User-Agent": "test-agent", "Host": "example.com"},
-        body=body,
-    )
-    response = CapturedResponse(
-        status=200,
-        headers={"Content-Type": "application/json"},
-        body=b'{"original": true}',
-        reason="OK",
-    )
-    return CapturedExchange(request=request, response=response)
+# ``_make_exchange`` is re-exported from ``tests.traffic`` so the helper is
+# defined once; this file deliberately does not redefine it locally.
 
 
 def _mock_transport(status_code=200, content=b'{"ok": true}', headers=None):
