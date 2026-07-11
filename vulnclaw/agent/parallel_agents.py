@@ -215,7 +215,17 @@ async def _run_surface_wave(
                 _merge()
             return {"surface": surface, "results": result}
 
-    return await asyncio.gather(*(_run_one(surface) for surface in surfaces))
+    raw = await asyncio.gather(
+        *(_run_one(surface) for surface in surfaces),
+        return_exceptions=True,
+    )
+    results: list[dict] = []
+    for idx, r in enumerate(raw):
+        if isinstance(r, BaseException):
+            results.append({"surface": surfaces[idx], "error": str(r)})
+        else:
+            results.append(r)
+    return results
 
 
 def merge_session_state(parent: SessionState, child: SessionState) -> None:
