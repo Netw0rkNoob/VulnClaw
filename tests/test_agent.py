@@ -26,6 +26,39 @@ class TestPentestPhase:
         # PentestPhase inherits from str, Enum
         assert isinstance(PentestPhase.RECON, str)
 
+    def test_canonical_id_exists_beside_display_value(self):
+        from vulnclaw.agent.context import (
+            PHASE_CANONICAL_ID,
+            PentestPhase,
+            phase_canonical_id,
+            phase_from_canonical_id,
+        )
+
+        # A language-neutral canonical id exists for every phase, alongside the
+        # (unchanged) Chinese display value.
+        assert set(PHASE_CANONICAL_ID) == set(PentestPhase)
+        assert phase_canonical_id(PentestPhase.RECON) == "recon"
+        assert phase_canonical_id(PentestPhase.VULN_DISCOVERY) == "vuln_discovery"
+        assert PentestPhase.RECON.value == "信息收集"  # display value untouched
+
+        # Round-trips through the reverse lookup.
+        for phase in PentestPhase:
+            assert phase_from_canonical_id(phase_canonical_id(phase)) is phase
+        assert phase_from_canonical_id("no_such_phase") is None
+
+    def test_canonical_id_to_localized_display(self):
+        from vulnclaw.agent.context import PentestPhase, phase_display_name
+
+        # zh column reproduces the enum's own Chinese display strings.
+        assert phase_display_name("recon", "zh") == PentestPhase.RECON.value
+        assert phase_display_name("reporting", "zh") == "报告生成"
+        # en column returns localized strings.
+        assert phase_display_name("recon", "en") == "Recon"
+        assert phase_display_name("vuln_discovery", "en") == "Vulnerability Discovery"
+        # Unknown lang falls back to default (zh); unknown id falls back to itself.
+        assert phase_display_name("recon", "de") == PentestPhase.RECON.value
+        assert phase_display_name("no_such_phase") == "no_such_phase"
+
 
 class TestVulnerabilityFinding:
     """Test VulnerabilityFinding model."""

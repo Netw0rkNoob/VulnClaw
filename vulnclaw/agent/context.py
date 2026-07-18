@@ -21,6 +21,9 @@ from vulnclaw.agent.reasoning_state import ReasoningState
 # 修改原因: 消除 V2/V3/V4 违规 — 基础设施层不应反向依赖领域层。
 # ──────────────────────────────────────────────────────────────
 from vulnclaw.config.domain_models import (  # noqa: F401 — re-export
+    CANONICAL_ID_TO_PHASE,
+    PHASE_CANONICAL_ID,
+    PHASE_DISPLAY_BY_LANG,
     PHASE_TO_ACTION,
     ConstraintViolationEvent,
     EvidenceKind,
@@ -31,6 +34,9 @@ from vulnclaw.config.domain_models import (  # noqa: F401 — re-export
     TaskConstraints,
     VulnerabilityFinding,
     normalize_action_name,
+    phase_canonical_id,
+    phase_display_name,
+    phase_from_canonical_id,
     validate_action_constraints,
 )
 

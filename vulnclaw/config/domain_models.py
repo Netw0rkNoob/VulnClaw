@@ -46,6 +46,76 @@ class StepStatus(str, Enum):
 
 
 # ──────────────────────────────────────────────────────────────
+# Canonical phase identity (i18n phase-identity decouple, expand step)
+# ──────────────────────────────────────────────────────────────
+#
+# The ``PentestPhase`` enum *values* are Chinese display strings, compared as
+# literals and used as dict keys across agent/report layers. That couples phase
+# identity to one language and blocks translating phase names.
+#
+# This block ADDS a language-neutral canonical id beside each phase and a
+# canonical-id -> localized-display lookup. Nothing is migrated or removed here:
+# the enum values stay Chinese, no call site changes, and existing tests keep
+# passing. Later (contract) steps route comparisons/keys through the canonical
+# id so display strings become free to localize.
+
+# Language-neutral canonical id per phase. The ids mirror the ``phase.<id>`` i18n
+# key stems already used by the CLI / frontend translation tables.
+PHASE_CANONICAL_ID: dict[PentestPhase, str] = {
+    PentestPhase.IDLE: "idle",
+    PentestPhase.RECON: "recon",
+    PentestPhase.VULN_DISCOVERY: "vuln_discovery",
+    PentestPhase.EXPLOITATION: "exploitation",
+    PentestPhase.POST_EXPLOITATION: "post_exploitation",
+    PentestPhase.REPORTING: "reporting",
+}
+
+# Reverse lookup: canonical id -> phase.
+CANONICAL_ID_TO_PHASE: dict[str, PentestPhase] = {
+    canonical_id: phase for phase, canonical_id in PHASE_CANONICAL_ID.items()
+}
+
+# Canonical id -> localized display string, per language. The ``zh`` column is
+# derived straight from the enum values so it can never drift from the current
+# display strings; ``en`` mirrors the en.json ``phase.*`` labels.
+PHASE_DISPLAY_BY_LANG: dict[str, dict[str, str]] = {
+    "zh": {PHASE_CANONICAL_ID[phase]: phase.value for phase in PentestPhase},
+    "en": {
+        "idle": "Ready",
+        "recon": "Recon",
+        "vuln_discovery": "Vulnerability Discovery",
+        "exploitation": "Exploitation",
+        "post_exploitation": "Post-exploitation",
+        "reporting": "Reporting",
+    },
+}
+
+_DEFAULT_PHASE_LANG = "zh"
+
+
+def phase_canonical_id(phase: PentestPhase) -> str:
+    """Return the language-neutral canonical id for a phase."""
+    return PHASE_CANONICAL_ID[phase]
+
+
+def phase_from_canonical_id(canonical_id: str) -> Optional[PentestPhase]:
+    """Return the phase for a canonical id, or ``None`` when the id is unknown."""
+    return CANONICAL_ID_TO_PHASE.get(canonical_id)
+
+
+def phase_display_name(canonical_id: str, lang: str = _DEFAULT_PHASE_LANG) -> str:
+    """Look up the localized display string for a canonical phase id.
+
+    Falls back to the default-language table, then to the canonical id itself,
+    so an unknown id or language never raises.
+    """
+    table = PHASE_DISPLAY_BY_LANG.get(lang) or PHASE_DISPLAY_BY_LANG[_DEFAULT_PHASE_LANG]
+    if canonical_id in table:
+        return table[canonical_id]
+    return PHASE_DISPLAY_BY_LANG[_DEFAULT_PHASE_LANG].get(canonical_id, canonical_id)
+
+
+# ──────────────────────────────────────────────────────────────
 # Pydantic Models
 # ──────────────────────────────────────────────────────────────
 
