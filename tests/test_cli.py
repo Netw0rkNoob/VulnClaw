@@ -920,6 +920,94 @@ class TestCLI:
         assert session["_prompt"][0] == "message"
         assert "--only-port" in session["_prompt"][1]
 
+    def test_tui_persist_scope_state_writes_config(self, monkeypatch):
+        import vulnclaw.cli.tui as tui_mod
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        state = tui_mod.TuiState(
+            only_host="example.com",
+            only_port="443",
+            only_path="/admin",
+            blocked_host="staging.example.com",
+            blocked_path="/logout",
+            allow_actions=["recon", "scan"],
+            block_actions=["exploit", "post_exploitation"],
+            mode="quick",
+            resume=False,
+        )
+        saved = []
+        monkeypatch.setattr(
+            "vulnclaw.config.settings.save_config", lambda cfg: saved.append(cfg)
+        )
+
+        tui_mod._persist_scope_state(state, config)
+        assert saved, "save_config was never called"
+        sc = saved[0].session
+        assert sc.tui_scope_only_host == "example.com"
+        assert sc.tui_scope_only_port == "443"
+        assert sc.tui_scope_allow_actions == "recon,scan"
+        assert sc.tui_scope_block_actions == "exploit,post_exploitation"
+        assert sc.tui_scope_mode == "quick"
+        assert sc.tui_scope_resume is False
+
+    def test_tui_restore_scope_state_reads_config(self):
+        import vulnclaw.cli.tui as tui_mod
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        sc = config.session
+        sc.tui_scope_only_host = "example.com"
+        sc.tui_scope_only_port = "443"
+        sc.tui_scope_allow_actions = "recon,scan"
+        sc.tui_scope_block_actions = "exploit"
+        sc.tui_scope_mode = "deep"
+        sc.tui_scope_resume = True
+
+        state = tui_mod.TuiState()
+
+        tui_mod._restore_scope_state(state, config)
+        assert state.only_host == "example.com"
+        assert state.only_port == "443"
+        assert state.allow_actions == ["recon", "scan"]
+        assert state.block_actions == ["exploit"]
+        assert state.mode == "deep"
+        assert state.resume is True
+
+    def test_tui_persist_restore_resume_round_trip(self, monkeypatch):
+        import vulnclaw.cli.tui as tui_mod
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        resume_state = tui_mod.TuiState(resume=True)
+        nosave = []
+
+        monkeypatch.setattr(
+            "vulnclaw.config.settings.save_config", lambda cfg: nosave.append(cfg)
+        )
+        tui_mod._persist_scope_state(resume_state, config)
+        assert nosave[0].session.tui_scope_resume is True
+
+        config2 = VulnClawConfig()
+        config2.session.tui_scope_resume = True
+        restored = tui_mod.TuiState(resume=False)
+
+        tui_mod._restore_scope_state(restored, config2)
+        assert restored.resume is True
+
+    def test_tui_restore_scope_preserves_cli_explicit(self):
+        import vulnclaw.cli.tui as tui_mod
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        config.session.tui_scope_only_host = "persisted.example.com"
+        config.session.tui_scope_mode = "deep"
+
+        state = tui_mod.TuiState(only_host="cli.example.com", mode="quick")
+        tui_mod._restore_scope_state(state, config)
+        assert state.only_host == "cli.example.com"
+        assert state.mode == "quick"
+
     def test_textual_slash_dot_flag_dispatch_applies_state(self):
         import vulnclaw.cli.tui as tui_mod
         import vulnclaw.cli.tui_textual as textual_mod

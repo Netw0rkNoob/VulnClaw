@@ -353,6 +353,17 @@ class SessionConfig(BaseModel):
         description="Maximum discovered surfaces considered by REPL parallel auto-mode",
     )
 
+    # ── Persisted TUI scope state ──
+    tui_scope_only_host: str = Field(default="", description="Persisted TUI only-host scope")
+    tui_scope_only_port: str = Field(default="", description="Persisted TUI only-port scope")
+    tui_scope_only_path: str = Field(default="", description="Persisted TUI only-path scope")
+    tui_scope_blocked_host: str = Field(default="", description="Persisted TUI blocked-host scope")
+    tui_scope_blocked_path: str = Field(default="", description="Persisted TUI blocked-path scope")
+    tui_scope_allow_actions: str = Field(default="", description="Persisted TUI allowed actions (comma-sep)")
+    tui_scope_block_actions: str = Field(default="", description="Persisted TUI blocked actions (comma-sep)")
+    tui_scope_mode: str = Field(default="standard", description="Persisted TUI check mode")
+    tui_scope_resume: bool = Field(default=True, description="Persisted TUI resume flag")
+
     model_config = ConfigDict(populate_by_name=True)
 
     @property

@@ -83,6 +83,12 @@ def _register_handler(cmd: str):
     return deco
 
 
+def _persist_scope(session: dict[str, Any], state: Any) -> None:
+    config = session.get("config")
+    if config:
+        _tui._persist_scope_state(state, config)
+
+
 def _dispatch(session: dict[str, Any], text: str) -> str | None:
     """Dispatch slash command. Returns 'quit', 'launch', or None."""
     if text.startswith("/."):
@@ -728,8 +734,11 @@ def _h_mode(session: dict[str, Any], args: str) -> str | None:
     state = session["state"]
     if args and args in _tui.MODES:
         state.mode = args
+        _persist_scope(session, state)
         return None
-    def cb(v): state.mode = v
+    def cb(v):
+        state.mode = v
+        _persist_scope(session, state)
     _set_prompt(session, "choice", _("tui.prompt_select_mode"), list(_tui.MODES.keys()), cb)
     return None
 
@@ -764,6 +773,7 @@ def _h_scope(session: dict[str, Any], args: str) -> str | None:
                     state.block_actions = _parse_action_csv(v)
                 elif k == "resume":
                     state.resume = v.lower() in ("true", "yes", "1", "on")
+        _persist_scope(session, state)
         return None
     # [修改] 2026-07-18 - 动作约束改为 action_matrix 表格勾选, chain 只保留 5 个文本字段
     fields = [
@@ -774,7 +784,9 @@ def _h_scope(session: dict[str, Any], args: str) -> str | None:
         ("blocked_path", _("tui.prompt_blocked_path"), state.blocked_path or ""),
     ]
     def on_resume(yes): state.resume = yes
-    def ask(): _set_prompt(session, "confirm", _("tui.prompt_resume", state=_("tui.on") if state.resume else _("tui.off")), on_resume)
+    def ask():
+        _persist_scope(session, state)
+        _set_prompt(session, "confirm", _("tui.prompt_resume", state=_("tui.on") if state.resume else _("tui.off")), on_resume)
     def on_matrix(result):
         allow, block = result
         state.allow_actions = allow
@@ -1758,6 +1770,7 @@ def run_tui_textual(*, launcher=None, once=False, initial_state=None) -> None:
     """Run the Textual-powered TUI workbench."""
     state = initial_state or TuiState()
     config = load_config()
+    _tui._restore_scope_state(state, config)
     active_launcher = launcher or _default_launcher
 
     if once:

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 import shutil
 import subprocess
@@ -18,6 +19,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional
+
+logger = logging.getLogger(__name__)
 
 # [修改] 2026-06-10 Nyaecho - 将 prompt_toolkit 导入移到 _run_pt_tui() 函数内部，避免硬性依赖
 from rich import box
@@ -1267,6 +1270,7 @@ def _cmd_scope(session: dict[str, Any], args: str) -> None:
     state: TuiState = session["state"]
     if args:
         _parse_scope_args(state, args)
+        _persist_scope_state(state, session.get("config", load_config()))
         return
     fields = [
         ("only_host", _("tui.prompt_only_host"), state.only_host or ""),
@@ -1282,6 +1286,7 @@ def _cmd_scope(session: dict[str, Any], args: str) -> None:
         state.resume = yes
 
     def _ask_resume() -> None:
+        _persist_scope_state(state, session.get("config", load_config()))
         _set_prompt_confirm(session, _("tui.prompt_resume", state=_("tui.on") if state.resume else _("tui.off")), _on_resume_confirm)
 
     _set_prompt_chain(session, fields, 0, _ask_resume)
@@ -1719,6 +1724,50 @@ def _effective_allow_actions(state: TuiState) -> tuple[str, ...]:
 
 def _effective_block_actions(state: TuiState) -> tuple[str, ...]:
     return tuple(state.block_actions) or MODES[state.mode].block_actions
+
+
+def _persist_scope_state(state: TuiState, config: Any) -> None:
+    from vulnclaw.config.settings import save_config as _sc
+    try:
+        sc = config.session
+        sc.tui_scope_only_host = state.only_host
+        sc.tui_scope_only_port = state.only_port
+        sc.tui_scope_only_path = state.only_path
+        sc.tui_scope_blocked_host = state.blocked_host
+        sc.tui_scope_blocked_path = state.blocked_path
+        sc.tui_scope_allow_actions = ",".join(state.allow_actions)
+        sc.tui_scope_block_actions = ",".join(state.block_actions)
+        sc.tui_scope_mode = state.mode
+        sc.tui_scope_resume = state.resume
+        _sc(config)
+    except AttributeError:
+        logger.warning("Failed to persist scope state", exc_info=True)
+
+
+def _restore_scope_state(state: TuiState, config: Any) -> None:
+    try:
+        sc = config.session
+    except AttributeError:
+        return
+    if sc.tui_scope_only_host and not state.only_host:
+        state.only_host = sc.tui_scope_only_host
+    if sc.tui_scope_only_port and not state.only_port:
+        state.only_port = sc.tui_scope_only_port
+    if sc.tui_scope_only_path and not state.only_path:
+        state.only_path = sc.tui_scope_only_path
+    if sc.tui_scope_blocked_host and not state.blocked_host:
+        state.blocked_host = sc.tui_scope_blocked_host
+    if sc.tui_scope_blocked_path and not state.blocked_path:
+        state.blocked_path = sc.tui_scope_blocked_path
+    if sc.tui_scope_allow_actions and not state.allow_actions:
+        state.allow_actions = _parse_action_csv(sc.tui_scope_allow_actions)
+    if sc.tui_scope_block_actions and not state.block_actions:
+        state.block_actions = _parse_action_csv(sc.tui_scope_block_actions)
+    # restore persisted mode only if state still has its default ("standard"),
+    # preserving any explicit --mode from CLI args
+    if sc.tui_scope_mode in MODES and state.mode == "standard":
+        state.mode = sc.tui_scope_mode
+    state.resume = sc.tui_scope_resume
 
 
 def _parse_action_csv(value: str | tuple[str, ...] | list[str] | None) -> list[str]:
