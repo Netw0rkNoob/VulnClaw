@@ -31,6 +31,7 @@ from vulnclaw.config.schema import (
     BUILTIN_MCP_SERVERS,
     MCPServerConfig,
     MCPTransportConfig,
+    normalize_llm_model_id,
 )
 from vulnclaw.config.settings import (
     ProviderModelDiscoveryResult,
@@ -480,7 +481,7 @@ def _run_pt_tui(session: dict[str, Any]) -> Optional[str]:
                 return [(f"fg:{C_MUTED}", f"  {prompt[1]} ")]
             elif ptype == "choice":
                 return [(f"fg:{C_MUTED}", f"  {prompt[1]} [")
-                        ] + [(f"fg:{C_PRIMARY} bold", f"{c}") for c in prompt[2]
+                        ] + [(f"fg:{C_PRIMARY} bold", _prompt_choice_label(c)) for c in prompt[2]
                         ] + [(f"fg:{C_MUTED}", "] ")]
             elif ptype == "confirm":
                 return [(f"fg:{C_MUTED}", f"  {prompt[1]} "),
@@ -709,14 +710,36 @@ def _load_default_bindings() -> Any:
 # [修改] 新增 prompt 状态机, 支持 input / choice / confirm / chain 四种交互模式
 # 用于替换 Rich 的 Prompt.ask / Confirm.ask, 与 prompt_toolkit 深度集成
 
-PromptCallback = Callable[[str], None]
+PromptCallback = Callable[[Any], None]
+_MANUAL_MODEL_ENTRY = object()
+
+
+@dataclass(frozen=True)
+class _PromptChoice:
+    value: Any
+    label: str
+
+
+def _prompt_choice_label(choice: Any) -> str:
+    return choice.label if isinstance(choice, _PromptChoice) else str(choice)
+
+
+def _manual_model_prompt_choice(models: list[str]) -> _PromptChoice:
+    """Return a manual-entry action whose label cannot collide with a Model ID."""
+    base_label = _("tui.model_manual_entry")
+    label = base_label
+    suffix = 2
+    while label in models:
+        label = f"{base_label} ({suffix})"
+        suffix += 1
+    return _PromptChoice(_MANUAL_MODEL_ENTRY, label)
 
 
 def _set_prompt_input(session: dict[str, Any], label: str, callback: PromptCallback, default: str = "") -> None:
     session["_prompt"] = ("input", label, callback, default)
 
 
-def _set_prompt_choice(session: dict[str, Any], label: str, choices: list[str], callback: PromptCallback) -> None:
+def _set_prompt_choice(session: dict[str, Any], label: str, choices: list[Any], callback: PromptCallback) -> None:
     session["_prompt"] = ("choice", label, choices, callback)
 
 
@@ -751,11 +774,24 @@ def _handle_prompt_response(session: dict[str, Any], prompt: tuple, text: str) -
         callback(value)
     elif ptype == "choice":
         _label, choices, callback = prompt[1], prompt[2], prompt[3]
-        if text in choices:
+        selected = next(
+            (
+                choice
+                for choice in choices
+                if _prompt_choice_label(choice) == text
+            ),
+            None,
+        )
+        if selected is not None:
             session["_prompt"] = None
-            callback(text)
+            callback(
+                selected.value
+                if isinstance(selected, _PromptChoice)
+                else selected
+            )
         else:
-            session["_message"] = _("tui.invalid_choice", choice=text, options=", ".join(choices))
+            options = ", ".join(_prompt_choice_label(choice) for choice in choices)
+            session["_message"] = _("tui.invalid_choice", choice=text, options=options)
     elif ptype == "confirm":
         _label, callback = prompt[1], prompt[2]
         if text.lower() in ("y", "yes"):
@@ -1412,6 +1448,7 @@ def _cmd_config(session: dict[str, Any], args: str) -> None:
     config = session["config"]
     providers = [item["provider"] for item in list_providers()]
     current_provider = config.llm.provider
+    compatible_models: frozenset[str] | None = None
 
     def _on_provider(value: str) -> None:
         if value and value != current_provider:
@@ -1438,6 +1475,7 @@ def _cmd_config(session: dict[str, Any], args: str) -> None:
         _set_prompt_input(session, _("tui.prompt_enter_apikey", status=key_status), _on_apikey)
 
     def _on_apikey(value: str) -> None:
+        nonlocal compatible_models
         if value:
             config.llm.api_key = value.strip()
         base_url = config.llm.base_url
@@ -1456,25 +1494,50 @@ def _cmd_config(session: dict[str, Any], args: str) -> None:
             provider=config.llm.provider,
         )
         if result.models:
-            _set_prompt_choice(session, _("tui.prompt_select_model", model=config.llm.model), result.models, _on_model_selected)
+            compatible_models = frozenset(result.models)
+            choices: list[Any] = [
+                *result.models,
+                _manual_model_prompt_choice(result.models),
+            ]
+            _set_prompt_choice(
+                session,
+                _("tui.prompt_select_model", model=config.llm.model),
+                choices,
+                _on_model_selected,
+            )
         else:
+            compatible_models = None
             fallback = (
                 f"{_model_discovery_failure_message(result)} "
                 f"{_('tui.prompt_enter_model_fallback', model=config.llm.model)}"
             )
             _set_prompt_input(session, fallback, _on_model_input, default=config.llm.model)
 
-    def _on_model_selected(value: str) -> None:
+    def _on_model_selected(value: Any) -> None:
+        if value is _MANUAL_MODEL_ENTRY:
+            _set_prompt_input(
+                session,
+                _("tui.prompt_enter_model_fallback", model=config.llm.model),
+                _on_model_input,
+                default=config.llm.model,
+            )
+            return
         if value:
-            config.llm.model = value.strip()
+            config.llm.model = normalize_llm_model_id(value)
         save_config(config)
         _set_prompt_message(session, f"{_('tui.config_saved')}: {config.llm.provider}/{config.llm.model}")
 
     def _on_model_input(value: str) -> None:
-        if value:
-            config.llm.model = value.strip()
+        try:
+            config.llm.model = normalize_llm_model_id(value)
+        except ValueError:
+            _set_prompt_message(session, _("tui.model_invalid"))
+            return
         save_config(config)
-        _set_prompt_message(session, f"{_('tui.config_saved')}: {config.llm.provider}/{config.llm.model}")
+        message = f"{_('tui.config_saved')}: {config.llm.provider}/{config.llm.model}"
+        if compatible_models is not None and config.llm.model not in compatible_models:
+            message = f"{message}. {_('tui.model_discovery_selected_incompatible')}"
+        _set_prompt_message(session, message)
 
     _set_prompt_choice(session, _("tui.prompt_select_provider", provider=current_provider), providers, _on_provider)
 
@@ -1626,7 +1689,7 @@ def build_runtime_diagnostic_panel(config) -> Panel:
     table.add_row("uvx", diagnostic.uvx_status)
     table.add_row("nmap", diagnostic.nmap_status)
     table.add_row("LLM Provider", diagnostic.provider)
-    table.add_row("LLM Model", diagnostic.model)
+    table.add_row("LLM Model", Text(diagnostic.model))
     table.add_row("API Key", _("tui.model_key_configured") if diagnostic.api_key_configured else _("tui.model_key_not_configured"))
     table.add_row(
         "MCP Services",
@@ -1669,8 +1732,12 @@ def _command_version(command: str, *args: str) -> str:
 
 
 def _metric_panel(label: str, value: str, style: str) -> Panel:
+    content = Text()
+    content.append(str(label), style=C_MUTED)
+    content.append("\n")
+    content.append(str(value), style=f"bold {style}")
     return Panel(
-        f"[{C_MUTED}]{label}[/]\n[bold {style}]{value}[/]",
+        content,
         box=box.ROUNDED,
         border_style=C_BORDER_SUBTLE,
         padding=(1, 2),
@@ -2068,8 +2135,10 @@ def _render_model_choices(screen: Console, models: list[str], current: str) -> N
     table.add_column("#", style=f"bold {C_PRIMARY}", width=4)
     table.add_column("Model", style=C_TEXT)
     for idx, model in enumerate(models, 1):
-        marker = " *" if model == current else ""
-        table.add_row(str(idx), f"{model}{marker}")
+        rendered_model = Text(model)
+        if model == current:
+            rendered_model.append(" *")
+        table.add_row(str(idx), rendered_model)
     screen.print(table)
 
 
@@ -2097,24 +2166,42 @@ def _prompt_model_value(screen: Console, config) -> str:
                 f"{_('tui.model_discovery_selected_incompatible')}[/]"
             )
         _render_model_choices(screen, models, current)
-        raw = _config_prompt_ask(screen, f"Model [current: {current}]", default="")
+        raw = _config_prompt_ask(screen, "Model", default="")
         if not raw:
             return current
         if raw.isdigit():
             idx = int(raw)
             if 1 <= idx <= len(models):
                 return models[idx - 1]
-            screen.print(f"[{C_WARNING}]Model number out of range; using '{raw}' as a custom model id.[/]")
-        return raw
+            screen.print(
+                f"[{C_WARNING}]Model number out of range; "
+                "treating the input as a custom Model ID.[/]"
+            )
+        try:
+            selected = normalize_llm_model_id(raw)
+        except ValueError:
+            screen.print(f"[{C_WARNING}]{_('tui.model_invalid')}[/]")
+            return current
+        if selected not in models:
+            screen.print(
+                f"[{C_WARNING}]"
+                f"{_('tui.model_discovery_selected_incompatible')}[/]"
+            )
+        return selected
 
     if discovery is not None:
         screen.print(
             f"[{C_WARNING}]{_model_discovery_failure_message(discovery)}[/]"
         )
-    raw = _config_prompt_ask(screen, f"Model [current: {current}]", default="")
-    if raw == "!clear":
-        return ""
-    return current if raw == "" else raw
+    screen.print(Text(f"Current Model: {current}", style=C_MUTED))
+    raw = _config_prompt_ask(screen, "Model", default="")
+    if raw == "":
+        return current
+    try:
+        return normalize_llm_model_id(raw)
+    except ValueError:
+        screen.print(f"[{C_WARNING}]{_('tui.model_invalid')}[/]")
+        return current
 
 
 def _render_config_summary(screen: Console, config) -> None:
@@ -2123,7 +2210,7 @@ def _render_config_summary(screen: Console, config) -> None:
     llm.add_column("Field", style=f"bold {C_PRIMARY}")
     llm.add_column("Value", style=C_TEXT)
     llm.add_row("Provider", config.llm.provider)
-    llm.add_row("Model", config.llm.model)
+    llm.add_row("Model", Text(config.llm.model))
     llm.add_row("Base URL", config.llm.base_url)
     llm.add_row("Auth mode", config.llm.auth_mode)
     llm.add_row("API key", _mask_secret(config.llm.api_key))
@@ -2207,8 +2294,7 @@ def _edit_llm_config(screen: Console, config):
         config.llm.auth_mode = "static"
         config.llm.chatgpt_auto_proxy = False
         screen.print(
-            f"[{C_MUTED}]OpenRouter uses static inference keys; OAuth and "
-            "the ChatGPT auto-proxy are disabled.[/]"
+            f"[{C_MUTED}]{_('tui.openrouter_static_auth')}[/]"
         )
     else:
         config.llm.auth_mode = _prompt_choice_value(

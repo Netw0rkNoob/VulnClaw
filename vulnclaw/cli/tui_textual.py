@@ -12,9 +12,13 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
+from enum import Enum, auto
 from queue import Queue
 from typing import Any
 
+from rich.markup import escape
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -49,6 +53,7 @@ from vulnclaw.cli.tui import (
     find_at_context,
     rebuild_translations,
 )
+from vulnclaw.config.schema import normalize_llm_model_id
 from vulnclaw.config.settings import (
     ProviderModelDiscoveryResult,
     apply_provider_preset,
@@ -64,6 +69,16 @@ from vulnclaw.target_state.store import get_target_state_preview, list_target_sn
 # ── Slash dispatch ──
 
 _SLASH_HANDLERS: dict[str, Any] = {}
+
+
+class _PromptAction(Enum):
+    MANUAL_MODEL_ENTRY = auto()
+
+
+@dataclass(frozen=True)
+class _PromptChoice:
+    value: Any
+    label: str
 
 
 def _register_handler(cmd: str):
@@ -187,7 +202,7 @@ class SecondaryPopup(Vertical):
         super().__init__(**kwargs)
         self._cb: Any = None
         self._ptype: str = ""
-        self._choices: list[str] = []
+        self._choices: list[Any] = []
         self._chain_fields: list = []
         self._chain_idx: int = 0
         self._session: dict[str, Any] | None = None
@@ -246,22 +261,34 @@ class SecondaryPopup(Vertical):
         self._ptype = "input"
         self._cb = callback
         self.query_one("#popup-desc", Static).update(
-            f"[bold {C_PRIMARY}]{label}[/]"
+            Text(str(label), style=f"bold {C_PRIMARY}")
         )
         inp = Input(value=default, id="popup-input")
         self.mount(inp)
         self.add_class("open")
         inp.focus()
 
-    def _show_choice(self, label: str, choices: list[str], callback: Any) -> None:
+    def _show_choice(self, label: str, choices: list[Any], callback: Any) -> None:
         self._clear_dynamic()
         self._ptype = "choice"
         self._cb = callback
-        self._choices = choices
+        self._choices = [
+            choice.value if isinstance(choice, _PromptChoice) else choice
+            for choice in choices
+        ]
         self.query_one("#popup-desc", Static).update(
-            f"[bold {C_PRIMARY}]{label}[/]"
+            Text(str(label), style=f"bold {C_PRIMARY}")
         )
-        items = [ListItem(Static(f"  {c}  ")) for c in choices]
+        items = [
+            ListItem(
+                Static(
+                    Text(
+                        f"  {choice.label if isinstance(choice, _PromptChoice) else choice}  "
+                    )
+                )
+            )
+            for choice in choices
+        ]
         lv = ListView(*items, id="popup-list")
         self.mount(lv)
         self.add_class("open")
@@ -272,7 +299,7 @@ class SecondaryPopup(Vertical):
         self._ptype = "confirm"
         self._cb = callback
         self.query_one("#popup-desc", Static).update(
-            f"[bold {C_PRIMARY}]{label}[/]"
+            Text(str(label), style=f"bold {C_PRIMARY}")
         )
         hint = Static(
             f"  [{C_SUCCESS}]y[/] / [{C_ERROR}]n[/]",
@@ -287,7 +314,7 @@ class SecondaryPopup(Vertical):
         self._ptype = "message"
         self._cb = None
         self.query_one("#popup-desc", Static).update(
-            f"[{C_MUTED}]{text}[/]"
+            Text(str(text), style=C_MUTED)
         )
         hint = Static(
             f"  [{C_MUTED}]{_('tui.enter_to_dismiss')}[/]",
@@ -324,7 +351,7 @@ class SecondaryPopup(Vertical):
         self._cb = callback
         self._loading_dots = 0
         self.query_one("#popup-desc", Static).update(
-            f"[bold {C_PRIMARY}]{label}[/]"
+            Text(str(label), style=f"bold {C_PRIMARY}")
         )
         hint = Static("  ●", id="popup-hint")
         self.mount(hint)
@@ -663,6 +690,7 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
     config = session["config"]
     providers = [item["provider"] for item in list_providers()]
     cur = config.llm.provider
+    compatible_models: frozenset[str] | None = None
 
     def on_provider(v):
         nonlocal config
@@ -706,8 +734,9 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
         _set_prompt(session, "loading", _("tui.fetching_models"), on_models_loaded)
 
     def on_models_loaded(result):
+        nonlocal compatible_models
         if result.models:
-            manual_entry = _("tui.model_manual_entry")
+            compatible_models = frozenset(result.models)
             prompt = _(
                 "tui.prompt_select_model",
                 model=session["config"].llm.model,
@@ -722,10 +751,17 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
                 session,
                 "choice",
                 prompt,
-                [*result.models, manual_entry],
+                [
+                    *result.models,
+                    _PromptChoice(
+                        _PromptAction.MANUAL_MODEL_ENTRY,
+                        _("tui.model_manual_entry"),
+                    ),
+                ],
                 on_model_selected,
             )
         else:
+            compatible_models = None
             fallback = (
                 f"{_tui._model_discovery_failure_message(result)} "
                 f"{_('tui.prompt_enter_model_fallback', model=session['config'].llm.model)}"
@@ -733,7 +769,7 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
             _set_prompt(session, "input", fallback, on_model_input, session["config"].llm.model)
 
     def on_model_selected(v):
-        if v == _("tui.model_manual_entry"):
+        if v is _PromptAction.MANUAL_MODEL_ENTRY:
             _set_prompt(
                 session,
                 "input",
@@ -746,15 +782,22 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
             )
             return
         if v:
-            session["config"].llm.model = v.strip()
+            session["config"].llm.model = normalize_llm_model_id(v)
         save_config(session["config"])
         _set_prompt(session, "message", f"{_('tui.config_saved')}: {session['config'].llm.provider}/{session['config'].llm.model}")
 
     def on_model_input(v):
-        if v:
-            session["config"].llm.model = v.strip()
+        try:
+            model = normalize_llm_model_id(v or "")
+        except ValueError:
+            _set_prompt(session, "message", _("tui.model_invalid"))
+            return
+        session["config"].llm.model = model
         save_config(session["config"])
-        _set_prompt(session, "message", f"{_('tui.config_saved')}: {session['config'].llm.provider}/{session['config'].llm.model}")
+        message = f"{_('tui.config_saved')}: {session['config'].llm.provider}/{session['config'].llm.model}"
+        if compatible_models is not None and model not in compatible_models:
+            message = f"{message}. {_('tui.model_discovery_selected_incompatible')}"
+        _set_prompt(session, "message", message)
 
     _set_prompt(session, "choice", _("tui.prompt_select_provider", provider=cur), providers, on_provider)
     return None
@@ -1353,7 +1396,9 @@ class DashboardScreen(Screen):
 
         provider = getattr(self._s["config"].llm, "provider", "?")
         model = getattr(self._s["config"].llm, "model", "?")
-        lines.append(f"LLM [{C_MUTED}]{provider}/{model}[/]")
+        lines.append(
+            f"LLM [{C_MUTED}]{escape(str(provider))}/{escape(str(model))}[/]"
+        )
 
         return "\n".join(lines)
 

@@ -24,6 +24,7 @@ from .schema import (
     MCPServersConfig,
     MCPTransportConfig,
     VulnClawConfig,
+    normalize_llm_model_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,6 @@ DEFAULT_OPENAI_USER_AGENT = "Mozilla/5.0"
 OPENROUTER_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 OPENROUTER_MAX_SOURCE_MODELS = 5000
 OPENROUTER_MAX_RETAINED_MODELS = 500
-OPENROUTER_MAX_MODEL_ID_LENGTH = 160
 OPENROUTER_REQUIRED_PARAMETERS = frozenset({"tools", "max_tokens", "temperature"})
 
 
@@ -225,12 +225,40 @@ def _merge_config(base: VulnClawConfig, raw: dict[str, Any]) -> VulnClawConfig:
 
     # Deep merge
     _deep_merge(data, raw)
+    _repair_merged_model_id(data, base)
 
     try:
         return VulnClawConfig(**data)
     except ValidationError:
         # If merged data is invalid, return base
         return base
+
+
+def _repair_merged_model_id(
+    data: dict[str, Any],
+    base: VulnClawConfig,
+) -> None:
+    """Repair only an invalid persisted Model ID without dropping other config."""
+    llm_data = data.get("llm")
+    if not isinstance(llm_data, dict):
+        return
+
+    raw_model = llm_data.get("model")
+    if isinstance(raw_model, str):
+        try:
+            llm_data["model"] = normalize_llm_model_id(raw_model)
+            return
+        except ValueError:
+            pass
+
+    provider_name = str(llm_data.get("provider") or "").strip().lower()
+    try:
+        provider = LLMProvider(provider_name)
+    except ValueError:
+        provider = None
+    preset = PROVIDER_PRESETS.get(provider) if provider is not None else None
+    fallback = str((preset or {}).get("default_model") or base.llm.model)
+    llm_data["model"] = normalize_llm_model_id(fallback)
 
 
 def _deep_merge(base: dict, override: dict) -> None:
@@ -262,7 +290,8 @@ def _overlay_env(config: VulnClawConfig) -> VulnClawConfig:
     if v := os.environ.get("VULNCLAW_LLM_BASE_URL"):
         config.llm.base_url = v
     if v := os.environ.get("VULNCLAW_LLM_MODEL"):
-        config.llm.model = v
+        with suppress(ValueError):
+            config.llm.model = normalize_llm_model_id(v)
     if v := os.environ.get("VULNCLAW_LLM_PROVIDER"):
         config.llm.provider = v
     if v := os.environ.get("VULNCLAW_LLM_MAX_TOKENS"):
@@ -467,10 +496,6 @@ def _discovery_result(
     return ProviderModelDiscoveryResult(models=models or [], status=status, detail=detail)
 
 
-def _contains_ascii_control(value: str) -> bool:
-    return any(ord(character) < 32 or ord(character) == 127 for character in value)
-
-
 def _is_explicitly_expired(record: dict[str, Any]) -> bool:
     if record.get("expired") is True:
         return True
@@ -509,12 +534,9 @@ def _filter_openrouter_models(records: list[Any]) -> list[str]:
         raw_id = record.get("id")
         if not isinstance(raw_id, str):
             continue
-        model_id = raw_id.strip()
-        if (
-            not model_id
-            or len(model_id) > OPENROUTER_MAX_MODEL_ID_LENGTH
-            or _contains_ascii_control(model_id)
-        ):
+        try:
+            model_id = normalize_llm_model_id(raw_id)
+        except ValueError:
             continue
 
         architecture = record.get("architecture")

@@ -1271,6 +1271,31 @@ class TestAgentCoreLoop:
             },
         }
 
+    def test_openrouter_request_kwargs_normalize_explicit_provider_name(self):
+        from vulnclaw.agent.llm_client import build_chat_completion_kwargs
+
+        class DummyAgent:
+            class _DummyConfig:
+                class _DummyLLM:
+                    model = "openai/gpt-4o"
+                    max_tokens = 512
+                    temperature = 0.2
+                    provider = " OpenRouter "
+                    reasoning_effort = "high"
+
+                llm = _DummyLLM()
+
+            config = _DummyConfig()
+
+        kwargs = build_chat_completion_kwargs(
+            DummyAgent(),
+            [{"role": "user", "content": "hi"}],
+        )
+
+        assert kwargs["extra_body"] == {
+            "provider": {"require_parameters": True},
+        }
+
     def test_other_provider_request_kwargs_do_not_add_openrouter_policy(self):
         from vulnclaw.agent.llm_client import build_chat_completion_kwargs
 

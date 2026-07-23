@@ -294,5 +294,7 @@
   "tui.model_discovery_upstream_error": "无法加载提供商模型目录。",
   "tui.model_discovery_selected_incompatible": "警告：当前 Model ID 不在兼容目录中。自主运行前请选择列表中的模型；仅在接受运行时失败关闭拒绝时保留该 ID。",
   "tui.model_manual_entry": "手动输入 Model ID…",
+  "tui.model_invalid": "Model ID 去除首尾空白后必须为 1–160 个字符，且不能包含 ASCII 控制字符。",
+  "tui.openrouter_static_auth": "OpenRouter 使用静态推理密钥；OAuth 与 ChatGPT 自动代理已禁用。",
   "tui.openrouter_warning": "OpenRouter 可能在多个上游提供商之间路由请求。发送敏感的授权目标数据前，请核验账户隐私与 ZDR 偏好。"
 }

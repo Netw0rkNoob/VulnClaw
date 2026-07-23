@@ -288,7 +288,7 @@ def test_provider_discovery_catalogs_have_matching_keys_and_placeholders():
     def _placeholders(value: str) -> set[str]:
         return {name for _, name, _, _ in Formatter().parse(value) if name}
 
-    prefixes = ("tui.model_discovery_", "tui.openrouter_warning")
+    prefixes = ("tui.model_discovery_", "tui.openrouter_")
     english = {
         key: value for key, value in _catalog("en").items() if key.startswith(prefixes)
     }

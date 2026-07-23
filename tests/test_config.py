@@ -1,5 +1,6 @@
 """VulnClaw Config Module Tests — schema.py + settings.py"""
 
+import pytest
 
 # ── schema.py ────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ class TestLLMConfig:
         from vulnclaw.config.schema import LLMConfig
 
         config = LLMConfig(
-            model="deepseek-chat",
+            model=" deepseek-chat ",
             api_key="sk-test",
             base_url="https://api.deepseek.com/v1",
             temperature=0.3,
@@ -30,6 +31,20 @@ class TestLLMConfig:
         assert config.model == "deepseek-chat"
         assert config.api_key == "sk-test"
         assert config.temperature == 0.3
+
+    def test_model_id_rejects_invalid_construction_and_assignment(self):
+        from pydantic import ValidationError
+
+        from vulnclaw.config.schema import LLMConfig
+
+        for invalid_model in ("   ", "bad\nmodel", "m" * 161):
+            with pytest.raises(ValidationError):
+                LLMConfig(model=invalid_model)
+
+        config = LLMConfig()
+        with pytest.raises(ValidationError):
+            config.model = "bad\x7fmodel"
+        assert config.model == "gpt-4o"
 
     def test_provider_field(self):
         from vulnclaw.config.schema import LLMConfig
@@ -277,13 +292,40 @@ class TestSettingsLoad:
         config = VulnClawConfig()
         config.llm.provider = "legacy-gateway"
         config.llm.base_url = "https://legacy.example/v1"
-        config.llm.model = ""
+        object.__setattr__(config.llm, "model", "")
 
         apply_provider_preset(config, "openrouter")
 
         assert config.llm.provider == "openrouter"
         assert config.llm.base_url == "https://openrouter.ai/api/v1"
         assert config.llm.model == "openai/gpt-4o"
+
+    @pytest.mark.parametrize("invalid_model", ["", "m" * 161, "bad\nmodel"])
+    def test_merge_repairs_only_invalid_persisted_model(
+        self,
+        invalid_model,
+    ):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import _merge_config
+
+        merged = _merge_config(
+            VulnClawConfig(),
+            {
+                "llm": {
+                    "provider": "openrouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key": "fake-persisted-key",
+                    "model": invalid_model,
+                },
+                "session": {"max_rounds": 27},
+            },
+        )
+
+        assert merged.llm.provider == "openrouter"
+        assert merged.llm.base_url == "https://openrouter.ai/api/v1"
+        assert merged.llm.api_key == "fake-persisted-key"
+        assert merged.llm.model == "openai/gpt-4o"
+        assert merged.session.max_rounds == 27
 
     def test_apply_openrouter_provider_preset_preserves_unknown_provider_model(self):
         from vulnclaw.config.schema import VulnClawConfig
@@ -314,12 +356,20 @@ class TestSettingsLoad:
         from vulnclaw.config.settings import load_config
 
         monkeypatch.setenv("VULNCLAW_LLM_API_KEY", "env-test-key")
-        monkeypatch.setenv("VULNCLAW_LLM_MODEL", "env-test-model")
+        monkeypatch.setenv("VULNCLAW_LLM_MODEL", " env-test-model ")
         # Config should pick up env vars
         config = load_config()
-        # The env var may or may not be applied depending on load_config implementation
-        # Just verify it doesn't crash
-        assert config is not None
+        assert config.llm.model == "env-test-model"
+
+    def test_invalid_env_model_id_is_rejected_without_replacing_saved_value(
+        self, monkeypatch, tmp_path
+    ):
+        import vulnclaw.config.settings as settings_mod
+
+        monkeypatch.setattr(settings_mod, "CONFIG_FILE", tmp_path / "config.yaml")
+        monkeypatch.setenv("VULNCLAW_LLM_MODEL", "bad\nmodel")
+
+        assert settings_mod.load_config().llm.model == "gpt-4o"
 
     def test_openai_default_headers_allow_user_agent_override(self, monkeypatch):
         from vulnclaw.config.settings import openai_default_headers

@@ -6,7 +6,23 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+
+LLM_MODEL_ID_MAX_LENGTH = 160
+
+
+def normalize_llm_model_id(value: str) -> str:
+    """Normalize an opaque Model ID and reject unsafe/invalid values."""
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("model must not be blank")
+    if len(normalized) > LLM_MODEL_ID_MAX_LENGTH:
+        raise ValueError(
+            f"model must not exceed {LLM_MODEL_ID_MAX_LENGTH} characters"
+        )
+    if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+        raise ValueError("model must not include ASCII control characters")
+    return normalized
 
 # ── LLM Provider Presets ────────────────────────────────────────────
 
@@ -114,6 +130,8 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
 class LLMConfig(BaseModel):
     """LLM provider configuration."""
 
+    model_config = ConfigDict(validate_assignment=True)
+
     provider: str = Field(
         default="openai",
         description=(
@@ -153,7 +171,12 @@ class LLMConfig(BaseModel):
         default="https://api.openai.com/v1",
         description="OpenAI-compatible API base URL (auto-filled by provider)",
     )
-    model: str = Field(default="gpt-4o", description="Model name to use (auto-filled by provider)")
+    model: str = Field(
+        default="gpt-4o",
+        min_length=1,
+        max_length=LLM_MODEL_ID_MAX_LENGTH,
+        description="Opaque Model ID to use (auto-filled by provider)",
+    )
     max_tokens: int = Field(default=4096, description="Max tokens per response")
     max_context_tokens: int = Field(
         default=128000, description="Max context window tokens before sliding-window truncation"
@@ -162,6 +185,13 @@ class LLMConfig(BaseModel):
     reasoning_effort: str = Field(
         default="high", description="Reasoning effort level (OpenAI o-series only)"
     )
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def validate_model_id(cls, value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("model must be a string")
+        return normalize_llm_model_id(value)
 
     def key_pool(self) -> list[str]:
         """Return the ordered, de-blanked list of usable static API keys.

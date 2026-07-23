@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
+from vulnclaw.config.schema import LLM_MODEL_ID_MAX_LENGTH, normalize_llm_model_id
+
 TaskCommand = Literal["run", "recon", "scan", "exploit", "persistent"]
 TaskStatus = Literal["pending", "restoring", "running", "completed", "failed", "stopped"]
 PythonExecuteMode = Literal["safe", "lab", "trusted-local"]
@@ -282,7 +284,11 @@ class ConfigView(BaseModel):
 
 class ConfigUpdateRequest(BaseModel):
     provider: Optional[str] = Field(default=None, min_length=1, max_length=64)
-    model: Optional[str] = Field(default=None, min_length=1, max_length=160)
+    model: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=LLM_MODEL_ID_MAX_LENGTH,
+    )
     base_url: Optional[str] = Field(default=None, max_length=512)
     output_dir: Optional[str] = Field(default=None, min_length=1, max_length=1024)
     max_rounds: Optional[int] = Field(default=None, ge=1, le=100)
@@ -299,17 +305,14 @@ class ConfigUpdateRequest(BaseModel):
     def validate_base_url(cls, value: str | None) -> str | None:
         return _validate_http_base_url(value)
 
-    @field_validator("model")
+    @field_validator("model", mode="before")
     @classmethod
     def validate_model(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("model must not be blank")
-        if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
-            raise ValueError("model must not include ASCII control characters")
-        return normalized
+        if not isinstance(value, str):
+            raise ValueError("model must be a string")
+        return normalize_llm_model_id(value)
 
 
 class ProviderPresetView(BaseModel):

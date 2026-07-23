@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .schema import normalize_llm_model_id
+
 
 def _is_openai_reasoning_model(provider: str, model: str) -> bool:
     """Return True for OpenAI models that use the newer reasoning parameter set."""
@@ -43,8 +45,10 @@ def build_chat_completion_kwargs(
         max_tokens: Override for max tokens.
         temperature: Override for temperature.
     """
-    provider = str(getattr(llm_config, "provider", "") or "").lower()
-    model = str(getattr(llm_config, "model", "") or "")
+    provider = str(getattr(llm_config, "provider", "") or "").strip().lower()
+    model = normalize_llm_model_id(
+        str(getattr(llm_config, "model", "") or "")
+    )
     token_limit = max_tokens if max_tokens is not None else getattr(llm_config, "max_tokens", None)
     temp = temperature if temperature is not None else getattr(llm_config, "temperature", None)
     uses_reasoning_params = _is_openai_reasoning_model(provider, model)

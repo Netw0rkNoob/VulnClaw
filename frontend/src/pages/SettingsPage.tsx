@@ -150,9 +150,20 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
   const isPresetBaseUrl = presetBaseUrls.some((preset) => preset.base_url === baseUrl);
   const currentPreset = providers.find((preset) => preset.id === provider);
   const modelOptions = Array.from(
-    new Set([...models, model, currentPreset?.default_model ?? ""].filter(Boolean)),
+    new Set([...models, currentPreset?.default_model ?? ""].filter(Boolean)),
   );
-  const isKnownModel = modelOptions.includes(model);
+  const normalizedModel = model.trim();
+  const isKnownModel = modelOptions.includes(normalizedModel);
+  const discoveredModelIsIncompatible = (
+    models.length > 0
+    && Boolean(normalizedModel)
+    && !models.includes(normalizedModel)
+  );
+  const displayedModelHint = `${modelsHint ?? t("settings.model_hint")}${
+    discoveredModelIsIncompatible
+      ? ` ${t("settings.models_selected_incompatible")}`
+      : ""
+  }`;
 
   function onProviderChange(id: string) {
     const shouldApplyDefaultModel = !model.trim() || model === currentPreset?.default_model;
@@ -177,15 +188,7 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
       if (res.models.length && !model) {
         setModel(res.models[0]);
       }
-      const discoveryHint = formatModelDiscoveryHint(t, res);
-      const selectionWarning = (
-        res.status === "ok"
-        && Boolean(model)
-        && !res.models.includes(model)
-      )
-        ? ` ${t("settings.models_selected_incompatible")}`
-        : "";
-      setModelsHint(`${discoveryHint}${selectionWarning}`);
+      setModelsHint(formatModelDiscoveryHint(t, res));
     } catch (err) {
       setModelsHint(err instanceof Error ? err.message : t("settings.no_models"));
     } finally {
@@ -353,7 +356,11 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
                 {!isPresetBaseUrl && (
                   <input
                     value={baseUrl}
-                    onChange={(event) => setBaseUrl(event.target.value)}
+                    onChange={(event) => {
+                      setBaseUrl(event.target.value);
+                      setModels([]);
+                      setModelsHint(null);
+                    }}
                     placeholder="https://host/v1"
                   />
                 )}
@@ -363,7 +370,7 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
                 <span>{t("settings.model_field")}</span>
                 <div className="settings-model-row">
                   <select
-                    value={isKnownModel ? model : "__custom__"}
+                    value={isKnownModel ? normalizedModel : "__custom__"}
                     onChange={(event) => setModel(event.target.value === "__custom__" ? "" : event.target.value)}
                   >
                     {modelOptions.map((option) => (
@@ -384,10 +391,11 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
                   <input
                     value={model}
                     onChange={(event) => setModel(event.target.value)}
+                    maxLength={160}
                     placeholder="model-name"
                   />
                 )}
-                <small>{modelsHint ?? t("settings.model_hint")}</small>
+                <small>{displayedModelHint}</small>
               </div>
             </div>
           )}

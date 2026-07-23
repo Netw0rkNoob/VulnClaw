@@ -1091,6 +1091,7 @@ class TestWebApp:
         assert "status: ProviderModelsStatus;" in api_types
         assert "formatModelDiscoveryHint" in settings_source
         assert "shouldApplyDefaultModel" in settings_source
+        assert "discoveredModelIsIncompatible" in settings_source
         assert "settings.models_selected_incompatible" in settings_source
         assert "useState(\"fake" not in settings_source
         discovery_keys = {

@@ -41,6 +41,7 @@ def _configure_windows_console() -> None:
 _configure_windows_console()
 
 import typer
+from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
@@ -258,7 +259,7 @@ def _run_repl_command(name: str, args: str, agent: Any, config: Any) -> Any:
         agent.apply_config(new_config)
         console.print(
             f"[green]✓[/] Config reloaded: "
-            f"{new_config.llm.provider}/{new_config.llm.model}"
+            f"{escape(new_config.llm.provider)}/{escape(new_config.llm.model)}"
         )
         return new_config
 
@@ -2126,9 +2127,10 @@ def config_set(
 ) -> None:
     """Set a config value."""
     set_config_value(key, value)
-    console.print(
-        f"[+] Set {key} = {'***' if 'key' in key.lower() or 'pass' in key.lower() else value}"
+    display_value = (
+        "***" if "key" in key.lower() or "pass" in key.lower() else value
     )
+    console.print(Text(f"[+] Set {key} = {display_value}"))
 
 
 @config_app.command("get")
@@ -2144,7 +2146,7 @@ def config_get(
     value = obj if not hasattr(obj, "model_dump") else obj.model_dump()
     if isinstance(value, str) and ("key" in key.lower() or "pass" in key.lower()):
         value = value[:8] + "..." if len(value) > 8 else "***"
-    console.print(f"{key} = {value}")
+    console.print(Text(f"{key} = {value}"))
 
 
 @config_app.command("list")
@@ -2154,7 +2156,9 @@ def config_list() -> None:
 
     config = load_config()
     raw = config.model_dump(mode="json")
-    console.print(_yaml.dump(raw, default_flow_style=False, allow_unicode=True))
+    console.print(
+        Text(_yaml.dump(raw, default_flow_style=False, allow_unicode=True))
+    )
 
 
 @config_app.command("provider")
@@ -2175,10 +2179,14 @@ def config_provider(
         for p in providers:
             is_current = p["provider"] == current_provider
             marker = " [green](current)[/]" if is_current else ""
-            console.print(f"  [bold cyan]{p['provider']}[/]{marker}")
-            console.print(f"    Label: {p['label']}")
-            console.print(f"    URL:  [dim]{p['base_url']}[/]")
-            console.print(f"    Model: [dim]{p['default_model']}[/]")
+            console.print(
+                f"  [bold cyan]{escape(p['provider'])}[/]{marker}"
+            )
+            console.print(f"    Label: {escape(p['label'])}")
+            console.print(f"    URL:  [dim]{escape(p['base_url'])}[/]")
+            console.print(
+                f"    Model: [dim]{escape(p['default_model'])}[/]"
+            )
             console.print()
         console.print("[dim]Use vulnclaw config provider <name> to switch providers.[/]")
         return
@@ -2190,7 +2198,7 @@ def config_provider(
     try:
         provider_enum = LLMProvider(name.lower())
     except ValueError:
-        console.print(f"[!] Unknown provider: [bold]{name}[/]")
+        console.print(f"[!] Unknown provider: [bold]{escape(name)}[/]")
         console.print(f"    Available: {', '.join(p.value for p in LLMProvider)}")
         console.print("    Tip: use [bold]custom[/] for a manual base_url and model.")
         raise typer.Exit(1)
@@ -2201,9 +2209,11 @@ def config_provider(
 
     preset = PROVIDER_PRESETS.get(provider_enum, {})
     label = preset.get("label", name)
-    console.print(f"[+] Switched LLM provider to [bold cyan]{label}[/]")
-    console.print(f"    Base URL: [dim]{config.llm.base_url}[/]")
-    console.print(f"    Model:    [dim]{config.llm.model}[/]")
+    console.print(
+        f"[+] Switched LLM provider to [bold cyan]{escape(label)}[/]"
+    )
+    console.print(f"    Base URL: [dim]{escape(config.llm.base_url)}[/]")
+    console.print(f"    Model:    [dim]{escape(config.llm.model)}[/]")
 
     if not has_llm_credentials(config.llm):
         console.print()
@@ -2391,14 +2401,16 @@ def doctor() -> None:
     console.print("[bold]LLM Config[/]:")
     has_key = has_llm_credentials(config.llm)
     auth_mode = (config.llm.auth_mode or "static").lower()
-    console.print(f"  Provider: [bold cyan]{config.llm.provider}[/]")
-    console.print(f"  Auth Mode: [bold]{auth_mode}[/]")
+    console.print(
+        f"  Provider: [bold cyan]{escape(config.llm.provider)}[/]"
+    )
+    console.print(f"  Auth Mode: [bold]{escape(auth_mode)}[/]")
     cred_label = "configured" if has_key else "not set"
     console.print(
         f"  Credentials: [{'green' if has_key else 'red'}]{cred_label}[/]"
     )
-    console.print(f"  Base URL: [dim]{config.llm.base_url}[/]")
-    console.print(f"  Model: [dim]{config.llm.model}[/]")
+    console.print(f"  Base URL: [dim]{escape(config.llm.base_url)}[/]")
+    console.print(f"  Model: [dim]{escape(config.llm.model)}[/]")
 
     # Check MCP servers
     console.print()
