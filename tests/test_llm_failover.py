@@ -1,13 +1,18 @@
 """Tests for multi-key failover rotation in the LLM call retry loop."""
 
 import sys
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from vulnclaw.agent.llm_client import (
+    OPENROUTER_MAX_TRANSIENT_ATTEMPTS,
+    OpenRouterResponseError,
     _call_with_persistent_retries,
     _is_key_exhausted_error,
+    _parse_retry_after,
 )
 
 
@@ -26,6 +31,32 @@ class FakeAgent:
             self._key_index = (self._key_index + 1) % len(self._key_pool)
             return True
         return False
+
+
+class OpenRouterFakeAgent(FakeAgent):
+    config = SimpleNamespace(llm=SimpleNamespace(provider="openrouter"))
+
+
+class FakeHTTPError(RuntimeError):
+    def __init__(
+        self,
+        status_code: int,
+        *,
+        retry_after: str | None = None,
+        secret: str = "fake-secret-in-upstream-body",
+    ):
+        super().__init__(f"upstream returned {status_code}: {secret}")
+        self.status_code = status_code
+        headers = {"x-request-id": "req_safe_123"}
+        if retry_after is not None:
+            headers["retry-after"] = retry_after
+        self.response = SimpleNamespace(status_code=status_code, headers=headers)
+        self.body = {
+            "error": {
+                "message": f"unsafe detail {secret}",
+                "metadata": {"error_type": "provider_error"},
+            }
+        }
 
 
 def _ok_response():
@@ -115,6 +146,331 @@ class TestFailover:
 
         with pytest.raises(RuntimeError):
             await _call_with_persistent_retries(agent, request_fn, "test")
+
+
+class TestOpenRouterFailover:
+    async def test_401_rotates_to_each_other_static_key_once(self):
+        agent = OpenRouterFakeAgent(["bad", "good"])
+        calls = []
+
+        def request_fn():
+            calls.append(agent.current_key())
+            if agent.current_key() == "bad":
+                raise FakeHTTPError(401)
+            return _ok_response()
+
+        response, retries = await _call_with_persistent_retries(
+            agent, request_fn, "openrouter"
+        )
+
+        assert response.choices
+        assert retries == 1
+        assert calls == ["bad", "good"]
+        assert agent.current_key() == "good"
+
+    async def test_401_fails_after_one_pass_without_leaking_secret(self, capsys):
+        agent = OpenRouterFakeAgent(["bad-1", "bad-2", "bad-3"])
+        calls = 0
+
+        def request_fn():
+            nonlocal calls
+            calls += 1
+            raise FakeHTTPError(401, secret="sk-never-print")
+
+        with pytest.raises(OpenRouterResponseError) as caught:
+            await _call_with_persistent_retries(agent, request_fn, "openrouter")
+
+        captured = capsys.readouterr()
+        output = captured.out + captured.err
+        assert calls == 3
+        assert "sk-never-print" not in str(caught.value)
+        assert "sk-never-print" not in output
+        assert "req_safe_123" in str(caught.value)
+
+    async def test_401_stops_if_key_rotation_cannot_advance(self):
+        agent = OpenRouterFakeAgent(["bad-1", "bad-2"])
+        agent.rotate_api_key = lambda: False
+        calls = 0
+
+        def request_fn():
+            nonlocal calls
+            calls += 1
+            raise FakeHTTPError(401)
+
+        with pytest.raises(OpenRouterResponseError):
+            await _call_with_persistent_retries(agent, request_fn, "openrouter")
+
+        assert calls == 1
+
+    async def test_402_is_terminal_and_does_not_rotate(self):
+        agent = OpenRouterFakeAgent(["first", "second"])
+        calls = 0
+
+        def request_fn():
+            nonlocal calls
+            calls += 1
+            raise FakeHTTPError(402)
+
+        with pytest.raises(OpenRouterResponseError, match="credits"):
+            await _call_with_persistent_retries(agent, request_fn, "openrouter")
+
+        assert calls == 1
+        assert agent.current_key() == "first"
+
+    @pytest.mark.parametrize("status_code", [429, 503])
+    async def test_transient_statuses_are_bounded_without_key_rotation(
+        self, monkeypatch, status_code
+    ):
+        agent = OpenRouterFakeAgent(["first", "second"])
+        calls = 0
+        sleeps = []
+
+        def request_fn():
+            nonlocal calls
+            calls += 1
+            raise FakeHTTPError(status_code, retry_after="0")
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        monkeypatch.setattr(
+            "vulnclaw.agent.llm_client.asyncio.sleep",
+            fake_sleep,
+        )
+
+        with pytest.raises(OpenRouterResponseError):
+            await _call_with_persistent_retries(agent, request_fn, "openrouter")
+
+        assert calls == OPENROUTER_MAX_TRANSIENT_ATTEMPTS
+        assert len(sleeps) == OPENROUTER_MAX_TRANSIENT_ATTEMPTS - 1
+        assert agent.current_key() == "first"
+
+    async def test_retry_after_delta_seconds_is_honored(self, monkeypatch):
+        agent = OpenRouterFakeAgent(["first", "second"])
+        calls = 0
+        sleeps = []
+
+        def request_fn():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise FakeHTTPError(429, retry_after="7")
+            return _ok_response()
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        monkeypatch.setattr(
+            "vulnclaw.agent.llm_client.asyncio.sleep",
+            fake_sleep,
+        )
+
+        await _call_with_persistent_retries(agent, request_fn, "openrouter")
+
+        assert sleeps == [7.0]
+        assert agent.current_key() == "first"
+
+    async def test_in_band_error_is_rejected_before_response_acceptance(self):
+        agent = OpenRouterFakeAgent(["only"])
+        response = SimpleNamespace(
+            error={
+                "code": 402,
+                "message": "unsafe fake-secret-in-upstream-body",
+                "metadata": {"error_type": "payment_required"},
+            },
+            choices=[SimpleNamespace(finish_reason="error")],
+        )
+
+        with pytest.raises(OpenRouterResponseError, match="credits") as caught:
+            await _call_with_persistent_retries(
+                agent,
+                lambda: response,
+                "openrouter",
+            )
+
+        assert "fake-secret-in-upstream-body" not in str(caught.value)
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            SimpleNamespace(error={}, choices=[SimpleNamespace()]),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        error={},
+                        finish_reason=None,
+                    )
+                ]
+            ),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(error={}),
+                        finish_reason=None,
+                    )
+                ]
+            ),
+        ],
+    )
+    async def test_explicit_empty_error_fails_closed(self, response):
+        agent = OpenRouterFakeAgent(["only"])
+
+        with pytest.raises(OpenRouterResponseError):
+            await _call_with_persistent_retries(
+                agent,
+                lambda: response,
+                "openrouter",
+            )
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        error={"code": 402, "message": "unsafe choice error"},
+                        finish_reason=None,
+                    )
+                ]
+            ),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        error=None,
+                        finish_reason="error",
+                    )
+                ]
+            ),
+        ],
+    )
+    async def test_error_choice_and_error_finish_reason_fail_closed(self, response):
+        agent = OpenRouterFakeAgent(["only"])
+
+        with pytest.raises(OpenRouterResponseError):
+            await _call_with_persistent_retries(
+                agent,
+                lambda: response,
+                "openrouter",
+            )
+
+
+class TestOpenRouterCallPaths:
+    @staticmethod
+    def _agent(responses):
+        captured_kwargs = []
+
+        class DummyClient:
+            def __init__(self):
+                self.chat = SimpleNamespace(
+                    completions=SimpleNamespace(create=self.create)
+                )
+
+            def create(self, **kwargs):
+                captured_kwargs.append(kwargs)
+                return responses.pop(0)
+
+        class DummyAgent:
+            _key_pool = ["fake-key"]
+            _key_index = 0
+
+            config = SimpleNamespace(
+                llm=SimpleNamespace(
+                    provider="openrouter",
+                    model="openai/gpt-4o",
+                    max_tokens=256,
+                    temperature=0.1,
+                    reasoning_effort="high",
+                )
+            )
+            context = SimpleNamespace(get_messages=lambda: [])
+
+            @staticmethod
+            def _build_openai_tools():
+                return []
+
+            def __init__(self):
+                self.client = DummyClient()
+
+            def _get_client(self):
+                return self.client
+
+        return DummyAgent(), captured_kwargs
+
+    async def test_call_llm_rejects_in_band_error(self):
+        from vulnclaw.agent.llm_client import call_llm
+
+        response = SimpleNamespace(
+            error={"code": 402, "message": "unsafe upstream detail"},
+            choices=[SimpleNamespace(finish_reason="error")],
+        )
+        agent, captured = self._agent([response])
+
+        with pytest.raises(OpenRouterResponseError):
+            await call_llm(agent, "system")
+
+        assert captured[0]["extra_body"]["provider"]["require_parameters"] is True
+
+    async def test_tool_summary_rejects_error_and_reuses_request_guard(
+        self, monkeypatch
+    ):
+        from vulnclaw.agent import llm_client
+
+        tool_call = SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(name="test_tool", arguments="{}"),
+        )
+        initial = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="", tool_calls=[tool_call])
+                )
+            ]
+        )
+        summary_error = SimpleNamespace(
+            error={"code": 402, "message": "unsafe upstream detail"},
+            choices=[SimpleNamespace(finish_reason="error")],
+        )
+        agent, captured = self._agent([initial, summary_error])
+
+        async def fake_tool_results(agent_obj, message):
+            return [
+                {
+                    "tool_call": message.tool_calls[0],
+                    "tool_call_id": "call_1",
+                    "content": "tool output",
+                }
+            ], []
+
+        monkeypatch.setattr(
+            llm_client,
+            "handle_tool_calls_with_results",
+            fake_tool_results,
+        )
+
+        with pytest.raises(OpenRouterResponseError):
+            await llm_client.call_llm_auto(agent, "system", "round")
+
+        assert len(captured) == 2
+        assert all(
+            item["extra_body"]["provider"]["require_parameters"] is True
+            for item in captured
+        )
+
+
+class TestRetryAfter:
+    def test_parses_delta_seconds_and_caps_large_values(self):
+        assert _parse_retry_after("5") == 5.0
+        assert _parse_retry_after("999") == 60.0
+
+    def test_parses_http_date(self):
+        now = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
+        value = format_datetime(now + timedelta(seconds=25), usegmt=True)
+
+        assert _parse_retry_after(value, now=now) == 25.0
+
+    @pytest.mark.parametrize("value", ["", "not-a-date", "-1", "-3.5"])
+    def test_rejects_malformed_or_negative_values(self, value):
+        assert _parse_retry_after(value) is None
 
 
 class TestCallLlmUsesRotatedClient:

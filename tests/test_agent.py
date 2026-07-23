@@ -1236,6 +1236,64 @@ class TestAgentCoreLoop:
         assert "max_completion_tokens" not in kwargs
         assert "reasoning_effort" not in kwargs
 
+    def test_openrouter_request_kwargs_enforce_required_parameters_and_merge_extras(
+        self,
+    ):
+        from vulnclaw.agent.llm_client import build_chat_completion_kwargs
+
+        class DummyAgent:
+            class _DummyConfig:
+                class _DummyLLM:
+                    model = "openai/gpt-4o"
+                    max_tokens = 512
+                    temperature = 0.2
+                    provider = "openrouter"
+                    reasoning_effort = "high"
+
+                llm = _DummyLLM()
+
+            config = _DummyConfig()
+
+        kwargs = build_chat_completion_kwargs(
+            DummyAgent(),
+            [{"role": "user", "content": "hi"}],
+            extra_body={
+                "transforms": ["middle-out"],
+                "provider": {"sort": "price"},
+            },
+        )
+
+        assert kwargs["extra_body"] == {
+            "transforms": ["middle-out"],
+            "provider": {
+                "sort": "price",
+                "require_parameters": True,
+            },
+        }
+
+    def test_other_provider_request_kwargs_do_not_add_openrouter_policy(self):
+        from vulnclaw.agent.llm_client import build_chat_completion_kwargs
+
+        class DummyAgent:
+            class _DummyConfig:
+                class _DummyLLM:
+                    model = "deepseek-chat"
+                    max_tokens = 512
+                    temperature = 0.2
+                    provider = "deepseek"
+                    reasoning_effort = "high"
+
+                llm = _DummyLLM()
+
+            config = _DummyConfig()
+
+        kwargs = build_chat_completion_kwargs(
+            DummyAgent(),
+            [{"role": "user", "content": "hi"}],
+        )
+
+        assert "extra_body" not in kwargs
+
     def test_openrouter_agent_uses_static_key_and_never_chatgpt_proxy(
         self, monkeypatch
     ):

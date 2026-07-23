@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -814,3 +815,207 @@ class TestCallLlmAutoStream:
 
         # 验证返回值包含响应文本
         assert "Analysis complete" in result
+
+
+class _SyncStream:
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    def __iter__(self):
+        return iter(self._chunks)
+
+
+def _stream_chunk(
+    *,
+    content: str = "",
+    error: object = None,
+    finish_reason: str | None = None,
+    tool_calls: list[object] | None = None,
+):
+    delta = SimpleNamespace(
+        content=content,
+        reasoning_content="",
+        tool_calls=tool_calls,
+    )
+    choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
+    chunk = SimpleNamespace(choices=[choice])
+    if error is not None:
+        chunk.error = error
+    return chunk
+
+
+def _openrouter_stream_agent(*responses):
+    agent = MagicMock()
+    client = MagicMock()
+    client.chat.completions.create.side_effect = list(responses)
+    agent._get_client.return_value = client
+    agent.config.llm.provider = "openrouter"
+    agent.config.llm.model = "openai/gpt-4o"
+    agent.config.llm.max_tokens = 256
+    agent.config.llm.temperature = 0.1
+    agent.config.llm.reasoning_effort = "high"
+    agent.context.get_messages.return_value = []
+    agent._build_openai_tools.return_value = []
+    return agent
+
+
+class TestOpenRouterStreamErrors:
+    @pytest.mark.asyncio
+    async def test_stream_creation_retries_503_without_rotating_key(
+        self,
+        monkeypatch,
+    ):
+        from vulnclaw.agent.llm_client import call_llm_stream
+
+        error = RuntimeError("unsafe upstream detail")
+        error.status_code = 503
+        error.response = SimpleNamespace(
+            status_code=503,
+            headers={"retry-after": "0"},
+        )
+        stream = _SyncStream([_stream_chunk(content="complete")])
+        agent = _openrouter_stream_agent(error, stream)
+        agent._key_pool = ["first", "second"]
+        agent._key_index = 0
+        agent.rotate_api_key = MagicMock()
+
+        async def fake_sleep(delay):
+            assert delay == 0
+
+        monkeypatch.setattr(
+            "vulnclaw.agent.llm_client.asyncio.sleep",
+            fake_sleep,
+        )
+
+        result = await call_llm_stream(
+            agent,
+            "system",
+            stream_sink=SpySink(),
+        )
+
+        assert result == "complete"
+        assert agent._get_client().chat.completions.create.call_count == 2
+        agent.rotate_api_key.assert_not_called()
+        for call in agent._get_client().chat.completions.create.call_args_list:
+            assert (
+                call.kwargs["extra_body"]["provider"]["require_parameters"]
+                is True
+            )
+
+    @pytest.mark.asyncio
+    async def test_partial_then_top_level_error_never_returns_partial_as_success(self):
+        from vulnclaw.agent.llm_client import (
+            OpenRouterResponseError,
+            call_llm_stream,
+        )
+
+        stream = _SyncStream(
+            [
+                _stream_chunk(content="partial"),
+                _stream_chunk(
+                    error={
+                        "code": 503,
+                        "message": "unsafe fake-secret",
+                        "metadata": {"error_type": "provider_error"},
+                    },
+                    finish_reason="error",
+                ),
+            ]
+        )
+        agent = _openrouter_stream_agent(stream)
+
+        with pytest.raises(OpenRouterResponseError) as caught:
+            await call_llm_stream(agent, "system", stream_sink=SpySink())
+
+        assert caught.value.partial_text == "partial"
+        assert "partial" not in str(caught.value)
+        assert "fake-secret" not in str(caught.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [{}, {"message": ""}],
+    )
+    async def test_empty_error_chunk_fails_closed(self, error):
+        from vulnclaw.agent.llm_client import (
+            OpenRouterResponseError,
+            call_llm_stream,
+        )
+
+        stream = _SyncStream(
+            [_stream_chunk(error=error, finish_reason="error")]
+        )
+        agent = _openrouter_stream_agent(stream)
+
+        with pytest.raises(OpenRouterResponseError):
+            await call_llm_stream(agent, "system", stream_sink=SpySink())
+
+    @pytest.mark.asyncio
+    async def test_auto_stream_initial_error_fails(self):
+        from vulnclaw.agent.llm_client import (
+            OpenRouterResponseError,
+            call_llm_auto_stream,
+        )
+
+        stream = _SyncStream(
+            [
+                _stream_chunk(content="partial"),
+                _stream_chunk(
+                    error={"code": 429, "message": "rate limited"},
+                    finish_reason="error",
+                ),
+            ]
+        )
+        agent = _openrouter_stream_agent(stream)
+
+        with pytest.raises(OpenRouterResponseError):
+            await call_llm_auto_stream(
+                agent,
+                "system",
+                "round",
+                stream_sink=SpySink(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_tool_summary_stream_error_fails(self, monkeypatch):
+        from vulnclaw.agent import llm_client
+
+        tool_delta = SimpleNamespace(
+            index=0,
+            id="call_1",
+            function=SimpleNamespace(name="test_tool", arguments="{}"),
+        )
+        initial = _SyncStream([_stream_chunk(tool_calls=[tool_delta])])
+        summary = _SyncStream(
+            [
+                _stream_chunk(content="partial summary"),
+                _stream_chunk(
+                    error={"code": 503, "message": "unsafe upstream detail"},
+                    finish_reason="error",
+                ),
+            ]
+        )
+        agent = _openrouter_stream_agent(initial, summary)
+
+        async def fake_tool_results(agent_obj, message):
+            return [
+                {
+                    "tool_call": message.tool_calls[0],
+                    "tool_call_id": "call_1",
+                    "content": "tool result",
+                }
+            ], []
+
+        monkeypatch.setattr(
+            llm_client,
+            "handle_tool_calls_with_results",
+            fake_tool_results,
+        )
+
+        with pytest.raises(llm_client.OpenRouterResponseError):
+            await llm_client.call_llm_auto_stream(
+                agent,
+                "system",
+                "round",
+                stream_sink=SpySink(),
+            )

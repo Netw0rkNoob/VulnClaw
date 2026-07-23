@@ -26,6 +26,7 @@ def build_chat_completion_kwargs(
     *,
     max_tokens: int | None = None,
     temperature: float | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build provider-compatible Chat Completions kwargs.
 
@@ -65,4 +66,15 @@ def build_chat_completion_kwargs(
         reasoning_effort = getattr(llm_config, "reasoning_effort", None)
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
+    if extra_body:
+        kwargs["extra_body"] = dict(extra_body)
+    if provider == "openrouter":
+        merged_extra_body = dict(extra_body or {})
+        raw_provider_policy = merged_extra_body.get("provider")
+        provider_policy = (
+            dict(raw_provider_policy) if isinstance(raw_provider_policy, dict) else {}
+        )
+        provider_policy["require_parameters"] = True
+        merged_extra_body["provider"] = provider_policy
+        kwargs["extra_body"] = merged_extra_body
     return kwargs
