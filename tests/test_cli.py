@@ -108,6 +108,29 @@ class TestCLI:
         result = runner.invoke(app, ["config", "provider", "--list"])
         # Should show available providers
         assert result.exit_code == 0
+        assert "openrouter" in result.output
+        assert "https://openrouter.ai/api/v1" in result.output
+
+    def test_cli_config_provider_sets_openrouter_contract(self, runner, monkeypatch):
+        import vulnclaw.cli.main as cli_main
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        config.llm.auth_mode = "oauth"
+        config.llm.chatgpt_auto_proxy = True
+        saved = []
+        monkeypatch.setattr(cli_main, "load_config", lambda: config)
+        monkeypatch.setattr(cli_main, "save_config", saved.append)
+
+        result = runner.invoke(cli_main.app, ["config", "provider", "openrouter"])
+
+        assert result.exit_code == 0
+        assert "OpenRouter" in result.output
+        assert "https://openrouter.ai/api/v1" in result.output
+        assert "openai/gpt-4o" in result.output
+        assert saved == [config]
+        assert config.llm.auth_mode == "static"
+        assert config.llm.chatgpt_auto_proxy is False
 
     def test_cli_config_provider_set(self, runner):
         from vulnclaw.cli.main import app

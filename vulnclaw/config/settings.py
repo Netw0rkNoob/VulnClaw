@@ -360,8 +360,9 @@ def apply_provider_preset(config: VulnClawConfig, provider_name: str) -> VulnCla
     overwrite it unless the provider itself changed.
     """
     # Resolve provider enum
+    normalized_provider = provider_name.strip().lower()
     try:
-        provider = LLMProvider(provider_name.lower())
+        provider = LLMProvider(normalized_provider)
     except ValueError:
         # Unknown provider — treat as custom, don't auto-fill
         config.llm.provider = provider_name
@@ -371,24 +372,32 @@ def apply_provider_preset(config: VulnClawConfig, provider_name: str) -> VulnCla
     if not preset:
         return config
 
-    old_provider = config.llm.provider
+    old_provider = str(config.llm.provider or "").strip().lower()
+    old_model = str(config.llm.model or "")
     config.llm.provider = provider.value
 
     # Auto-fill base_url and model only when switching providers
     # (or when they still match the old provider's defaults)
-    old_preset = PROVIDER_PRESETS.get(LLMProvider(old_provider)) if old_provider else None
+    try:
+        old_provider_enum = LLMProvider(old_provider) if old_provider else None
+    except ValueError:
+        old_provider_enum = None
+    old_preset = PROVIDER_PRESETS.get(old_provider_enum) if old_provider_enum else None
 
     # Fill base_url: always fill from preset on provider switch
     if preset.get("base_url"):
         config.llm.base_url = preset["base_url"]
 
-    # Fill model: fill from preset unless user has a custom model set
-    # that doesn't match the old provider's default
-    if old_preset and config.llm.model != old_preset.get("default_model", ""):
-        # User has a custom model, keep it
-        pass
-    elif preset.get("default_model"):
+    # Fill the model only when blank or still on the previous preset default.
+    old_default = str((old_preset or {}).get("default_model", ""))
+    if preset.get("default_model") and (not old_model.strip() or old_model == old_default):
         config.llm.model = preset["default_model"]
+
+    if provider is LLMProvider.OPENROUTER:
+        # OpenRouter inference keys use the generic static credential path.
+        # Stored OAuth data is left untouched but can never enter the proxy.
+        config.llm.auth_mode = "static"
+        config.llm.chatgpt_auto_proxy = False
 
     return config
 

@@ -127,11 +127,12 @@ class TestVulnClawConfig:
         assert transport["url"] == "http://127.0.0.1:9876"
 
     def test_provider_presets(self):
-        from vulnclaw.config.schema import PROVIDER_PRESETS
+        from vulnclaw.config.schema import PROVIDER_PRESETS, LLMProvider
 
         # Should have at least the documented providers
         expected_providers = [
             "openai",
+            "openrouter",
             "anthropic",
             "minimax",
             "deepseek",
@@ -142,11 +143,18 @@ class TestVulnClawConfig:
         ]
         for provider in expected_providers:
             assert provider in PROVIDER_PRESETS, f"Missing provider: {provider}"
+        assert len(PROVIDER_PRESETS) == 15
+        assert PROVIDER_PRESETS[LLMProvider.OPENROUTER] == {
+            "base_url": "https://openrouter.ai/api/v1",
+            "default_model": "openai/gpt-4o",
+            "label": "OpenRouter",
+        }
 
     def test_llm_provider_enum(self):
         from vulnclaw.config.schema import LLMProvider
 
         assert hasattr(LLMProvider, "OPENAI")
+        assert LLMProvider.OPENROUTER.value == "openrouter"
         assert hasattr(LLMProvider, "ANTHROPIC")
         assert hasattr(LLMProvider, "DEEPSEEK")
         assert hasattr(LLMProvider, "MINIMAX")
@@ -223,6 +231,71 @@ class TestSettingsLoad:
         assert config.llm.provider == "anthropic"
         assert config.llm.base_url == "https://api.anthropic.com/v1"
         assert config.llm.model == "claude-sonnet-5"
+
+    def test_apply_openrouter_provider_preset_enforces_static_auth_without_deleting_keys(self):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_provider_preset
+
+        config = VulnClawConfig()
+        config.llm.auth_mode = "oauth"
+        config.llm.chatgpt_auto_proxy = True
+        config.llm.oauth_token_url = "https://auth.example/token"
+        config.llm.oauth_client_id = "saved-client"
+        config.llm.api_key = "saved-static-key"
+        config.llm.api_keys = ["saved-pool-key"]
+
+        apply_provider_preset(config, "OpenRouter")
+
+        assert config.llm.provider == "openrouter"
+        assert config.llm.base_url == "https://openrouter.ai/api/v1"
+        assert config.llm.model == "openai/gpt-4o"
+        assert config.llm.auth_mode == "static"
+        assert config.llm.chatgpt_auto_proxy is False
+        assert config.llm.oauth_token_url == "https://auth.example/token"
+        assert config.llm.oauth_client_id == "saved-client"
+        assert config.llm.api_key == "saved-static-key"
+        assert config.llm.api_keys == ["saved-pool-key"]
+
+    def test_apply_openrouter_provider_preset_preserves_deliberate_model_override(self):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_provider_preset
+
+        config = VulnClawConfig()
+        config.llm.provider = "deepseek"
+        config.llm.base_url = "https://api.deepseek.com"
+        config.llm.model = "private/model:variant"
+
+        apply_provider_preset(config, "openrouter")
+
+        assert config.llm.base_url == "https://openrouter.ai/api/v1"
+        assert config.llm.model == "private/model:variant"
+
+    def test_apply_openrouter_provider_preset_handles_unknown_previous_provider(self):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_provider_preset
+
+        config = VulnClawConfig()
+        config.llm.provider = "legacy-gateway"
+        config.llm.base_url = "https://legacy.example/v1"
+        config.llm.model = ""
+
+        apply_provider_preset(config, "openrouter")
+
+        assert config.llm.provider == "openrouter"
+        assert config.llm.base_url == "https://openrouter.ai/api/v1"
+        assert config.llm.model == "openai/gpt-4o"
+
+    def test_apply_openrouter_provider_preset_preserves_unknown_provider_model(self):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_provider_preset
+
+        config = VulnClawConfig()
+        config.llm.provider = "legacy-gateway"
+        config.llm.model = "legacy/opaque-id"
+
+        apply_provider_preset(config, "openrouter")
+
+        assert config.llm.model == "legacy/opaque-id"
 
     def test_list_providers(self):
         from vulnclaw.config.settings import list_providers
@@ -349,3 +422,25 @@ class TestSettingsLoad:
         settings_mod.save_config(config)
         reloaded = settings_mod.load_config()
         assert reloaded.llm.api_keys == ["x1", "x2"]
+
+    def test_save_load_roundtrips_openrouter_and_custom_values(self, monkeypatch, tmp_path):
+        import vulnclaw.config.settings as settings_mod
+        from vulnclaw.config.schema import VulnClawConfig
+
+        monkeypatch.setattr(settings_mod, "CONFIG_FILE", tmp_path / "config.yaml")
+        monkeypatch.setattr(settings_mod, "CONFIG_DIR", tmp_path)
+        config = VulnClawConfig()
+        config.llm.provider = "openrouter"
+        config.llm.base_url = "https://gateway.example/v1"
+        config.llm.model = "private/opaque:model"
+        config.llm.auth_mode = "static"
+        config.llm.api_keys = ["pool-one", "pool-two"]
+
+        settings_mod.save_config(config)
+        reloaded = settings_mod.load_config()
+
+        assert reloaded.llm.provider == "openrouter"
+        assert reloaded.llm.base_url == "https://gateway.example/v1"
+        assert reloaded.llm.model == "private/opaque:model"
+        assert reloaded.llm.auth_mode == "static"
+        assert reloaded.llm.key_pool() == ["pool-one", "pool-two"]

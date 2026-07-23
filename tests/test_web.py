@@ -46,6 +46,17 @@ class TestWebServices:
         assert view.provider
         assert isinstance(view.api_key_configured, bool)
 
+    def test_web_config_reports_key_pool_credentials(self, monkeypatch):
+        import vulnclaw.web.services.config_service as config_service
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        config.llm.api_key = ""
+        config.llm.api_keys = ["", "pooled-secret"]
+        monkeypatch.setattr(config_service, "load_config", lambda: config)
+
+        assert config_service.get_public_config().api_key_configured is True
+
     def test_web_config_service_updates_subset(self, monkeypatch, tmp_path):
         import vulnclaw.web.services.config_service as config_service
         from vulnclaw.config.schema import VulnClawConfig
@@ -72,6 +83,29 @@ class TestWebServices:
         assert view.show_thinking is True
         assert view.python_execute_mode == "trusted-local"
 
+    def test_web_config_openrouter_explicit_overrides_win_after_preset(self, monkeypatch):
+        import vulnclaw.web.services.config_service as config_service
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.web.schemas import ConfigUpdateRequest
+
+        saved = VulnClawConfig()
+        monkeypatch.setattr(config_service, "load_config", lambda: saved)
+        monkeypatch.setattr(config_service, "save_config", lambda cfg: None)
+
+        view = config_service.update_public_config(
+            ConfigUpdateRequest(
+                provider="openrouter",
+                model="private/opaque:model",
+                base_url="https://gateway.example/v1",
+            )
+        )
+
+        assert view.provider == "openrouter"
+        assert view.model == "private/opaque:model"
+        assert view.base_url == "https://gateway.example/v1"
+        assert saved.llm.auth_mode == "static"
+        assert saved.llm.chatgpt_auto_proxy is False
+
     def test_web_provider_service_lists_presets(self):
         from vulnclaw.web.services.provider_service import get_provider_presets
 
@@ -79,6 +113,7 @@ class TestWebServices:
         ids = {p.id for p in view.providers}
         assert "openai" in ids
         assert "anthropic" in ids
+        assert "openrouter" in ids
         assert "custom" in ids
         openai = next(p for p in view.providers if p.id == "openai")
         assert openai.base_url == "https://api.openai.com/v1"
@@ -88,6 +123,10 @@ class TestWebServices:
         assert anthropic.base_url == "https://api.anthropic.com/v1"
         assert anthropic.default_model == "claude-sonnet-5"
         assert anthropic.label == "Anthropic Claude"
+        openrouter = next(p for p in view.providers if p.id == "openrouter")
+        assert openrouter.base_url == "https://openrouter.ai/api/v1"
+        assert openrouter.default_model == "openai/gpt-4o"
+        assert openrouter.label == "OpenRouter"
 
     def test_web_provider_service_fetch_models_uses_saved_key(self, monkeypatch):
         import vulnclaw.web.services.provider_service as provider_service

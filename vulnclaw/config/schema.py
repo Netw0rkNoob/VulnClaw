@@ -15,6 +15,7 @@ class LLMProvider(str, Enum):
     """Supported LLM providers with OpenAI-compatible APIs."""
 
     OPENAI = "openai"
+    OPENROUTER = "openrouter"
     ANTHROPIC = "anthropic"
     MINIMAX = "minimax"
     DEEPSEEK = "deepseek"
@@ -36,6 +37,11 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
         "base_url": "https://api.openai.com/v1",
         "default_model": "gpt-4o",
         "label": "OpenAI",
+    },
+    LLMProvider.OPENROUTER: {
+        "base_url": "https://openrouter.ai/api/v1",
+        "default_model": "openai/gpt-4o",
+        "label": "OpenRouter",
     },
     LLMProvider.ANTHROPIC: {
         "base_url": "https://api.anthropic.com/v1",
@@ -110,7 +116,11 @@ class LLMConfig(BaseModel):
 
     provider: str = Field(
         default="openai",
-        description="LLM provider name (openai/anthropic/minimax/deepseek/zhipu/moonshot/qwen/siliconflow/doubao/baichuan/stepfun/sensetime/yi/custom)",
+        description=(
+            "LLM provider preset identifier or a custom provider string. Built-ins include "
+            "openai, openrouter, anthropic, minimax, deepseek, zhipu, moonshot, qwen, "
+            "siliconflow, doubao, baichuan, stepfun, sensetime, yi, and custom."
+        ),
     )
     api_key: str = Field(default="", description="Static API key for the chosen provider (auth_mode=static)")
     api_keys: list[str] = Field(

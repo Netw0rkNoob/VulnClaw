@@ -15,7 +15,7 @@ def get_public_config() -> ConfigView:
         provider=config.llm.provider,
         model=config.llm.model,
         base_url=config.llm.base_url,
-        api_key_configured=bool(config.llm.api_key),
+        api_key_configured=bool(config.llm.key_pool()),
         output_dir=str(config.session.output_dir),
         max_rounds=config.session.max_rounds,
         persistent_rounds_per_cycle=config.session.persistent_rounds_per_cycle,

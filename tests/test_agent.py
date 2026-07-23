@@ -1236,6 +1236,40 @@ class TestAgentCoreLoop:
         assert "max_completion_tokens" not in kwargs
         assert "reasoning_effort" not in kwargs
 
+    def test_openrouter_agent_uses_static_key_and_never_chatgpt_proxy(
+        self, monkeypatch
+    ):
+        from vulnclaw.agent.core import AgentCore
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_provider_preset
+
+        config = VulnClawConfig()
+        config.llm.api_key = "fake-openrouter-key"
+        config.llm.auth_mode = "oauth"
+        config.llm.chatgpt_auto_proxy = True
+        apply_provider_preset(config, "openrouter")
+
+        captured = {}
+
+        def fake_client(*, api_key, base_url, timeout=None):
+            captured.update(api_key=api_key, base_url=base_url)
+            return object()
+
+        monkeypatch.setattr(AgentCore, "_report_kb_status", lambda self: None)
+        monkeypatch.setattr("vulnclaw.agent.core.make_openai_client", fake_client)
+        monkeypatch.setattr(
+            "vulnclaw.config.token_provider.load_oauth_tokens",
+            lambda: {"flow": "chatgpt", "access_token": "must-not-be-used"},
+        )
+
+        agent = AgentCore(config)
+        agent._get_client()
+
+        assert captured == {
+            "api_key": "fake-openrouter-key",
+            "base_url": "https://openrouter.ai/api/v1",
+        }
+
     @pytest.mark.asyncio
     async def test_generate_attack_summary_uses_gpt5_token_parameter(self):
         from vulnclaw.agent.context import SessionState
