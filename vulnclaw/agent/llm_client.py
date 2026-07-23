@@ -6,8 +6,10 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import re
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from types import SimpleNamespace
@@ -141,7 +143,7 @@ def _parse_retry_after(
             retry_at = retry_at.replace(tzinfo=timezone.utc)
         current = now or datetime.now(timezone.utc)
         seconds = (retry_at - current).total_seconds()
-    if seconds < 0:
+    if not math.isfinite(seconds) or seconds < 0:
         return None
     return min(seconds, OPENROUTER_MAX_RETRY_DELAY_SECONDS)
 
@@ -240,19 +242,83 @@ def _normalise_openrouter_exception(exc: Exception) -> OpenRouterResponseError:
     )
 
 
+@dataclass
+class _OpenRouterRetryState:
+    retry_attempts: int
+    transient_attempts: int
+    remaining_key_rotations: int
+    can_rotate: bool
+
+
+def _new_openrouter_retry_state(agent: Any) -> _OpenRouterRetryState:
+    pool_size = len(getattr(agent, "_key_pool", None) or [])
+    return _OpenRouterRetryState(
+        retry_attempts=0,
+        transient_attempts=0,
+        remaining_key_rotations=max(pool_size - 1, 0),
+        can_rotate=pool_size > 1
+        and callable(getattr(agent, "rotate_api_key", None)),
+    )
+
+
+async def _apply_openrouter_retry_policy(
+    agent: Any,
+    error: OpenRouterResponseError,
+    stage_label: str,
+    state: _OpenRouterRetryState,
+) -> None:
+    """Apply one bounded retry decision or raise a terminal sanitized error."""
+
+    if error.status_code == 401:
+        if (
+            state.can_rotate
+            and state.remaining_key_rotations > 0
+            and agent.rotate_api_key()
+        ):
+            state.remaining_key_rotations -= 1
+            state.retry_attempts += 1
+            return
+        raise error
+
+    if error.status_code == 402:
+        raise error
+
+    is_transient = error.status_code in {429, 503} or error.kind == "transport"
+    if not is_transient:
+        raise error
+
+    state.transient_attempts += 1
+    if state.transient_attempts >= OPENROUTER_MAX_TRANSIENT_ATTEMPTS:
+        raise error
+    state.retry_attempts += 1
+    delay = error.retry_after
+    if delay is None:
+        delay = min(
+            OPENROUTER_BASE_RETRY_DELAY_SECONDS
+            * (2 ** (state.transient_attempts - 1)),
+            OPENROUTER_MAX_RETRY_DELAY_SECONDS,
+        )
+    print(
+        f"[!] {stage_label} OpenRouter transient failure; "
+        f"retry {state.transient_attempts}/"
+        f"{OPENROUTER_MAX_TRANSIENT_ATTEMPTS - 1} "
+        f"in {delay:g}s.",
+        file=sys.stdout,
+        flush=True,
+    )
+    await asyncio.sleep(delay)
+
+
 async def _call_openrouter_with_bounded_retries(
     agent: Any,
     request_fn: Any,
     stage_label: str,
     *,
     validate_response: bool = True,
+    retry_state: _OpenRouterRetryState | None = None,
 ) -> tuple[Any, int]:
     loop = asyncio.get_running_loop()
-    retry_attempts = 0
-    transient_attempts = 0
-    pool_size = len(getattr(agent, "_key_pool", None) or [])
-    can_rotate = pool_size > 1 and callable(getattr(agent, "rotate_api_key", None))
-    remaining_key_rotations = max(pool_size - 1, 0)
+    state = retry_state or _new_openrouter_retry_state(agent)
 
     while True:
         try:
@@ -264,7 +330,7 @@ async def _call_openrouter_with_bounded_retries(
             )
             if validate_response:
                 _validate_provider_response(agent, response)
-            return response, retry_attempts
+            return response, state.retry_attempts
         except asyncio.CancelledError:
             raise
         except KeyboardInterrupt:
@@ -272,66 +338,12 @@ async def _call_openrouter_with_bounded_retries(
         except Exception as exc:
             error = _normalise_openrouter_exception(exc)
 
-        if error.status_code == 401:
-            if (
-                can_rotate
-                and remaining_key_rotations > 0
-                and agent.rotate_api_key()
-            ):
-                remaining_key_rotations -= 1
-                retry_attempts += 1
-                continue
-            raise error
-
-        if error.status_code == 402:
-            raise error
-
-        is_transient = error.status_code in {429, 503} or error.kind == "transport"
-        if not is_transient:
-            raise error
-
-        transient_attempts += 1
-        if transient_attempts >= OPENROUTER_MAX_TRANSIENT_ATTEMPTS:
-            raise error
-        retry_attempts += 1
-        delay = error.retry_after
-        if delay is None:
-            delay = min(
-                OPENROUTER_BASE_RETRY_DELAY_SECONDS
-                * (2 ** (transient_attempts - 1)),
-                OPENROUTER_MAX_RETRY_DELAY_SECONDS,
-            )
-        print(
-            f"[!] {stage_label} OpenRouter transient failure; "
-            f"retry {retry_attempts}/{OPENROUTER_MAX_TRANSIENT_ATTEMPTS - 1} "
-            f"in {delay:g}s.",
-            file=sys.stdout,
-            flush=True,
-        )
-        await asyncio.sleep(delay)
-
-
-async def _create_stream_with_retries(
-    agent: Any,
-    kwargs: dict[str, Any],
-    stage_label: str,
-) -> Any:
-    """Create a stream, applying OpenRouter retries only before consumption."""
-
-    def request_fn() -> Any:
-        return agent._get_client().chat.completions.create(
-            **kwargs,
-            stream=True,
-        )
-    if _provider_name(agent) == "openrouter":
-        response, _ = await _call_openrouter_with_bounded_retries(
+        await _apply_openrouter_retry_policy(
             agent,
-            request_fn,
+            error,
             stage_label,
-            validate_response=False,
+            state,
         )
-        return response
-    return request_fn()
 
 
 
@@ -446,22 +458,16 @@ async def _stream_chat_completion_message(
 
     kwargs = build_chat_completion_kwargs(agent, messages, tools)
     stream_sink.on_status("Thinking...")
-    response = await _create_stream_with_retries(agent, kwargs, "auto stream")
 
     full_text = ""
     reasoning_buffer = ""
     tool_calls_chunks: list[dict] = []
-    stream = _ensure_async_iter(response)
-    if stream is None:
-        raise ValueError("LLM response is not a valid stream object")
 
-    async for chunk in stream:
-        _validate_provider_response(
-            agent,
-            chunk,
-            partial_text=full_text,
-            require_choices=False,
-        )
+    async for chunk in _iter_stream_chunks_with_retries(
+        agent,
+        kwargs,
+        "auto stream",
+    ):
         if not chunk.choices:
             continue
         delta = chunk.choices[0].delta
@@ -885,6 +891,129 @@ def _ensure_async_iter(response):
     return None  # 不是可迭代对象，由调用方走降级路径
 
 
+def _stream_chunk_output(chunk: Any) -> tuple[bool, str]:
+    """Return whether a chunk started output and its bounded text contribution."""
+
+    has_output = False
+    text_parts: list[str] = []
+    for choice in _field(chunk, "choices", None) or []:
+        delta = _field(choice, "delta")
+        content = _field(delta, "content", "") or ""
+        reasoning = _field(delta, "reasoning_content", "") or ""
+        tool_calls = _field(delta, "tool_calls", None)
+        if content or reasoning or tool_calls:
+            has_output = True
+        if isinstance(reasoning, str):
+            text_parts.append(reasoning)
+        if isinstance(content, str):
+            text_parts.append(content)
+    return has_output, "".join(text_parts)
+
+
+async def _close_stream_response(response: Any) -> None:
+    """Release a provider stream after completion, failure, or retry."""
+
+    close = getattr(response, "aclose", None) or getattr(response, "close", None)
+    if not callable(close):
+        return
+    try:
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        # A close failure must not mask the normalized provider error.
+        return
+
+
+async def _iter_stream_chunks_with_retries(
+    agent: Any,
+    kwargs: dict[str, Any],
+    stage_label: str,
+):
+    """Yield chunks and retry OpenRouter only before any generated output."""
+
+    def request_fn() -> Any:
+        return agent._get_client().chat.completions.create(
+            **kwargs,
+            stream=True,
+        )
+
+    if _provider_name(agent) != "openrouter":
+        response = request_fn()
+        stream = _ensure_async_iter(response)
+        if stream is None:
+            raise ValueError("LLM response is not a valid stream object")
+        async for chunk in stream:
+            yield chunk
+        return
+
+    retry_state = _new_openrouter_retry_state(agent)
+    diagnostic_text = ""
+    while True:
+        response, _ = await _call_openrouter_with_bounded_retries(
+            agent,
+            request_fn,
+            stage_label,
+            validate_response=False,
+            retry_state=retry_state,
+        )
+        stream = _ensure_async_iter(response)
+        if stream is None:
+            await _close_stream_response(response)
+            raise OpenRouterResponseError(error_type="malformed_stream")
+
+        output_started = False
+        should_retry = False
+        try:
+            async for chunk in stream:
+                try:
+                    _validate_provider_response(
+                        agent,
+                        chunk,
+                        partial_text=diagnostic_text,
+                        require_choices=False,
+                    )
+                except OpenRouterResponseError as error:
+                    if output_started:
+                        raise
+                    await _apply_openrouter_retry_policy(
+                        agent,
+                        error,
+                        stage_label,
+                        retry_state,
+                    )
+                    should_retry = True
+                    break
+
+                chunk_started_output, chunk_text = _stream_chunk_output(chunk)
+                output_started = output_started or chunk_started_output
+                diagnostic_text = (
+                    diagnostic_text + chunk_text
+                )[-OPENROUTER_MAX_DIAGNOSTIC_TEXT:]
+                yield chunk
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
+        except OpenRouterResponseError:
+            raise
+        except Exception as exc:
+            error = _normalise_openrouter_exception(exc)
+            error.partial_text = diagnostic_text
+            if output_started:
+                raise error
+            await _apply_openrouter_retry_policy(
+                agent,
+                error,
+                stage_label,
+                retry_state,
+            )
+            should_retry = True
+        finally:
+            await _close_stream_response(response)
+
+        if not should_retry:
+            return
+
+
 def _collect_tool_call_deltas(delta: Any, tool_calls_chunks: list[dict]) -> None:
     """从单个流式 delta 中提取 tool_call 分片，追加到累积列表。
 
@@ -1032,17 +1161,16 @@ async def call_llm_stream(
 
     try:
         stream_sink.on_status("Thinking...")
-        response = client.chat.completions.create(**kwargs, stream=True)
 
         full_text = ""
         reasoning_buffer = ""
         tool_calls_chunks: list[dict] = []
 
-        # 自动适配 sync/async Stream（sync Stream 用 _AsyncIterWrapper 包装）
-        _stream = _ensure_async_iter(response)
-        if _stream is None:
-            raise ValueError("LLM response is not a valid stream object")
-        async for chunk in _stream:
+        async for chunk in _iter_stream_chunks_with_retries(
+            agent,
+            kwargs,
+            "stream",
+        ):
             if chunk.choices and len(chunk.choices) > 0:
                 delta = chunk.choices[0].delta
 

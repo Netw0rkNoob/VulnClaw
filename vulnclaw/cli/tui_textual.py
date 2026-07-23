@@ -707,7 +707,24 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
 
     def on_models_loaded(result):
         if result.models:
-            _set_prompt(session, "choice", _("tui.prompt_select_model", model=session["config"].llm.model), result.models, on_model_selected)
+            manual_entry = _("tui.model_manual_entry")
+            prompt = _(
+                "tui.prompt_select_model",
+                model=session["config"].llm.model,
+            )
+            current_model = session["config"].llm.model
+            if current_model and current_model not in result.models:
+                prompt = (
+                    f"{_('tui.model_discovery_selected_incompatible')} "
+                    f"{prompt}"
+                )
+            _set_prompt(
+                session,
+                "choice",
+                prompt,
+                [*result.models, manual_entry],
+                on_model_selected,
+            )
         else:
             fallback = (
                 f"{_tui._model_discovery_failure_message(result)} "
@@ -716,6 +733,18 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
             _set_prompt(session, "input", fallback, on_model_input, session["config"].llm.model)
 
     def on_model_selected(v):
+        if v == _("tui.model_manual_entry"):
+            _set_prompt(
+                session,
+                "input",
+                _(
+                    "tui.prompt_enter_model_fallback",
+                    model=session["config"].llm.model,
+                ),
+                on_model_input,
+                session["config"].llm.model,
+            )
+            return
         if v:
             session["config"].llm.model = v.strip()
         save_config(session["config"])

@@ -2091,6 +2091,11 @@ def _prompt_model_value(screen: Console, config) -> str:
         models = discovery.models
 
     if models:
+        if current and current not in models:
+            screen.print(
+                f"[{C_WARNING}]"
+                f"{_('tui.model_discovery_selected_incompatible')}[/]"
+            )
         _render_model_choices(screen, models, current)
         raw = _config_prompt_ask(screen, f"Model [current: {current}]", default="")
         if not raw:
@@ -2197,9 +2202,18 @@ def _edit_llm_config(screen: Console, config):
         config = apply_provider_preset(config, provider)
 
     config.llm.base_url = _prompt_text_value(screen, "Base URL", config.llm.base_url)
-    config.llm.auth_mode = _prompt_choice_value(
-        screen, "Auth mode", ["static", "oauth"], config.llm.auth_mode
-    )
+    is_openrouter = config.llm.provider == "openrouter"
+    if is_openrouter:
+        config.llm.auth_mode = "static"
+        config.llm.chatgpt_auto_proxy = False
+        screen.print(
+            f"[{C_MUTED}]OpenRouter uses static inference keys; OAuth and "
+            "the ChatGPT auto-proxy are disabled.[/]"
+        )
+    else:
+        config.llm.auth_mode = _prompt_choice_value(
+            screen, "Auth mode", ["static", "oauth"], config.llm.auth_mode
+        )
     config.llm.api_keys = _prompt_secret_list_value(
         screen,
         "API keys (comma-separated, !clear to empty)",
@@ -2211,9 +2225,10 @@ def _edit_llm_config(screen: Console, config):
         config.llm.api_key,
     )
     config.llm.model = _prompt_model_value(screen, config)
-    config.llm.chatgpt_auto_proxy = _prompt_bool_value(
-        screen, "ChatGPT auto-proxy", config.llm.chatgpt_auto_proxy
-    )
+    if not is_openrouter:
+        config.llm.chatgpt_auto_proxy = _prompt_bool_value(
+            screen, "ChatGPT auto-proxy", config.llm.chatgpt_auto_proxy
+        )
     config.llm.max_tokens = _prompt_int_value(screen, "Max tokens", config.llm.max_tokens)
     config.llm.max_context_tokens = _prompt_int_value(
         screen, "Max context tokens", config.llm.max_context_tokens

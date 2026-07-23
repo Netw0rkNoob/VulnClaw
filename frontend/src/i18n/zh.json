@@ -511,6 +511,7 @@
   "settings.models_empty_catalog": "未找到满足 VulnClaw 工具请求约束的模型。你仍可手动输入模型 ID。",
   "settings.models_redirect_blocked": "模型发现发生重定向；为保护已保存的密钥，请求已停止。",
   "settings.models_upstream_error": "无法加载提供商模型目录，请检查端点后重试。",
+  "settings.models_selected_incompatible": "当前 Model ID 不在兼容目录中。自主运行前请选择列表中的模型；仅在接受运行时失败关闭拒绝时保留手动 ID。",
   "settings.openrouter_warning_title": "OpenRouter 路由与隐私提示",
   "settings.openrouter_warning": "OpenRouter 是模型网关，可能在多个上游提供商之间路由请求，或在开始流式响应前重试。各上游的保留和训练政策彼此独立；发送敏感的授权目标数据前，请先配置并核验 OpenRouter 的隐私与 ZDR 偏好。",
 

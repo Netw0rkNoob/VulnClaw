@@ -292,5 +292,7 @@
   "tui.model_discovery_empty_catalog": "未找到兼容模型，请手动输入模型 ID。",
   "tui.model_discovery_redirect_blocked": "模型发现发生重定向；为保护已保存的密钥，请求已停止。",
   "tui.model_discovery_upstream_error": "无法加载提供商模型目录。",
+  "tui.model_discovery_selected_incompatible": "警告：当前 Model ID 不在兼容目录中。自主运行前请选择列表中的模型；仅在接受运行时失败关闭拒绝时保留该 ID。",
+  "tui.model_manual_entry": "手动输入 Model ID…",
   "tui.openrouter_warning": "OpenRouter 可能在多个上游提供商之间路由请求。发送敏感的授权目标数据前，请核验账户隐私与 ZDR 偏好。"
 }

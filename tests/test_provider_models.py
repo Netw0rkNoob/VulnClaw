@@ -264,6 +264,7 @@ def test_generic_discovery_wrapper_keeps_sdk_behavior(monkeypatch):
             return [
                 type("Model", (), {"id": "z-model"})(),
                 type("Model", (), {"id": "a-model"})(),
+                type("Model", (), {"id": "a-model"})(),
             ]
 
     client = type("Client", (), {"models": Models()})()
@@ -272,7 +273,8 @@ def test_generic_discovery_wrapper_keeps_sdk_behavior(monkeypatch):
     assert settings.fetch_provider_models(
         "https://generic.example/v1",
         "fake-generic-key",
-    ) == ["a-model", "z-model"]
+    ) == ["a-model", "a-model", "z-model"]
+
 
 def test_provider_discovery_catalogs_have_matching_keys_and_placeholders():
     """OpenRouter/model-discovery i18n keys stay in sync across en/zh."""
@@ -300,4 +302,3 @@ def test_provider_discovery_catalogs_have_matching_keys_and_placeholders():
         for key in english
         if _placeholders(english[key]) != _placeholders(chinese[key])
     } == {}
-

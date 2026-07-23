@@ -54,22 +54,15 @@ Suitable for authorized pentests, CTF competitions, security training, and red t
 
 ## Features
 
-<<<<<<< HEAD
 - **Model-Led Solver Engine (default)** — Claude Code/Codex-style autonomous loop: the model decides the next action, tool usage, completion, user questions, or no-path termination
 - **AgentState Evidence Memory** — Tool results are stored in `AgentState.evidence` with complete raw text preserved; active context receives bounded high-signal previews by default, while `evidence_search` / `evidence_view` revisit raw evidence on demand
 - **Lightweight Correction Layer** — Records repeated calls, degraded tools, timing, and new observations; repeated reads of the same evidence range are suppressed and evidence-only stalls trigger a stall guard without restoring the old stage planner
 - **Evidence-Level Anti-Hallucination Gate** — Claims about flags/conclusions must appear verbatim in real tool output to be accepted; prevents fabricated flags
 - **Natural Language Driven** — Describe your goal in plain English, auto-identifies phases and tools
-- **13 LLM Providers** — OpenAI / Anthropic / MiniMax / DeepSeek / Zhipu / Moonshot / Qwen / SiliconFlow / Doubao / Baichuan / StepFun / SenseTime / Yi, one-command switch
+- **14 LLM Providers** — OpenAI / OpenRouter / Anthropic / MiniMax / DeepSeek / Zhipu / Moonshot / Qwen / SiliconFlow / Doubao / Baichuan / StepFun / SenseTime / Yi, one-command switch
 - **MCP Toolchain** — 4 MCP services: `fetch` / `memory` run locally out-of-the-box, `chrome-devtools` / `burp` connect to external MCP servers for browser automation and HTTP interception
 - **Enhanced fetch request tool** — Defaults to GET, returns the full response body, and supports HTTP/HTTPS, custom method/headers/params/cookies/body/data/form/json, timeout/redirect/TLS controls; TLS verification is off by default for CTF/lab HTTPS targets
 - **Native Traffic Evidence Store** — In-scope request/response pairs land in an append-only JSONL index under `evidence/traffic/`. Built-in `traffic_list` / `traffic_view` / `traffic_repeat` / `traffic_sitemap` tools read and replay the store
-=======
-- **Natural Language Driven** — Describe your intent in plain English, it auto-identifies phases and tools
-- **14 LLM Providers** — OpenAI / OpenRouter / Anthropic / MiniMax / DeepSeek / Zhipu / Moonshot / Qwen / SiliconFlow / Doubao / Baichuan / StepFun / SenseTime / Yi, one-command switch
-- **MCP Toolchain** — Ships with 11 MCP service configs and 23 tool definitions; `fetch` / `memory` currently run in stable `local` mode, while most other MCP integrations remain preview or placeholder until full session lifecycle management is completed
-- **Native traffic evidence store** — A VulnClaw-owned capture store: in-scope request/response pairs land in an append-only JSONL index plus per-request raw blobs under `evidence/traffic/`. Built-in `traffic_list` / `traffic_view` / `traffic_repeat` / `traffic_sitemap` tools read and replay the store (`traffic_repeat` re-issues with overrides), and a verified finding's report inlines the exact raw request/response that proved it. The mitmproxy proxy and headless Playwright capture backends are optional extras (`pip install vulnclaw[traffic]`), gated behind availability detection; their automatic wiring into the sandbox run loop lands with the sandbox / run-directory PRDs. Burp/chrome-devtools stay optional interactive overlays, normalized into the same store
->>>>>>> 28101c8 (docs: document openrouter provider behavior)
 - **AI Agent Core** — OpenAI-compatible protocol + Tool Calling + autonomous pentest loop
 - **Structured Reasoning + Adaptive Reflection** — Facts/constraints/attack chains structured and injected into prompts; failures auto-classified with L0-L4 payload escalation
 - **Vulnerability Detection Plugin System** — Low-coupling plugin runtime + built-in read-only Web plugins, results auto-merged into reports (`vulnclaw plugins`)
@@ -129,7 +122,7 @@ docker run --rm -it \
 
 ```bash
 # 1. Select provider (auto-fills Base URL and model name)
-vulnclaw config provider minimax   # or openai / openrouter / anthropic / deepseek / zhipu / moonshot / qwen / siliconflow
+vulnclaw config provider minimax   # or openai / anthropic / deepseek / zhipu / moonshot / qwen / siliconflow
 
 # 1.2 (optional) custom Base URL or model name
 vulnclaw config set llm.base_url https://your-own-api.example.com/v1
@@ -330,57 +323,7 @@ vulnclaw web                  # launch (default 127.0.0.1:7788)
 vulnclaw web --port 8080      # custom port
 ```
 
-<<<<<<< HEAD
 > ⚠️ By default binds to localhost only. For remote access pass `--host 0.0.0.0 --allow-remote`.
-=======
-Once launched, open `http://127.0.0.1:7788` in your browser.
-
-> ⚠️ By default the server binds to localhost only. To allow remote access you must explicitly pass `--host 0.0.0.0 --allow-remote` — make sure your network is secure.
-
----
-
-## LLM Provider Configuration
-
-VulnClaw supports OpenAI-compatible APIs with 14 built-in provider presets plus custom endpoints:
-
-```bash
-vulnclaw config provider --list    # list all providers
-vulnclaw config provider minimax   # one-command switch
-```
-
-| Provider     | Command                  | Default Model          |
-| ------------ | ------------------------ | ---------------------- |
-| OpenAI      | `provider openai`        | gpt-4o                 |
-| OpenRouter (Model Gateway) | `provider openrouter` | openai/gpt-4o |
-| Anthropic Claude | `provider anthropic` | claude-sonnet-5        |
-| MiniMax     | `provider minimax`       | MiniMax-M3             |
-| DeepSeek    | `provider deepseek`      | deepseek-v4-pro        |
-| Zhipu GLM   | `provider zhipu`         | glm-4.7                |
-| Kimi        | `provider moonshot`      | kimi-k2.6              |
-| Qwen        | `provider qwen`          | qwen3-max              |
-| SiliconFlow | `provider siliconflow`   | DeepSeek-V4-Flash      |
-| Doubao      | `provider doubao`        | Doubao-Seed-2.0-Pro    |
-| Baichuan    | `provider baichuan`      | Baichuan4-Turbo        |
-| StepFun     | `provider stepfun`       | step-3.5-flash         |
-| SenseTime   | `provider sensetime`     | SenseNova-6.7-Flash-Lite |
-| Yi          | `provider yi`            | yi-lightning           |
-| Custom      | `provider custom`        | manual                 |
->>>>>>> 28101c8 (docs: document openrouter provider behavior)
-
-### OpenRouter security and routing
-
-```bash
-vulnclaw config provider openrouter
-vulnclaw config set llm.api_key <openrouter-inference-key>
-```
-
-OpenRouter is a Model Gateway, not a single Upstream Model Provider. VulnClaw uses a standard static inference key through the existing `llm.api_key` / `llm.api_keys` and `VULNCLAW_LLM_API_KEY` / `VULNCLAW_LLM_API_KEYS` settings. Use a dedicated inference key with a spending cap and an appropriate expiry; do not use a management key.
-
-Default routing can select and, before output begins, fall back across multiple Upstream Model Providers, so a Model ID does not pin one upstream. VulnClaw requires eligible upstreams to support its tool and generation parameters, but this first release does not expose OpenRouter-specific routing, fallback, or privacy controls.
-
-OpenRouter retains request metadata, and selected upstreams have independent retention and training policies. Before sending sensitive target data, review the OpenRouter account privacy, data-collection, and ZDR settings plus each eligible upstream's policy. ZDR can constrain routing, but this documentation does not promise unconditional end-to-end zero retention.
-
-Free model variants generally have lower limits and availability; dynamic routers also reduce determinism in upstream choice, pricing, and output. They are useful for evaluation, not VulnClaw's production default. See [OpenRouter provider routing](https://openrouter.ai/docs/guides/routing/provider-selection) and [privacy and logging](https://openrouter.ai/docs/guides/privacy/provider-logging).
 
 ---
 
@@ -421,7 +364,6 @@ FINAL passes evidence gate → accepted; otherwise the rejection is fed back and
 
 ### Core Modules
 
-<<<<<<< HEAD
 | Module | File | Description |
 |--------|------|-------------|
 | **CLI/TUI Entry** | `cli/main.py` + `cli/tui.py` | Typer commands + REPL + TUI |
@@ -431,28 +373,9 @@ FINAL passes evidence gate → accepted; otherwise the rejection is fed back and
 | **Plugin System** | `plugins/` | Low-coupling vulnerability detection plugin runtime |
 | **Skill reference index** | `skills/loader.py` + `resolver.py` | Task-aware optional references without forced workflow injection |
 | **MCP Orchestration** | `mcp/registry.py` + `lifecycle.py` + `router.py` | Service registry + lifecycle + tool routing |
-| **Config** | `config/schema.py` + `settings.py` | Pydantic + YAML + 13 provider presets |
+| **Config** | `config/schema.py` + `settings.py` | Pydantic + YAML + 14 provider presets |
 | **Report Generator** | `report/generator.py` + `poc_builder.py` | Markdown reports + PoC scripts |
 | **Security KB** | `kb/store.py` + `retriever.py` | JSON storage + CVE/technique/tool retrieval |
-=======
-| Module              | File                                                  | Description                                        |
-| ------------------- | ----------------------------------------------------- | -------------------------------------------------- |
-| **CLI/TUI Entry**   | `cli/main.py` + `cli/tui.py`                         | Typer commands + default original CLI/REPL + explicit TUI |
-| **Agent Core**      | `agent/core.py`                                      | AgentCore coordination entrypoint (after the refactor it mainly keeps thin coordination responsibilities) |
-| **Dynamic Prompts** | `agent/prompts.py`                                   | Base identity + core contract + skills + MCP tools  |
-| **Prompt Assembly** | `agent/system_prompt.py` + `prompt_context.py`       | System prompt / round context / attack summary assembly |
-| **Input Analysis**  | `agent/input_analysis.py`                            | Target detection, phase detection, explicit vuln-hint extraction |
-| **Anti-loop / CTF** | `agent/anti_loop.py` + `ctf_mode.py`                | Completion signals, attack-path heuristics, failed-target tracking, flag state machine |
-| **Session State**   | `agent/context.py`                                   | Phase tracking + findings + step records            |
-| **Skill / KB Context** | `agent/skill_context.py` + `kb_context.py`       | Skill selection and knowledge-base prompt injection |
-| **Target State**    | `target_state/store.py`                              | Per-target persistence, resume, snapshots, rollback, target-level reports |
-| **MCP Orchestration**| `mcp/registry.py` + `lifecycle.py` + `router.py`    | Service registry + lifecycle + NL→tool routing     |
-| **Skill Dispatcher** | `skills/loader.py` + `dispatcher.py`               | Directory-format Skills + CTF/SRC/AI/Web intent routing |
-| **Crypto Tools**    | `skills/crypto_tools.py`                             | 29 encode/decode/crypto ops, registered as built-in tools |
-| **Config**          | `config/schema.py` + `settings.py`                   | Pydantic models + YAML persistence + 14 provider presets |
-| **Report Generator** | `report/generator.py` + `poc_builder.py`          | Markdown reports + Python PoC templates             |
-| **Security KB**     | `kb/store.py` + `retriever.py`                     | JSON storage + CVE/technique/tool retrieval        |
->>>>>>> 28101c8 (docs: document openrouter provider behavior)
 
 ---
 
@@ -597,6 +520,7 @@ vulnclaw config provider minimax   # one-command switch
 | Provider | Command | Default Model |
 |----------|---------|---------------|
 | OpenAI | `provider openai` | gpt-4o |
+| OpenRouter (model gateway) | `provider openrouter` | openai/gpt-4o |
 | Anthropic Claude | `provider anthropic` | claude-sonnet-5 |
 | MiniMax | `provider minimax` | MiniMax-M3 |
 | DeepSeek | `provider deepseek` | deepseek-v4-pro |
@@ -611,6 +535,22 @@ vulnclaw config provider minimax   # one-command switch
 | Yi | `provider yi` | yi-lightning |
 | Custom | `provider custom` | manual |
 
+### OpenRouter security and routing notes
+
+```bash
+vulnclaw config provider openrouter
+vulnclaw config set llm.api_key <openrouter-inference-key>
+```
+
+OpenRouter is a model gateway, not a single upstream model provider. VulnClaw uses a standard static inference key through the existing `llm.api_key` / `llm.api_keys` and `VULNCLAW_LLM_API_KEY` / `VULNCLAW_LLM_API_KEYS` settings. Use a dedicated inference key with a spend limit and an appropriate expiry in OpenRouter; do not use management keys.
+
+Default routing may choose among multiple upstream model providers and can fall back before a request starts producing output, so one Model ID does not guarantee a fixed upstream. VulnClaw requires upstream support for the tools and generation parameters it sends, but v1 does not expose OpenRouter-specific routing, fallback, or privacy controls.
+
+OpenRouter retains request metadata, and selected upstream providers have their own retention and training policies. Before handling sensitive target data, review OpenRouter account-level privacy, data-collection, and ZDR settings plus candidate upstream policies. ZDR can constrain routing, but it must not be treated as an unconditional end-to-end zero-retention guarantee in this document.
+
+Free model variants usually have lower limits and availability; dynamic routers also reduce upstream, pricing, and output determinism. They are fine for trials, not VulnClaw's production default. See [OpenRouter routing](https://openrouter.ai/docs/guides/routing/provider-selection) and [privacy / logging](https://openrouter.ai/docs/guides/privacy/provider-logging).
+
+
 ### CLI Configuration
 
 ```bash
@@ -623,10 +563,9 @@ vulnclaw config set session.show_thinking false  # hide thinking process
 
 ### Configurable Options
 
-<<<<<<< HEAD
 | Option | Default | Description |
 |--------|---------|-------------|
-| `llm.provider` | openai | LLM provider |
+| `llm.provider` | openai | LLM provider (14 built-in + custom) |
 | `llm.api_key` | empty | API key |
 | `llm.auth_mode` | static | `static` or `oauth` |
 | `llm.chatgpt_auto_proxy` | false | Auto-start built-in ChatGPT bridge proxy |
@@ -651,27 +590,6 @@ vulnclaw config set session.show_thinking false  # hide thinking process
 | `session.persistent_max_cycles` | 10 | Max cycles (0=unlimited) |
 | `session.persistent_auto_report` | true | Auto-report after each cycle |
 | `session.stale_rounds_threshold` | 5 | Dead-loop detection threshold |
-=======
-| Option                                  | Default        | Description                                      |
-| --------------------------------------- | -------------- | ------------------------------------------------ |
-| `llm.provider`                         | openai         | LLM provider (14 built-in + custom)             |
-| `llm.api_key`                          | empty          | API key (auth_mode=static)                       |
-| `llm.auth_mode`                        | static         | `static` (api_key) or `oauth` (`vulnclaw login`) |
-| `llm.chatgpt_auto_proxy`               | false          | Auto-start built-in ChatGPT-backend bridge proxy |
-| `llm.base_url`                         | per provider   | API base URL, customizable                       |
-| `llm.model`                            | per provider   | Model name, customizable                        |
-| `llm.temperature`                      | 0.1            | Sampling temperature                             |
-| `llm.max_tokens`                       | 4096           | Max output tokens per call                       |
-| `session.max_rounds`                    | 15             | Max rounds per autonomous pentest (10-50 recommended)|
-| `session.output_dir`                    | ./vulnclaw-output | Report output directory                    |
-| `session.report_format`                  | markdown       | Report format (markdown / html)                |
-| `session.poc_language`                  | python         | PoC generation language (python / bash)          |
-| `session.show_thinking`                 | false          | Show LLM reasoning (think tag content, default off)|
-| `session.persistent_rounds_per_cycle`   | 100            | Rounds per cycle in persistent mode              |
-| `session.persistent_max_cycles`        | 10             | Max cycles in persistent mode (0=unlimited)     |
-| `session.persistent_auto_report`        | true           | Auto-generate report after each cycle            |
-| `session.stale_rounds_threshold`        | 5              | Dead-loop threshold — triggers forced strategy switch after this many rounds with no new findings |
->>>>>>> 28101c8 (docs: document openrouter provider behavior)
 
 ### Environment Variables
 

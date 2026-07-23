@@ -97,6 +97,17 @@ def make_openai_client(api_key: str, base_url: str, timeout: float | None = None
 # ── Load / Save ────────────────────────────────────────────────────
 
 
+def _enforce_provider_auth_invariants(
+    config: VulnClawConfig,
+) -> VulnClawConfig:
+    """Keep provider-specific credential boundaries safe after every overlay."""
+
+    if str(config.llm.provider or "").strip().lower() == LLMProvider.OPENROUTER.value:
+        config.llm.auth_mode = "static"
+        config.llm.chatgpt_auto_proxy = False
+    return config
+
+
 def load_config() -> VulnClawConfig:
     """Load configuration from file + env vars.
 
@@ -124,12 +135,13 @@ def load_config() -> VulnClawConfig:
     # Overlay from env vars
     config = _overlay_env(config)
 
-    return config
+    return _enforce_provider_auth_invariants(config)
 
 
 def save_config(config: VulnClawConfig) -> None:
     """Save configuration to YAML file."""
     ensure_dirs()
+    _enforce_provider_auth_invariants(config)
     raw = config.model_dump(mode="json")
     # Remove default values to keep config clean
     _strip_defaults(raw)
@@ -427,13 +439,9 @@ def apply_provider_preset(config: VulnClawConfig, provider_name: str) -> VulnCla
     if preset.get("default_model") and (not old_model.strip() or old_model == old_default):
         config.llm.model = preset["default_model"]
 
-    if provider is LLMProvider.OPENROUTER:
-        # OpenRouter inference keys use the generic static credential path.
-        # Stored OAuth data is left untouched but can never enter the proxy.
-        config.llm.auth_mode = "static"
-        config.llm.chatgpt_auto_proxy = False
-
-    return config
+    # Stored OAuth metadata is left untouched, but provider credential
+    # invariants are enforced even when callers bypass normal UI flows.
+    return _enforce_provider_auth_invariants(config)
 
 
 def list_providers() -> list[dict[str, str]]:
@@ -660,7 +668,9 @@ def discover_provider_models(
     try:
         client = make_openai_client(api_key=api_key, base_url=base_url, timeout=timeout)
         models_page = client.models.list()
-        model_ids = sorted({m.id for m in models_page if getattr(m, "id", "")})
+        model_ids = sorted(
+            m.id for m in models_page if getattr(m, "id", "")
+        )
     except Exception:
         return _discovery_result(
             ProviderModelDiscoveryStatus.UPSTREAM_ERROR,

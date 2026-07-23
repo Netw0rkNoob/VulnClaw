@@ -1262,6 +1262,68 @@ class TestCLI:
         assert updated.llm.model == "deepseek-chat"
         assert updated.llm.api_keys == ["sk-test"]
 
+    def test_tui_openrouter_cannot_reenable_oauth_or_chatgpt_proxy(
+        self,
+        monkeypatch,
+    ):
+        import vulnclaw.cli.tui as tui_mod
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        config.llm.auth_mode = "oauth"
+        config.llm.chatgpt_auto_proxy = True
+
+        def choose(screen, label, choices, current):
+            if label == "Provider":
+                return "openrouter"
+            raise AssertionError(f"Unexpected choice prompt: {label}")
+
+        monkeypatch.setattr(tui_mod, "_prompt_choice_value", choose)
+        monkeypatch.setattr(
+            tui_mod,
+            "_prompt_bool_value",
+            lambda *args, **kwargs: pytest.fail(
+                "OpenRouter must not prompt for ChatGPT auto-proxy"
+            ),
+        )
+        monkeypatch.setattr(
+            tui_mod,
+            "_prompt_text_value",
+            lambda screen, label, current: current,
+        )
+        monkeypatch.setattr(
+            tui_mod,
+            "_prompt_secret_list_value",
+            lambda screen, label, current: current,
+        )
+        monkeypatch.setattr(
+            tui_mod,
+            "_prompt_secret_text_value",
+            lambda screen, label, current: current,
+        )
+        monkeypatch.setattr(
+            tui_mod,
+            "_prompt_model_value",
+            lambda screen, cfg: cfg.llm.model,
+        )
+        monkeypatch.setattr(
+            tui_mod,
+            "_prompt_int_value",
+            lambda screen, label, current: current,
+        )
+        monkeypatch.setattr(
+            tui_mod,
+            "_prompt_float_value",
+            lambda screen, label, current: current,
+        )
+
+        screen = tui_mod.Console(file=io.StringIO(), force_terminal=False)
+        updated = tui_mod._edit_llm_config(screen, config)
+
+        assert updated.llm.provider == "openrouter"
+        assert updated.llm.auth_mode == "static"
+        assert updated.llm.chatgpt_auto_proxy is False
+
     def test_config_tui_escape_exits_without_saving(self, monkeypatch):
         from rich.console import Console as RichConsole
 
@@ -1395,6 +1457,96 @@ class TestCLI:
         assert selected == "private/manual:model"
         assert "rejected the saved inference key" in output
         assert "fake-secret-never-print" not in output
+
+    def test_config_tui_warns_when_current_model_is_not_in_loaded_catalog(
+        self,
+        monkeypatch,
+    ):
+        from rich.console import Console as RichConsole
+
+        import vulnclaw.cli.tui as tui_mod
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import (
+            ProviderModelDiscoveryResult,
+            ProviderModelDiscoveryStatus,
+        )
+        from vulnclaw.i18n import init_i18n
+
+        config = VulnClawConfig()
+        config.llm.provider = "openrouter"
+        config.llm.base_url = "https://openrouter.ai/api/v1"
+        config.llm.model = "private/manual:model"
+        config.llm.api_key = "fake-secret-never-print"
+        screen = RichConsole(
+            file=io.StringIO(),
+            record=True,
+            width=100,
+            force_terminal=False,
+            color_system=None,
+        )
+        monkeypatch.setattr(
+            tui_mod,
+            "discover_provider_models",
+            lambda *args, **kwargs: ProviderModelDiscoveryResult(
+                models=["openai/gpt-4o"],
+                status=ProviderModelDiscoveryStatus.OK,
+            ),
+        )
+        monkeypatch.setattr(
+            tui_mod,
+            "_read_config_prompt_raw",
+            lambda *args, **kwargs: "",
+        )
+
+        init_i18n(lang="en")
+        selected = tui_mod._prompt_model_value(screen, config)
+        output = screen.export_text()
+
+        assert selected == "private/manual:model"
+        assert "not in the compatible catalog" in output
+        assert "fake-secret-never-print" not in output
+
+    def test_textual_config_keeps_manual_model_entry_after_catalog_load(
+        self,
+        monkeypatch,
+    ):
+        import vulnclaw.cli.tui_textual as textual_mod
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import (
+            ProviderModelDiscoveryResult,
+            ProviderModelDiscoveryStatus,
+        )
+        from vulnclaw.i18n import _, init_i18n
+
+        config = VulnClawConfig()
+        config.llm.api_key = "fake-secret-never-print"
+        session = {
+            "config": config,
+            "_prompt": None,
+            "_show_popup": False,
+        }
+        saved = []
+        monkeypatch.setattr(textual_mod, "save_config", saved.append)
+        init_i18n(lang="en")
+
+        textual_mod._h_config(session, "")
+        session["_prompt"][3]("openrouter")
+        session["_prompt"][2]("")
+        session["_prompt"][2](
+            ProviderModelDiscoveryResult(
+                models=["openai/gpt-4o"],
+                status=ProviderModelDiscoveryStatus.OK,
+            )
+        )
+
+        model_choices = session["_prompt"][2]
+        assert _("tui.model_manual_entry") in model_choices
+        session["_prompt"][3](_("tui.model_manual_entry"))
+        assert session["_prompt"][0] == "input"
+        session["_prompt"][2]("private/manual:model")
+
+        assert session["config"].llm.model == "private/manual:model"
+        assert saved == [session["config"]]
 
 
 class TestClassicReplSlashPalette:

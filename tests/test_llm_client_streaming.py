@@ -903,6 +903,151 @@ class TestOpenRouterStreamErrors:
             )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [429, 503])
+    async def test_error_only_transient_chunk_retries_before_output(
+        self,
+        monkeypatch,
+        status_code,
+    ):
+        from vulnclaw.agent.llm_client import call_llm_stream
+
+        failed_stream = _SyncStream(
+            [
+                _stream_chunk(
+                    error={"code": status_code, "message": "unsafe detail"},
+                    finish_reason="error",
+                )
+            ]
+        )
+        successful_stream = _SyncStream([_stream_chunk(content="complete")])
+        agent = _openrouter_stream_agent(failed_stream, successful_stream)
+        agent._key_pool = ["only"]
+        agent.rotate_api_key = MagicMock(return_value=False)
+
+        async def fake_sleep(delay):
+            assert delay == 1
+
+        monkeypatch.setattr(
+            "vulnclaw.agent.llm_client.asyncio.sleep",
+            fake_sleep,
+        )
+
+        result = await call_llm_stream(
+            agent,
+            "system",
+            stream_sink=SpySink(),
+        )
+
+        assert result == "complete"
+        assert agent._get_client().chat.completions.create.call_count == 2
+        agent.rotate_api_key.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_error_only_401_chunk_rotates_once_before_output(self):
+        from vulnclaw.agent.llm_client import call_llm_stream
+
+        failed_stream = _SyncStream(
+            [
+                _stream_chunk(
+                    error={"code": 401, "message": "unsafe detail"},
+                    finish_reason="error",
+                )
+            ]
+        )
+        successful_stream = _SyncStream([_stream_chunk(content="complete")])
+        agent = _openrouter_stream_agent(failed_stream, successful_stream)
+        agent._key_pool = ["first", "second"]
+        agent.rotate_api_key = MagicMock(return_value=True)
+
+        result = await call_llm_stream(
+            agent,
+            "system",
+            stream_sink=SpySink(),
+        )
+
+        assert result == "complete"
+        assert agent._get_client().chat.completions.create.call_count == 2
+        agent.rotate_api_key.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_error_only_402_chunk_is_terminal_without_retry(self):
+        from vulnclaw.agent.llm_client import (
+            OpenRouterResponseError,
+            call_llm_stream,
+        )
+
+        failed_stream = _SyncStream(
+            [
+                _stream_chunk(
+                    error={"code": 402, "message": "unsafe detail"},
+                    finish_reason="error",
+                )
+            ]
+        )
+        agent = _openrouter_stream_agent(failed_stream)
+        agent._key_pool = ["first", "second"]
+        agent.rotate_api_key = MagicMock(return_value=True)
+
+        with pytest.raises(OpenRouterResponseError, match="credits"):
+            await call_llm_stream(
+                agent,
+                "system",
+                stream_sink=SpySink(),
+            )
+
+        assert agent._get_client().chat.completions.create.call_count == 1
+        agent.rotate_api_key.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_error_only_503_chunks_share_bounded_stream_budget(
+        self,
+        monkeypatch,
+    ):
+        from vulnclaw.agent.llm_client import (
+            OPENROUTER_MAX_TRANSIENT_ATTEMPTS,
+            OpenRouterResponseError,
+            call_llm_stream,
+        )
+
+        responses = [
+            _SyncStream(
+                [
+                    _stream_chunk(
+                        error={"code": 503, "message": "unsafe detail"},
+                        finish_reason="error",
+                    )
+                ]
+            )
+            for _ in range(OPENROUTER_MAX_TRANSIENT_ATTEMPTS)
+        ]
+        agent = _openrouter_stream_agent(*responses)
+        agent._key_pool = ["first", "second"]
+        agent.rotate_api_key = MagicMock(return_value=True)
+        sleeps = []
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        monkeypatch.setattr(
+            "vulnclaw.agent.llm_client.asyncio.sleep",
+            fake_sleep,
+        )
+
+        with pytest.raises(OpenRouterResponseError):
+            await call_llm_stream(
+                agent,
+                "system",
+                stream_sink=SpySink(),
+            )
+
+        assert (
+            agent._get_client().chat.completions.create.call_count
+            == OPENROUTER_MAX_TRANSIENT_ATTEMPTS
+        )
+        assert sleeps == [1, 2, 4]
+        agent.rotate_api_key.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_partial_then_top_level_error_never_returns_partial_as_success(self):
         from vulnclaw.agent.llm_client import (
             OpenRouterResponseError,
@@ -930,6 +1075,7 @@ class TestOpenRouterStreamErrors:
         assert caught.value.partial_text == "partial"
         assert "partial" not in str(caught.value)
         assert "fake-secret" not in str(caught.value)
+        assert agent._get_client().chat.completions.create.call_count == 1
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

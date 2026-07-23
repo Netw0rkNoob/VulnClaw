@@ -284,6 +284,8 @@
   "tui.model_discovery_empty_catalog": "No compatible models were found; enter a Model ID manually.",
   "tui.model_discovery_redirect_blocked": "Model discovery was redirected and stopped to protect the saved key.",
   "tui.model_discovery_upstream_error": "The provider model catalog could not be loaded.",
+  "tui.model_discovery_selected_incompatible": "Warning: the current Model ID is not in the compatible catalog. Choose a listed model before an autonomous run, or keep it only if you accept a fail-closed runtime rejection.",
+  "tui.model_manual_entry": "Enter a Model ID manually…",
   "tui.openrouter_warning": "OpenRouter may route requests among upstream providers. Verify account privacy and ZDR preferences before sending sensitive authorized-target data.",
   "skill.exploitation.description": "Exploitation workflow — build PoCs to verify and exploit discovered vulnerabilities",
   "skill.pentest-flow.description": "End-to-end pentest orchestration — from recon through report generation",

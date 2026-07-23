@@ -511,6 +511,7 @@
   "settings.models_empty_catalog": "No models compatible with VulnClaw's tool request contract were found. You may enter a Model ID manually.",
   "settings.models_redirect_blocked": "Model discovery was redirected and stopped to protect the saved key.",
   "settings.models_upstream_error": "The provider model catalog could not be loaded. Check the endpoint and try again.",
+  "settings.models_selected_incompatible": "The current Model ID is not in the compatible catalog. Choose a listed model before an autonomous run, or keep the manual ID only if you accept a fail-closed runtime rejection.",
   "settings.openrouter_warning_title": "OpenRouter routing and privacy",
   "settings.openrouter_warning": "OpenRouter is a Model Gateway that may route requests among upstream providers or retry before streaming. Upstream retention and training policies are independent; configure and verify your OpenRouter privacy and ZDR preferences before sending sensitive authorized-target data.",
 

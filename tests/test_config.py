@@ -444,3 +444,33 @@ class TestSettingsLoad:
         assert reloaded.llm.model == "private/opaque:model"
         assert reloaded.llm.auth_mode == "static"
         assert reloaded.llm.key_pool() == ["pool-one", "pool-two"]
+
+    def test_openrouter_auth_invariants_survive_persisted_and_env_overlays(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        import vulnclaw.config.settings as settings_mod
+        from vulnclaw.config.schema import VulnClawConfig
+
+        monkeypatch.setattr(settings_mod, "CONFIG_FILE", tmp_path / "config.yaml")
+        monkeypatch.setattr(settings_mod, "CONFIG_DIR", tmp_path)
+        config = VulnClawConfig()
+        config.llm.provider = "openrouter"
+        config.llm.api_key = "saved-static-key"
+        config.llm.auth_mode = "oauth"
+        config.llm.chatgpt_auto_proxy = True
+
+        settings_mod.save_config(config)
+
+        assert config.llm.auth_mode == "static"
+        assert config.llm.chatgpt_auto_proxy is False
+
+        monkeypatch.setenv("VULNCLAW_LLM_PROVIDER", "openrouter")
+        monkeypatch.setenv("VULNCLAW_LLM_AUTH_MODE", "oauth")
+        monkeypatch.setenv("VULNCLAW_LLM_CHATGPT_AUTO_PROXY", "true")
+        reloaded = settings_mod.load_config()
+
+        assert reloaded.llm.api_key == "saved-static-key"
+        assert reloaded.llm.auth_mode == "static"
+        assert reloaded.llm.chatgpt_auto_proxy is False

@@ -323,57 +323,7 @@ vulnclaw web                  # 启动（默认 127.0.0.1:7788）
 vulnclaw web --port 8080      # 自定义端口
 ```
 
-<<<<<<< HEAD
 > ⚠️ 默认仅绑定本地回环地址。如需远程访问须显式指定 `--host 0.0.0.0 --allow-remote`。
-=======
-启动后浏览器访问 `http://127.0.0.1:7788` 即可使用。
-
-> ⚠️ 默认仅绑定本地回环地址。如需远程访问须显式指定 `--host 0.0.0.0 --allow-remote`，请确保网络环境安全。
-
----
-
-## LLM 提供商配置
-
-VulnClaw 支持 OpenAI 兼容协议的 API，内置 14 个提供商预设并支持自定义端点：
-
-```bash
-vulnclaw config provider --list    # 查看所有提供商
-vulnclaw config provider minimax   # 一键切换
-```
-
-| 提供商      | 命令                   | 默认模型              |
-| ----------- | ---------------------- | --------------------- |
-| OpenAI      | `provider openai`      | gpt-4o                |
-| OpenRouter（模型网关） | `provider openrouter` | openai/gpt-4o |
-| Anthropic Claude | `provider anthropic` | claude-sonnet-5   |
-| MiniMax     | `provider minimax`     | MiniMax-M3            |
-| DeepSeek    | `provider deepseek`    | deepseek-v4-pro       |
-| 智谱 GLM    | `provider zhipu`       | glm-4.7               |
-| Kimi        | `provider moonshot`    | kimi-k2.6             |
-| 通义千问    | `provider qwen`        | qwen3-max             |
-| SiliconFlow | `provider siliconflow` | DeepSeek-V4-Flash     |
-| 豆包        | `provider doubao`      | Doubao-Seed-2.0-Pro   |
-| 百川        | `provider baichuan`    | Baichuan4-Turbo       |
-| 阶跃星辰    | `provider stepfun`     | step-3.5-flash        |
-| 商汤        | `provider sensetime`   | SenseNova-6.7-Flash-Lite |
-| 零一万物    | `provider yi`          | yi-lightning          |
-| 自定义      | `provider custom`      | 手动填写              |
->>>>>>> 28101c8 (docs: document openrouter provider behavior)
-
-### OpenRouter 安全与路由说明
-
-```bash
-vulnclaw config provider openrouter
-vulnclaw config set llm.api_key <openrouter-inference-key>
-```
-
-OpenRouter 是模型网关，不是单一上游模型提供商。VulnClaw 使用标准静态推理密钥和现有的 `llm.api_key` / `llm.api_keys`、`VULNCLAW_LLM_API_KEY` / `VULNCLAW_LLM_API_KEYS` 配置；请使用专用推理密钥，并在 OpenRouter 中设置消费上限和适当的有效期，不要使用管理密钥。
-
-默认路由可能在多个上游模型提供商之间选择并在请求开始输出前回退，因此一个 Model ID 不保证固定上游。VulnClaw 会要求上游支持发送的工具和生成参数，但首个版本不提供 OpenRouter 专属的路由、回退或隐私开关。
-
-OpenRouter 会保留请求元数据；被选中的上游提供商还有各自独立的数据保留和训练政策。处理敏感目标数据前，请检查 OpenRouter 账户级隐私、数据收集和 ZDR 设置以及候选上游政策。ZDR 可限制路由范围，但不能在本文中视为无条件的端到端零保留保证。
-
-免费模型变体通常有更低的限额和可用性；动态路由器还会降低上游选择、价格和输出的确定性。它们适合试用，不是 VulnClaw 的生产默认模型。详见 [OpenRouter 路由](https://openrouter.ai/docs/guides/routing/provider-selection) 和 [隐私与日志](https://openrouter.ai/docs/guides/privacy/provider-logging)。
 
 ---
 
@@ -414,7 +364,6 @@ FINAL 经过证据闸门校验 → 通过才结束，否则把拒绝原因返回
 
 ### 核心模块
 
-<<<<<<< HEAD
 | 模块 | 文件 | 说明 |
 |------|------|------|
 | **CLI/TUI 入口** | `cli/main.py` + `cli/tui.py` | Typer 命令 + REPL + TUI |
@@ -424,31 +373,9 @@ FINAL 经过证据闸门校验 → 通过才结束，否则把拒绝原因返回
 | **插件体系** | `plugins/` | 低耦合漏洞检测插件运行时 |
 | **Skill 参考索引** | `skills/loader.py` + `resolver.py` | 只解析相关参考资料，不注入强制流程 |
 | **MCP 编排** | `mcp/registry.py` + `lifecycle.py` + `router.py` | 服务注册 + 生命周期 + 工具路由 |
-| **配置管理** | `config/schema.py` + `settings.py` | Pydantic + YAML + 13 Provider 预设 |
+| **配置管理** | `config/schema.py` + `settings.py` | Pydantic + YAML + 14 Provider 预设 |
 | **报告生成** | `report/generator.py` + `poc_builder.py` | Markdown 报告 + PoC 脚本 |
 | **安全知识库** | `kb/store.py` + `retriever.py` | JSON 存储 + CVE/技术/工具检索 |
-=======
-| 模块           | 文件                                             | 说明                                          |
-| -------------- | ------------------------------------------------ | --------------------------------------------- |
-| **CLI/TUI 入口** | `cli/main.py` + `cli/tui.py`                   | Typer 命令 + 默认原 CLI/REPL + 显式 TUI       |
-| **Agent 核心** | `agent/core.py`                                  | AgentCore 协调入口（核心重构后主要保留少量协调职责） |
-| **求解引擎（默认）** | `agent/solver.py` + `agent/blackboard.py`  | 目标驱动 OODA 循环 + Fact/Intent 黑板图 + 证据级反幻觉闸门 |
-| **推理 / 反思**   | `agent/reasoning_state.py` + `reflexion.py`   | 结构化事实/约束/攻击链 + 失败归类与 L0-L4 升级 |
-| **插件体系**   | `plugins/`（registry/runtime/web）                | 低耦合漏洞检测插件运行时 + 内置只读 Web 插件   |
-| **动态提示词** | `agent/prompts.py`                               | 基础身份 + 核心契约 + Skill + MCP 工具列表    |
-| **Prompt 组装** | `agent/system_prompt.py` + `prompt_context.py`  | system prompt / round context / attack summary 组装 |
-| **输入分析**   | `agent/input_analysis.py`                        | 目标识别、阶段识别、用户漏洞提示提取          |
-| **反死循环 / CTF** | `agent/anti_loop.py` + `ctf_mode.py`        | 完成信号、攻击路径、失败目标、flag 状态机      |
-| **会话状态**   | `agent/context.py`                               | 阶段追踪 + 漏洞发现 + 步骤记录                |
-| **Skill / KB 上下文** | `agent/skill_context.py` + `kb_context.py` | Skill 选择与知识库 prompt 注入                |
-| **目标状态继承** | `target_state/store.py`                        | 同目标成果沉淀、恢复、快照、回滚、target 报告 |
-| **MCP 编排**   | `mcp/registry.py` + `lifecycle.py` + `router.py` | 服务注册 + 生命周期 + 自然语言→工具路由       |
-| **Skill 调度** | `skills/loader.py` + `dispatcher.py`             | 目录格式 Skill + CTF/SRC/AI/Web 等意图动态调度 |
-| **编解码工具** | `skills/crypto_tools.py`                         | 29 种编解码/加解密操作，注册为内置 Agent 工具  |
-| **配置管理**   | `config/schema.py` + `settings.py`               | Pydantic 模型 + YAML 持久化 + 14 Provider 预设 |
-| **报告生成**   | `report/generator.py` + `poc_builder.py`         | Markdown 报告 + Python PoC 模板               |
-| **安全知识库** | `kb/store.py` + `retriever.py`                   | JSON 存储 + CVE/技术/工具检索                 |
->>>>>>> 28101c8 (docs: document openrouter provider behavior)
 
 ---
 
@@ -593,6 +520,7 @@ vulnclaw config provider minimax   # 一键切换
 | 提供商 | 命令 | 默认模型 |
 |--------|------|----------|
 | OpenAI | `provider openai` | gpt-4o |
+| OpenRouter（模型网关） | `provider openrouter` | openai/gpt-4o |
 | Anthropic Claude | `provider anthropic` | claude-sonnet-5 |
 | MiniMax | `provider minimax` | MiniMax-M3 |
 | DeepSeek | `provider deepseek` | deepseek-v4-pro |
@@ -607,6 +535,22 @@ vulnclaw config provider minimax   # 一键切换
 | 零一万物 | `provider yi` | yi-lightning |
 | 自定义 | `provider custom` | 手动填写 |
 
+### OpenRouter 安全与路由说明
+
+```bash
+vulnclaw config provider openrouter
+vulnclaw config set llm.api_key <openrouter-inference-key>
+```
+
+OpenRouter 是模型网关，不是单一上游模型提供商。VulnClaw 使用标准静态推理密钥和现有的 `llm.api_key` / `llm.api_keys`、`VULNCLAW_LLM_API_KEY` / `VULNCLAW_LLM_API_KEYS` 配置；请使用专用推理密钥，并在 OpenRouter 中设置消费上限和适当的有效期，不要使用管理密钥。
+
+默认路由可能在多个上游模型提供商之间选择并在请求开始输出前回退，因此一个 Model ID 不保证固定上游。VulnClaw 会要求上游支持发送的工具和生成参数，但首个版本不提供 OpenRouter 专属的路由、回退或隐私开关。
+
+OpenRouter 会保留请求元数据；被选中的上游提供商还有各自独立的数据保留和训练政策。处理敏感目标数据前，请检查 OpenRouter 账户级隐私、数据收集和 ZDR 设置以及候选上游政策。ZDR 可限制路由范围，但不能在本文中视为无条件的端到端零保留保证。
+
+免费模型变体通常有更低的限额和可用性；动态路由器还会降低上游选择、价格和输出的确定性。它们适合试用，不是 VulnClaw 的生产默认模型。详见 [OpenRouter 路由](https://openrouter.ai/docs/guides/routing/provider-selection) 和 [隐私与日志](https://openrouter.ai/docs/guides/privacy/provider-logging)。
+
+
 ### 命令行配置
 
 ```bash
@@ -619,10 +563,9 @@ vulnclaw config set session.show_thinking false # 隐藏推理过程
 
 ### 可配置项
 
-<<<<<<< HEAD
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `llm.provider` | openai | LLM 提供商 |
+| `llm.provider` | openai | LLM 提供商（14 个内置 + custom） |
 | `llm.api_key` | 空 | API Key |
 | `llm.auth_mode` | static | `static` 或 `oauth` |
 | `llm.chatgpt_auto_proxy` | false | 自动启动内置 ChatGPT 后端桥接代理 |
@@ -643,27 +586,6 @@ vulnclaw config set session.show_thinking false # 隐藏推理过程
 | `session.report_format` | markdown | 报告格式（markdown / html） |
 | `session.poc_language` | python | PoC 生成语言（python / bash） |
 | `session.show_thinking` | false | 显示 LLM 推理过程 |
-=======
-| 配置项                   | 默认值 | 说明                                     |
-| ------------------------ | ------ | ---------------------------------------- |
-| `llm.provider`           | openai | LLM 提供商（14 个内置 + custom）         |
-| `llm.api_key`            | 空     | API Key（auth_mode=static）              |
-| `llm.auth_mode`          | static | `static`（api_key）或 `oauth`（`vulnclaw login`） |
-| `llm.chatgpt_auto_proxy` | false  | 自动启动内置 ChatGPT 后端桥接代理         |
-| `llm.base_url`           | 按 provider | API 基础 URL，可自定义              |
-| `llm.model`              | 按 provider | 模型名称，可自定义                   |
-| `llm.temperature`        | 0.1    | 采样温度                                 |
-| `llm.max_tokens`         | 4096   | 单次最大输出 token                       |
-| `session.engine`         | solve  | 自主引擎：`solve`（目标驱动，默认）/ `rounds`（旧固定轮数） |
-| `session.solve_max_steps` | 40    | solve 探索步数安全上限（兜底，非固定工作流长度） |
-| `session.solve_max_intents` | 3   | 每次 Reason 最多提出的新探索方向数        |
-| `session.solve_max_tool_rounds` | 6 | 每个 Intent 探索的最大工具调用轮数        |
-| `session.max_rounds`     | 15     | 旧 `rounds` 引擎的最大轮数（建议 10-50）  |
-| `session.output_dir`     | ./vulnclaw-output | 报告输出目录                    |
-| `session.report_format`  | markdown | 报告格式（markdown / html）            |
-| `session.poc_language`   | python | PoC 生成语言（python / bash）            |
-| `session.show_thinking`  | false  | 显示 LLM 推理过程（think 标签内容，默认关闭） |
->>>>>>> 28101c8 (docs: document openrouter provider behavior)
 | `session.persistent_rounds_per_cycle` | 100 | 持续性渗透每周期轮数 |
 | `session.persistent_max_cycles` | 10 | 持续性渗透最大周期数（0=无限） |
 | `session.persistent_auto_report` | true | 持续性渗透每周期自动生成报告 |

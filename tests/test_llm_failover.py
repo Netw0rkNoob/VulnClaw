@@ -468,7 +468,18 @@ class TestRetryAfter:
 
         assert _parse_retry_after(value, now=now) == 25.0
 
-    @pytest.mark.parametrize("value", ["", "not-a-date", "-1", "-3.5"])
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "",
+            "not-a-date",
+            "-1",
+            "-3.5",
+            "NaN",
+            "Infinity",
+            "-Infinity",
+        ],
+    )
     def test_rejects_malformed_or_negative_values(self, value):
         assert _parse_retry_after(value) is None
 

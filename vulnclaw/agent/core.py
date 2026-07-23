@@ -281,13 +281,18 @@ class AgentCore:
         from vulnclaw.config.token_provider import load_oauth_tokens, resolve_llm_token
 
         llm = self.config.llm
+        is_openrouter = (
+            str(getattr(llm, "provider", "") or "").strip().lower()
+            == "openrouter"
+        )
 
         # ── ChatGPT subscription: auto-start the built-in bridge proxy ──
         # The subscription token only works against the ChatGPT backend, so we
         # transparently route VulnClaw's chat.completions through an in-process
         # proxy instead of requiring the user to run one.
         if (
-            getattr(llm, "chatgpt_auto_proxy", False)
+            not is_openrouter
+            and getattr(llm, "chatgpt_auto_proxy", False)
             and str(getattr(llm, "auth_mode", "") or "").lower() == "oauth"
             and str(load_oauth_tokens().get("flow") or "") == "chatgpt"
         ):
@@ -303,7 +308,11 @@ class AgentCore:
                     raise RuntimeError("请安装 openai 包: pip install openai")
             return self._client
 
-        auth_mode = str(getattr(llm, "auth_mode", "") or "static").strip().lower()
+        auth_mode = (
+            "static"
+            if is_openrouter
+            else str(getattr(llm, "auth_mode", "") or "static").strip().lower()
+        )
         if auth_mode in ("", "static"):
             # Respect the failover rotation index rather than always resolving
             # the primary key, so rotate_api_key() actually switches keys.

@@ -155,11 +155,14 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
   const isKnownModel = modelOptions.includes(model);
 
   function onProviderChange(id: string) {
+    const shouldApplyDefaultModel = !model.trim() || model === currentPreset?.default_model;
     setProvider(id);
     const preset = providers.find((item) => item.id === id);
     if (preset && id !== "custom") {
       setBaseUrl(preset.base_url);
-      setModel(preset.default_model);
+      if (shouldApplyDefaultModel) {
+        setModel(preset.default_model);
+      }
     }
     setModels([]);
     setModelsHint(null);
@@ -174,7 +177,15 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
       if (res.models.length && !model) {
         setModel(res.models[0]);
       }
-      setModelsHint(formatModelDiscoveryHint(t, res));
+      const discoveryHint = formatModelDiscoveryHint(t, res);
+      const selectionWarning = (
+        res.status === "ok"
+        && Boolean(model)
+        && !res.models.includes(model)
+      )
+        ? ` ${t("settings.models_selected_incompatible")}`
+        : "";
+      setModelsHint(`${discoveryHint}${selectionWarning}`);
     } catch (err) {
       setModelsHint(err instanceof Error ? err.message : t("settings.no_models"));
     } finally {

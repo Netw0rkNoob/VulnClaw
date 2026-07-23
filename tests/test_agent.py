@@ -1299,13 +1299,13 @@ class TestAgentCoreLoop:
     ):
         from vulnclaw.agent.core import AgentCore
         from vulnclaw.config.schema import VulnClawConfig
-        from vulnclaw.config.settings import apply_provider_preset
 
         config = VulnClawConfig()
+        config.llm.provider = "openrouter"
+        config.llm.base_url = "https://openrouter.ai/api/v1"
         config.llm.api_key = "fake-openrouter-key"
         config.llm.auth_mode = "oauth"
         config.llm.chatgpt_auto_proxy = True
-        apply_provider_preset(config, "openrouter")
 
         captured = {}
 
@@ -1318,6 +1318,14 @@ class TestAgentCoreLoop:
         monkeypatch.setattr(
             "vulnclaw.config.token_provider.load_oauth_tokens",
             lambda: {"flow": "chatgpt", "access_token": "must-not-be-used"},
+        )
+        monkeypatch.setattr(
+            "vulnclaw.config.token_provider.resolve_llm_token",
+            lambda llm: pytest.fail("OpenRouter must not resolve OAuth credentials"),
+        )
+        monkeypatch.setattr(
+            "vulnclaw.agent.chatgpt_proxy.ensure_proxy_running",
+            lambda: pytest.fail("OpenRouter must not start the ChatGPT proxy"),
         )
 
         agent = AgentCore(config)
