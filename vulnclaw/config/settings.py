@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from contextlib import suppress
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 from pydantic import ValidationError
 
@@ -35,6 +40,35 @@ SKILLS_DIR = CONFIG_DIR / "skills"
 WEB_TASKS_FILE = CONFIG_DIR / "web_tasks.json"
 PYTHON_EXECUTE_AUDIT_FILE = CONFIG_DIR / "python_execute_audit.jsonl"
 DEFAULT_OPENAI_USER_AGENT = "Mozilla/5.0"
+OPENROUTER_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+OPENROUTER_MAX_SOURCE_MODELS = 5000
+OPENROUTER_MAX_RETAINED_MODELS = 500
+OPENROUTER_MAX_MODEL_ID_LENGTH = 160
+OPENROUTER_REQUIRED_PARAMETERS = frozenset({"tools", "max_tokens", "temperature"})
+
+
+class ProviderModelDiscoveryStatus(str, Enum):
+    """Stable, non-secret model-discovery outcome codes."""
+
+    OK = "ok"
+    MISSING_KEY = "missing_key"
+    UNTRUSTED_URL = "untrusted_url"
+    AUTHENTICATION_FAILED = "authentication_failed"
+    TIMEOUT = "timeout"
+    MALFORMED_RESPONSE = "malformed_response"
+    RESPONSE_TOO_LARGE = "response_too_large"
+    EMPTY_CATALOG = "empty_catalog"
+    REDIRECT_BLOCKED = "redirect_blocked"
+    UPSTREAM_ERROR = "upstream_error"
+
+
+@dataclass(frozen=True)
+class ProviderModelDiscoveryResult:
+    """Models plus a safe status suitable for CLI, TUI, and Web callers."""
+
+    models: list[str]
+    status: ProviderModelDiscoveryStatus
+    detail: str = ""
 
 
 def ensure_dirs() -> None:
@@ -417,22 +451,247 @@ def list_providers() -> list[dict[str, str]]:
     return result
 
 
-def fetch_provider_models(base_url: str, api_key: str, timeout: float = 10.0) -> list[str]:
-    """Fetch available models from a provider's OpenAI-compatible API.
+def _discovery_result(
+    status: ProviderModelDiscoveryStatus,
+    detail: str,
+    models: list[str] | None = None,
+) -> ProviderModelDiscoveryResult:
+    return ProviderModelDiscoveryResult(models=models or [], status=status, detail=detail)
 
-    Uses the OpenAI SDK's ``client.models.list()`` endpoint.
-    Returns a sorted list of model ID strings.  Returns an empty list
-    on any error (network, auth, timeout, etc.).
-    """
-    if not base_url or not api_key:
-        return []
+
+def _contains_ascii_control(value: str) -> bool:
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+
+
+def _is_explicitly_expired(record: dict[str, Any]) -> bool:
+    if record.get("expired") is True:
+        return True
+
+    raw_expiry = record.get("expiration_date", record.get("expires_at"))
+    if raw_expiry in (None, "", False):
+        return False
+    if isinstance(raw_expiry, bool):
+        return raw_expiry
+
+    try:
+        if isinstance(raw_expiry, (int, float)):
+            timestamp = float(raw_expiry)
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000
+            expiry = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        elif isinstance(raw_expiry, str):
+            normalized = raw_expiry.strip().replace("Z", "+00:00")
+            expiry = datetime.fromisoformat(normalized)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+        else:
+            return False
+    except (OverflowError, OSError, ValueError):
+        return False
+
+    return expiry <= datetime.now(timezone.utc)
+
+
+def _filter_openrouter_models(records: list[Any]) -> list[str]:
+    compatible: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+
+        raw_id = record.get("id")
+        if not isinstance(raw_id, str):
+            continue
+        model_id = raw_id.strip()
+        if (
+            not model_id
+            or len(model_id) > OPENROUTER_MAX_MODEL_ID_LENGTH
+            or _contains_ascii_control(model_id)
+        ):
+            continue
+
+        architecture = record.get("architecture")
+        if not isinstance(architecture, dict):
+            continue
+        output_modalities = architecture.get("output_modalities")
+        if not isinstance(output_modalities, list) or "text" not in output_modalities:
+            continue
+
+        supported_parameters = record.get("supported_parameters")
+        if not isinstance(supported_parameters, list):
+            continue
+        if not OPENROUTER_REQUIRED_PARAMETERS.issubset(
+            {value for value in supported_parameters if isinstance(value, str)}
+        ):
+            continue
+        if _is_explicitly_expired(record):
+            continue
+
+        compatible.add(model_id)
+
+    default_model = str(PROVIDER_PRESETS[LLMProvider.OPENROUTER]["default_model"])
+    ordered = sorted(compatible, key=lambda value: (value.casefold(), value))
+    if default_model in compatible:
+        ordered.remove(default_model)
+        ordered.insert(0, default_model)
+    return ordered[:OPENROUTER_MAX_RETAINED_MODELS]
+
+
+def _discover_openrouter_models(
+    base_url: str,
+    api_key: str,
+    timeout: float,
+) -> ProviderModelDiscoveryResult:
+    endpoint = f"{base_url.strip().rstrip('/')}/models/user"
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {api_key}",
+        **openai_default_headers(),
+    }
+
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=False) as client:
+            with client.stream("GET", endpoint, headers=headers) as response:
+                if response.is_redirect:
+                    return _discovery_result(
+                        ProviderModelDiscoveryStatus.REDIRECT_BLOCKED,
+                        "The provider redirected model discovery; redirects are not followed.",
+                    )
+                if response.status_code == 401:
+                    return _discovery_result(
+                        ProviderModelDiscoveryStatus.AUTHENTICATION_FAILED,
+                        "OpenRouter rejected the saved inference key.",
+                    )
+                if response.status_code >= 400:
+                    return _discovery_result(
+                        ProviderModelDiscoveryStatus.UPSTREAM_ERROR,
+                        f"OpenRouter model discovery failed with HTTP {response.status_code}.",
+                    )
+
+                content_type = response.headers.get("content-type", "")
+                media_type = content_type.split(";", 1)[0].strip().lower()
+                if media_type != "application/json" and not media_type.endswith("+json"):
+                    return _discovery_result(
+                        ProviderModelDiscoveryStatus.MALFORMED_RESPONSE,
+                        "OpenRouter returned a non-JSON model catalog.",
+                    )
+
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    with suppress(ValueError):
+                        if int(content_length) > OPENROUTER_MAX_RESPONSE_BYTES:
+                            return _discovery_result(
+                                ProviderModelDiscoveryStatus.RESPONSE_TOO_LARGE,
+                                "OpenRouter returned a model catalog larger than the safety limit.",
+                            )
+
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > OPENROUTER_MAX_RESPONSE_BYTES:
+                        return _discovery_result(
+                            ProviderModelDiscoveryStatus.RESPONSE_TOO_LARGE,
+                            "OpenRouter returned a model catalog larger than the safety limit.",
+                        )
+    except httpx.TimeoutException:
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.TIMEOUT,
+            "OpenRouter model discovery timed out.",
+        )
+    except httpx.RequestError:
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.UPSTREAM_ERROR,
+            "OpenRouter model discovery could not reach the configured endpoint.",
+        )
+
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, ValueError):
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.MALFORMED_RESPONSE,
+            "OpenRouter returned malformed model catalog data.",
+        )
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.MALFORMED_RESPONSE,
+            "OpenRouter returned an unexpected model catalog shape.",
+        )
+    records = payload["data"]
+    if len(records) > OPENROUTER_MAX_SOURCE_MODELS:
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.RESPONSE_TOO_LARGE,
+            "OpenRouter returned more source models than the safety limit.",
+        )
+
+    models = _filter_openrouter_models(records)
+    if not models:
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.EMPTY_CATALOG,
+            "OpenRouter returned no models compatible with VulnClaw's request contract.",
+        )
+    return _discovery_result(
+        ProviderModelDiscoveryStatus.OK,
+        f"Loaded {len(models)} compatible OpenRouter models.",
+        models,
+    )
+
+
+def discover_provider_models(
+    base_url: str,
+    api_key: str,
+    timeout: float = 10.0,
+    *,
+    provider: str | None = None,
+) -> ProviderModelDiscoveryResult:
+    """Fetch provider models with a typed, sanitized outcome."""
+    if not api_key:
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.MISSING_KEY,
+            "No API key is configured for model discovery.",
+        )
+    if not base_url:
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.UPSTREAM_ERROR,
+            "No provider base URL is configured.",
+        )
+    if str(provider or "").strip().lower() == LLMProvider.OPENROUTER.value:
+        return _discover_openrouter_models(base_url, api_key, timeout)
+
     try:
         client = make_openai_client(api_key=api_key, base_url=base_url, timeout=timeout)
         models_page = client.models.list()
-        model_ids = [m.id for m in models_page if m.id]
-        return sorted(model_ids)
+        model_ids = sorted({m.id for m in models_page if getattr(m, "id", "")})
     except Exception:
-        return []
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.UPSTREAM_ERROR,
+            "The provider model catalog could not be loaded.",
+        )
+    if not model_ids:
+        return _discovery_result(
+            ProviderModelDiscoveryStatus.EMPTY_CATALOG,
+            "The provider returned no models.",
+        )
+    return _discovery_result(
+        ProviderModelDiscoveryStatus.OK,
+        f"Loaded {len(model_ids)} provider models.",
+        model_ids,
+    )
+
+
+def fetch_provider_models(
+    base_url: str,
+    api_key: str,
+    timeout: float = 10.0,
+    *,
+    provider: str | None = None,
+) -> list[str]:
+    """Compatibility wrapper returning only discovered Model IDs."""
+    return discover_provider_models(
+        base_url,
+        api_key,
+        timeout,
+        provider=provider,
+    ).models
 
 
 def fetch_provider_models_async(
@@ -440,6 +699,8 @@ def fetch_provider_models_async(
     api_key: str,
     timeout: float = 10.0,
     on_result: Any = None,
+    *,
+    provider: str | None = None,
 ):
     """Fetch provider models in a background thread.
 
@@ -454,7 +715,7 @@ def fetch_provider_models_async(
     import threading
 
     def _worker() -> None:
-        models = fetch_provider_models(base_url, api_key, timeout)
+        models = fetch_provider_models(base_url, api_key, timeout, provider=provider)
         if on_result is not None:
             on_result(models)
 

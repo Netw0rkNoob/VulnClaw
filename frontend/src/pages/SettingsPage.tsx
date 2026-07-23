@@ -3,6 +3,7 @@ import { fetchProviderModels, updateConfig } from "../api/web";
 import { SectionCard } from "../components/SectionCard";
 import { useConfigQuery, useMcpDiagnosticsQuery, useProvidersQuery } from "../hooks/queries";
 import { useT, type TFunction } from "../i18n";
+import type { ProviderModelsResponse } from "../types/api";
 import { formatActionLabel, formatActionList, formatMcpExecutionMode, formatMcpHealth } from "../utils/taskLabels";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "../utils/preferences";
 import { parseOptionalPort } from "../utils/validation";
@@ -37,6 +38,27 @@ function buildPythonModes(t: TFunction) {
     { value: "lab", label: t("settings.lab_mode"), copy: t("settings.lab_mode_copy") },
     { value: "trusted-local", label: t("settings.trusted_mode"), copy: t("settings.trusted_mode_copy") },
   ];
+}
+
+function formatModelDiscoveryHint(
+  t: TFunction,
+  response: ProviderModelsResponse,
+): string {
+  if (response.status === "ok") {
+    return t("settings.models_loaded", { count: String(response.models.length) });
+  }
+  const messageKeys = {
+    missing_key: "settings.models_missing_key",
+    untrusted_url: "settings.models_untrusted_url",
+    authentication_failed: "settings.models_authentication_failed",
+    timeout: "settings.models_timeout",
+    malformed_response: "settings.models_malformed_response",
+    response_too_large: "settings.models_response_too_large",
+    empty_catalog: "settings.models_empty_catalog",
+    redirect_blocked: "settings.models_redirect_blocked",
+    upstream_error: "settings.models_upstream_error",
+  } as const;
+  return t(messageKeys[response.status] ?? "settings.no_models");
 }
 
 interface SettingsPageProps {
@@ -152,11 +174,7 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
       if (res.models.length && !model) {
         setModel(res.models[0]);
       }
-      setModelsHint(
-        res.models.length
-          ? t("settings.models_loaded", { count: String(res.models.length) })
-          : res.detail || t("settings.no_models"),
-      );
+      setModelsHint(formatModelDiscoveryHint(t, res));
     } catch (err) {
       setModelsHint(err instanceof Error ? err.message : t("settings.no_models"));
     } finally {
@@ -300,6 +318,12 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
                 </select>
                 <small>{t("settings.provider_hint")}</small>
               </label>
+              {provider === "openrouter" && (
+                <div className="inline-panel field-wide">
+                  <strong>{t("settings.openrouter_warning_title")}</strong>
+                  <p className="inline-note">{t("settings.openrouter_warning")}</p>
+                </div>
+              )}
               <label className="field">
                 <span>{t("settings.base_url")}</span>
                 <select

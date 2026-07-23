@@ -50,8 +50,9 @@ from vulnclaw.cli.tui import (
     rebuild_translations,
 )
 from vulnclaw.config.settings import (
+    ProviderModelDiscoveryResult,
     apply_provider_preset,
-    fetch_provider_models,
+    discover_provider_models,
     list_providers,
     load_config,
     save_config,
@@ -226,13 +227,17 @@ class SecondaryPopup(Vertical):
             # If the session has fetch args, start the background model fetch
             fetch_args = session.get("_fetch_models_args")
             if fetch_args:
-                base_url, api_key = fetch_args
+                base_url, api_key, provider = fetch_args
                 session.pop("_fetch_models_args", None)
 
                 def _bg_fetch() -> None:
-                    models = fetch_provider_models(base_url, api_key)
+                    result = discover_provider_models(
+                        base_url,
+                        api_key,
+                        provider=provider,
+                    )
                     # Schedule completion on the main thread
-                    self.app.call_later(lambda: self._finish_model_fetch(models))
+                    self.app.call_later(lambda: self._finish_model_fetch(result))
 
                 threading.Thread(target=_bg_fetch, daemon=True).start()
 
@@ -362,15 +367,15 @@ class SecondaryPopup(Vertical):
             self._on_done = None
             self.app.call_later(on_done)
 
-    def _finish_model_fetch(self, models: list[str]) -> None:
+    def _finish_model_fetch(self, result: ProviderModelDiscoveryResult) -> None:
         """Called on the main thread after background model fetch completes.
 
         Completes the loading prompt, triggers the callback, then shows
         the next prompt (model choice or fallback input).
         """
-        # Complete the loading — this calls on_models_loaded(models)
+        # Complete the loading — this calls on_models_loaded(result)
         # and then _on_done (which is _post_popup_refresh)
-        self.complete_loading(models)
+        self.complete_loading(result)
 
     def _render_chain_step(self) -> None:
         idx = self._chain_idx
@@ -671,7 +676,9 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
                        on_baseurl)
         else:
             # 非 custom：直接输入 API Key
-            ks = _("tui.api_key_configured") if session["config"].llm.api_key else _("tui.api_key_not_configured")
+            ks = _("tui.api_key_configured") if session["config"].llm.key_pool() else _("tui.api_key_not_configured")
+            if session["config"].llm.provider == "openrouter":
+                ks = f"{ks}. {_('tui.openrouter_warning')}"
             _set_prompt(session, "input", _("tui.prompt_enter_apikey", status=ks), on_apikey)
 
     def on_baseurl(v):
@@ -685,20 +692,28 @@ def _h_config(session: dict[str, Any], args: str) -> str | None:
         if v:
             session["config"].llm.api_key = v.strip()
         base_url = session["config"].llm.base_url
-        api_key = session["config"].llm.api_key
+        api_key = session["config"].llm.primary_key()
         # 缺少 base_url 或 api_key 时跳过获取，直接手动输入
         if not base_url or not api_key:
             _set_prompt(session, "input", _("tui.prompt_enter_model_fallback", model=session["config"].llm.model), on_model_input, session["config"].llm.model)
             return
         # 显示 loading，后台获取模型列表
-        session["_fetch_models_args"] = (base_url, api_key)
+        session["_fetch_models_args"] = (
+            base_url,
+            api_key,
+            session["config"].llm.provider,
+        )
         _set_prompt(session, "loading", _("tui.fetching_models"), on_models_loaded)
 
-    def on_models_loaded(models):
-        if models:
-            _set_prompt(session, "choice", _("tui.prompt_select_model", model=session["config"].llm.model), models, on_model_selected)
+    def on_models_loaded(result):
+        if result.models:
+            _set_prompt(session, "choice", _("tui.prompt_select_model", model=session["config"].llm.model), result.models, on_model_selected)
         else:
-            _set_prompt(session, "input", _("tui.prompt_enter_model_fallback", model=session["config"].llm.model), on_model_input, session["config"].llm.model)
+            fallback = (
+                f"{_tui._model_discovery_failure_message(result)} "
+                f"{_('tui.prompt_enter_model_fallback', model=session['config'].llm.model)}"
+            )
+            _set_prompt(session, "input", fallback, on_model_input, session["config"].llm.model)
 
     def on_model_selected(v):
         if v:

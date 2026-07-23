@@ -8,7 +8,11 @@ API key server-side (the key is never sent to the browser).
 from __future__ import annotations
 
 from vulnclaw.config.schema import PROVIDER_PRESETS, LLMProvider
-from vulnclaw.config.settings import fetch_provider_models, load_config
+from vulnclaw.config.settings import (
+    ProviderModelDiscoveryStatus,
+    discover_provider_models,
+    load_config,
+)
 from vulnclaw.web.schemas import (
     ProviderModelsRequest,
     ProviderModelsResponse,
@@ -82,6 +86,7 @@ def fetch_models(request: ProviderModelsRequest) -> ProviderModelsResponse:
     """
     config = load_config()
     base_url = _resolve_base_url(request, config.llm.base_url)
+    provider = str(request.provider or config.llm.provider or "").strip().lower()
     api_key = config.llm.primary_key()
 
     if not api_key:
@@ -89,6 +94,7 @@ def fetch_models(request: ProviderModelsRequest) -> ProviderModelsResponse:
             base_url=base_url,
             models=[],
             has_api_key=False,
+            status=ProviderModelDiscoveryStatus.MISSING_KEY.value,
             detail="No API key configured. Save your API key first, then refresh.",
         )
 
@@ -97,17 +103,22 @@ def fetch_models(request: ProviderModelsRequest) -> ProviderModelsResponse:
             base_url=base_url,
             models=[],
             has_api_key=True,
+            status=ProviderModelDiscoveryStatus.UNTRUSTED_URL.value,
             detail=(
                 "This base URL isn't saved or a known provider preset, so the saved "
                 "API key won't be sent to it. Save it first, then refresh."
             ),
         )
 
-    models = fetch_provider_models(base_url, api_key)
-    detail = "" if models else "The provider returned no models (check the base URL / key)."
+    result = discover_provider_models(
+        base_url,
+        api_key,
+        provider=provider,
+    )
     return ProviderModelsResponse(
         base_url=base_url,
-        models=models,
+        models=result.models,
         has_api_key=True,
-        detail=detail,
+        status=result.status.value,
+        detail=result.detail,
     )

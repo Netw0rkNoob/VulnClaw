@@ -1212,6 +1212,10 @@ class TestCLI:
     def test_tui_llm_config_prompt_saves_provider_and_api_key(self, monkeypatch):
         import vulnclaw.cli.tui as tui_mod
         from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import (
+            ProviderModelDiscoveryResult,
+            ProviderModelDiscoveryStatus,
+        )
 
         config = VulnClawConfig()
         # _edit_llm_config flow:
@@ -1235,7 +1239,14 @@ class TestCLI:
         )
 
         monkeypatch.setattr(tui_mod.Prompt, "ask", lambda *args, **kwargs: next(answers))
-        monkeypatch.setattr(tui_mod, "fetch_provider_models", lambda *a, **kw: ["deepseek-chat", "deepseek-reasoner"])
+        monkeypatch.setattr(
+            tui_mod,
+            "discover_provider_models",
+            lambda *a, **kw: ProviderModelDiscoveryResult(
+                models=["deepseek-chat", "deepseek-reasoner"],
+                status=ProviderModelDiscoveryStatus.OK,
+            ),
+        )
 
         screen = tui_mod.Console(
             file=io.StringIO(),
@@ -1284,6 +1295,10 @@ class TestCLI:
 
         import vulnclaw.cli.tui as tui_mod
         from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import (
+            ProviderModelDiscoveryResult,
+            ProviderModelDiscoveryStatus,
+        )
 
         config = VulnClawConfig()
         config.llm.api_key = "sk-test"
@@ -1316,19 +1331,70 @@ class TestCLI:
         )
         monkeypatch.setattr(
             tui_mod,
-            "fetch_provider_models",
-            lambda base_url, api_key: fetched.append((base_url, api_key))
-            or ["deepseek-chat", "deepseek-reasoner"],
+            "discover_provider_models",
+            lambda base_url, api_key, *, provider=None: (
+                fetched.append((base_url, api_key, provider))
+                or ProviderModelDiscoveryResult(
+                    models=["deepseek-chat", "deepseek-reasoner"],
+                    status=ProviderModelDiscoveryStatus.OK,
+                )
+            ),
         )
 
         updated = tui_mod._edit_llm_config(screen, config)
         output = screen.export_text()
 
-        assert fetched == [("https://api.deepseek.com", "sk-test")]
+        assert fetched == [("https://api.deepseek.com", "sk-test", "deepseek")]
         assert "deepseek-chat" in output
         assert "deepseek-reasoner" in output
         assert updated.llm.provider == "deepseek"
         assert updated.llm.model == "deepseek-reasoner"
+
+    def test_config_tui_shows_safe_discovery_failure_and_keeps_manual_entry(
+        self, monkeypatch
+    ):
+        from rich.console import Console as RichConsole
+
+        import vulnclaw.cli.tui as tui_mod
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import (
+            ProviderModelDiscoveryResult,
+            ProviderModelDiscoveryStatus,
+        )
+        from vulnclaw.i18n import init_i18n
+
+        config = VulnClawConfig()
+        config.llm.provider = "openrouter"
+        config.llm.base_url = "https://openrouter.ai/api/v1"
+        config.llm.api_key = "fake-secret-never-print"
+        answers = iter(["private/manual:model"])
+        screen = RichConsole(
+            file=io.StringIO(),
+            record=True,
+            width=100,
+            force_terminal=False,
+            color_system=None,
+        )
+        monkeypatch.setattr(
+            tui_mod,
+            "discover_provider_models",
+            lambda *args, **kwargs: ProviderModelDiscoveryResult(
+                models=[],
+                status=ProviderModelDiscoveryStatus.AUTHENTICATION_FAILED,
+                detail="unsafe upstream detail fake-secret-never-print",
+            ),
+        )
+        monkeypatch.setattr(
+            tui_mod, "_read_config_prompt_raw", lambda *args, **kwargs: next(answers)
+        )
+
+        init_i18n(lang="en")
+        selected = tui_mod._prompt_model_value(screen, config)
+        output = screen.export_text()
+
+        assert selected == "private/manual:model"
+        assert "rejected the saved inference key" in output
+        assert "fake-secret-never-print" not in output
 
 
 class TestClassicReplSlashPalette:

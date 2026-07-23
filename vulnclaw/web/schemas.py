@@ -12,6 +12,18 @@ from pydantic import BaseModel, Field, field_validator
 TaskCommand = Literal["run", "recon", "scan", "exploit", "persistent"]
 TaskStatus = Literal["pending", "restoring", "running", "completed", "failed", "stopped"]
 PythonExecuteMode = Literal["safe", "lab", "trusted-local"]
+ProviderModelsStatus = Literal[
+    "ok",
+    "missing_key",
+    "untrusted_url",
+    "authentication_failed",
+    "timeout",
+    "malformed_response",
+    "response_too_large",
+    "empty_catalog",
+    "redirect_blocked",
+    "upstream_error",
+]
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -287,6 +299,18 @@ class ConfigUpdateRequest(BaseModel):
     def validate_base_url(cls, value: str | None) -> str | None:
         return _validate_http_base_url(value)
 
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("model must not be blank")
+        if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+            raise ValueError("model must not include ASCII control characters")
+        return normalized
+
 
 class ProviderPresetView(BaseModel):
     id: str
@@ -313,6 +337,7 @@ class ProviderModelsResponse(BaseModel):
     base_url: str
     models: list[str] = Field(default_factory=list)
     has_api_key: bool = False
+    status: ProviderModelsStatus = "ok"
     detail: str = ""
 
 

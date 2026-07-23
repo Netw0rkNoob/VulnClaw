@@ -131,6 +131,10 @@ class TestWebServices:
     def test_web_provider_service_fetch_models_uses_saved_key(self, monkeypatch):
         import vulnclaw.web.services.provider_service as provider_service
         from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import (
+            ProviderModelDiscoveryResult,
+            ProviderModelDiscoveryStatus,
+        )
         from vulnclaw.web.schemas import ProviderModelsRequest
 
         config = VulnClawConfig()
@@ -141,17 +145,27 @@ class TestWebServices:
 
         captured = {}
 
-        def fake_fetch(base_url, api_key, timeout=10.0):
+        def fake_fetch(base_url, api_key, timeout=10.0, *, provider=None):
             captured["base_url"] = base_url
             captured["api_key"] = api_key
-            return ["model-b", "model-a"]
+            captured["provider"] = provider
+            return ProviderModelDiscoveryResult(
+                models=["model-b", "model-a"],
+                status=ProviderModelDiscoveryStatus.OK,
+                detail="Loaded two models.",
+            )
 
-        monkeypatch.setattr(provider_service, "fetch_provider_models", fake_fetch)
+        monkeypatch.setattr(provider_service, "discover_provider_models", fake_fetch)
 
         resp = provider_service.fetch_models(ProviderModelsRequest())
         assert resp.has_api_key is True
         assert resp.models == ["model-b", "model-a"]
-        assert captured == {"base_url": "https://api.example.com/v1", "api_key": "sk-primary"}
+        assert resp.status == "ok"
+        assert captured == {
+            "base_url": "https://api.example.com/v1",
+            "api_key": "sk-primary",
+            "provider": "openai",
+        }
 
     def test_web_provider_service_fetch_models_requires_key(self, monkeypatch):
         import vulnclaw.web.services.provider_service as provider_service
@@ -165,11 +179,12 @@ class TestWebServices:
         def must_not_call(*args, **kwargs):
             raise AssertionError("fetch_provider_models must not run without a key")
 
-        monkeypatch.setattr(provider_service, "fetch_provider_models", must_not_call)
+        monkeypatch.setattr(provider_service, "discover_provider_models", must_not_call)
 
         resp = provider_service.fetch_models(ProviderModelsRequest())
         assert resp.has_api_key is False
         assert resp.models == []
+        assert resp.status == "missing_key"
         assert "key" in resp.detail.lower()
 
     def test_web_provider_service_fetch_models_honors_request_base_url(self, monkeypatch):
@@ -184,17 +199,27 @@ class TestWebServices:
 
         captured = {}
 
-        def fake_fetch(base_url, api_key, timeout=10.0):
-            captured["base_url"] = base_url
-            return ["m"]
+        from vulnclaw.config.settings import (
+            ProviderModelDiscoveryResult,
+            ProviderModelDiscoveryStatus,
+        )
 
-        monkeypatch.setattr(provider_service, "fetch_provider_models", fake_fetch)
+        def fake_fetch(base_url, api_key, timeout=10.0, *, provider=None):
+            captured["base_url"] = base_url
+            captured["provider"] = provider
+            return ProviderModelDiscoveryResult(
+                models=["m"],
+                status=ProviderModelDiscoveryStatus.OK,
+            )
+
+        monkeypatch.setattr(provider_service, "discover_provider_models", fake_fetch)
 
         # A known provider preset base_url is trusted and gets the saved key.
         resp = provider_service.fetch_models(
             ProviderModelsRequest(base_url="https://api.openai.com/v1")
         )
         assert captured["base_url"] == "https://api.openai.com/v1"
+        assert captured["provider"] == "openai"
         assert resp.base_url == "https://api.openai.com/v1"
         assert resp.models == ["m"]
 
@@ -212,14 +237,60 @@ class TestWebServices:
         def must_not_call(*args, **kwargs):
             raise AssertionError("fetch_provider_models must not run for an untrusted base_url")
 
-        monkeypatch.setattr(provider_service, "fetch_provider_models", must_not_call)
+        monkeypatch.setattr(provider_service, "discover_provider_models", must_not_call)
 
         resp = provider_service.fetch_models(
             ProviderModelsRequest(base_url="https://attacker.example/v1")
         )
         assert resp.models == []
         assert resp.has_api_key is True
+        assert resp.status == "untrusted_url"
         assert "base url" in resp.detail.lower() or "base_url" in resp.detail.lower()
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            "authentication_failed",
+            "timeout",
+            "malformed_response",
+            "response_too_large",
+            "empty_catalog",
+            "redirect_blocked",
+            "upstream_error",
+        ],
+    )
+    def test_web_provider_service_preserves_safe_discovery_status(
+        self, monkeypatch, status
+    ):
+        import vulnclaw.web.services.provider_service as provider_service
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import (
+            ProviderModelDiscoveryResult,
+            ProviderModelDiscoveryStatus,
+        )
+        from vulnclaw.web.schemas import ProviderModelsRequest
+
+        config = VulnClawConfig()
+        config.llm.provider = "openrouter"
+        config.llm.api_key = "fake-secret-never-return"
+        config.llm.base_url = "https://openrouter.ai/api/v1"
+        monkeypatch.setattr(provider_service, "load_config", lambda: config)
+        monkeypatch.setattr(
+            provider_service,
+            "discover_provider_models",
+            lambda *args, **kwargs: ProviderModelDiscoveryResult(
+                models=[],
+                status=ProviderModelDiscoveryStatus(status),
+                detail=f"safe {status} detail",
+            ),
+        )
+
+        response = provider_service.fetch_models(
+            ProviderModelsRequest(provider="openrouter")
+        )
+
+        assert response.status == status
+        assert "fake-secret-never-return" not in response.model_dump_json()
 
     def test_web_target_service_lists_targets(self, monkeypatch, tmp_path):
         import vulnclaw.target_state.store as store_mod
@@ -964,12 +1035,29 @@ class TestWebApp:
         with pytest.raises(ValidationError):
             ConfigUpdateRequest(base_url="https://user:pass@example.com/v1")
         with pytest.raises(ValidationError):
+            ConfigUpdateRequest(base_url="https://example.com/v1?key=value")
+        with pytest.raises(ValidationError):
+            ConfigUpdateRequest(base_url="https://example.com/v1#fragment")
+        with pytest.raises(ValidationError):
+            ProviderModelsRequest(base_url="https://user:pass@example.com/v1")
+        with pytest.raises(ValidationError):
+            ProviderModelsRequest(base_url="https://example.com/v1?key=value")
+        with pytest.raises(ValidationError):
+            ProviderModelsRequest(base_url="https://example.com/v1#fragment")
+        with pytest.raises(ValidationError):
+            ConfigUpdateRequest(model="bad\nmodel")
+        with pytest.raises(ValidationError):
+            ConfigUpdateRequest(model=" " * 3)
+        with pytest.raises(ValidationError):
             ConfigUpdateRequest(max_rounds=0)
         with pytest.raises(ValidationError):
             ConfigUpdateRequest(python_execute_mode="unsafe")
 
         assert ProviderModelsRequest(base_url=" https://api.example.com/v1/ ").base_url == (
             "https://api.example.com/v1"
+        )
+        assert ConfigUpdateRequest(model=" private/opaque:model ").model == (
+            "private/opaque:model"
         )
 
     def test_cli_web_allows_loopback_aliases_in_dry_run(self):
@@ -988,6 +1076,34 @@ class TestWebApp:
         assert (root / "vite.config.ts").exists()
         assert (root / "src" / "main.tsx").exists()
         assert (root / "src" / "App.tsx").exists()
+
+    def test_frontend_provider_discovery_contract_and_catalog_parity(self):
+        import json
+
+        root = Path(__file__).resolve().parents[1] / "frontend" / "src"
+        api_types = (root / "types" / "api.ts").read_text(encoding="utf-8")
+        settings_source = (root / "pages" / "SettingsPage.tsx").read_text(
+            encoding="utf-8"
+        )
+        english = json.loads((root / "i18n" / "en.json").read_text(encoding="utf-8"))
+        chinese = json.loads((root / "i18n" / "zh.json").read_text(encoding="utf-8"))
+
+        assert "status: ProviderModelsStatus;" in api_types
+        assert "formatModelDiscoveryHint" in settings_source
+        assert "useState(\"fake" not in settings_source
+        discovery_keys = {
+            key
+            for key in english
+            if key.startswith("settings.models_")
+            or key.startswith("settings.openrouter_warning")
+        }
+        assert discovery_keys
+        assert discovery_keys == {
+            key
+            for key in chinese
+            if key.startswith("settings.models_")
+            or key.startswith("settings.openrouter_warning")
+        }
 
     def test_frontend_toc_navigation_hides_advanced_console(self):
         root = Path(__file__).resolve().parents[1] / "frontend"

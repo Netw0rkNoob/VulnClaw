@@ -33,8 +33,9 @@ from vulnclaw.config.schema import (
     MCPTransportConfig,
 )
 from vulnclaw.config.settings import (
+    ProviderModelDiscoveryResult,
     apply_provider_preset,
-    fetch_provider_models,
+    discover_provider_models,
     list_providers,
     load_config,
     save_config,
@@ -64,6 +65,12 @@ C_MUTED = "#808080"           # muted gray  – secondary / dim text
 C_TEXT = "#eeeeee"            # near-white  – body text
 C_BORDER = "#484848"          # mid-gray    – panel borders
 C_BORDER_SUBTLE = "#3c3c3c"   # dark-gray   – inner / subtle borders
+
+
+def _model_discovery_failure_message(result: ProviderModelDiscoveryResult) -> str:
+    """Return localized discovery feedback without exposing upstream data."""
+    return _(f"tui.model_discovery_{result.status.value}")
+
 
 # ── @ skill reference boundary detection ──
 # [新增] 2026-07-08 Nyaecho - 新增 @ 符号用于 skill 资料引用，支持任意位置触发补全
@@ -1418,7 +1425,9 @@ def _cmd_config(session: dict[str, Any], args: str) -> None:
                             _on_baseurl)
         else:
             # 非 custom：直接输入 API Key
-            key_status = _("tui.api_key_configured") if config.llm.api_key else _("tui.api_key_not_configured")
+            key_status = _("tui.api_key_configured") if config.llm.key_pool() else _("tui.api_key_not_configured")
+            if config.llm.provider == "openrouter":
+                key_status = f"{key_status}. {_('tui.openrouter_warning')}"
             _set_prompt_input(session, _("tui.prompt_enter_apikey", status=key_status), _on_apikey)
 
     def _on_baseurl(value: str) -> None:
@@ -1432,7 +1441,7 @@ def _cmd_config(session: dict[str, Any], args: str) -> None:
         if value:
             config.llm.api_key = value.strip()
         base_url = config.llm.base_url
-        api_key = config.llm.api_key
+        api_key = config.llm.primary_key()
         # 缺少 base_url/api_key 时跳过获取，直接手动输入
         if not base_url or not api_key:
             _set_prompt_input(session, _("tui.prompt_enter_model_fallback", model=config.llm.model), _on_model_input, default=config.llm.model)
@@ -1441,11 +1450,19 @@ def _cmd_config(session: dict[str, Any], args: str) -> None:
         _set_prompt_message(session, _("tui.fetching_models"))
         # Note: 在 prompt_toolkit 同步循环中，消息不会立即渲染
         # 直接同步获取模型列表
-        models = fetch_provider_models(base_url, api_key)
-        if models:
-            _set_prompt_choice(session, _("tui.prompt_select_model", model=config.llm.model), models, _on_model_selected)
+        result = discover_provider_models(
+            base_url,
+            api_key,
+            provider=config.llm.provider,
+        )
+        if result.models:
+            _set_prompt_choice(session, _("tui.prompt_select_model", model=config.llm.model), result.models, _on_model_selected)
         else:
-            _set_prompt_input(session, _("tui.prompt_enter_model_fallback", model=config.llm.model), _on_model_input, default=config.llm.model)
+            fallback = (
+                f"{_model_discovery_failure_message(result)} "
+                f"{_('tui.prompt_enter_model_fallback', model=config.llm.model)}"
+            )
+            _set_prompt_input(session, fallback, _on_model_input, default=config.llm.model)
 
     def _on_model_selected(value: str) -> None:
         if value:
@@ -2059,13 +2076,19 @@ def _render_model_choices(screen: Console, models: list[str], current: str) -> N
 def _prompt_model_value(screen: Console, config) -> str:
     """Prompt for an LLM model, showing provider models when credentials can fetch them."""
     current = config.llm.model
+    discovery: ProviderModelDiscoveryResult | None = None
     models: list[str] = []
     base_url = config.llm.base_url
     api_key = config.llm.primary_key()
 
     if base_url and api_key:
         screen.print(f"[{C_MUTED}]{_('tui.fetching_models')}[/]")
-        models = fetch_provider_models(base_url, api_key)
+        discovery = discover_provider_models(
+            base_url,
+            api_key,
+            provider=config.llm.provider,
+        )
+        models = discovery.models
 
     if models:
         _render_model_choices(screen, models, current)
@@ -2079,8 +2102,10 @@ def _prompt_model_value(screen: Console, config) -> str:
             screen.print(f"[{C_WARNING}]Model number out of range; using '{raw}' as a custom model id.[/]")
         return raw
 
-    if base_url and api_key:
-        screen.print(f"[{C_WARNING}]No models returned; enter a model id manually.[/]")
+    if discovery is not None:
+        screen.print(
+            f"[{C_WARNING}]{_model_discovery_failure_message(discovery)}[/]"
+        )
     raw = _config_prompt_ask(screen, f"Model [current: {current}]", default="")
     if raw == "!clear":
         return ""

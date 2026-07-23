@@ -49,10 +49,23 @@ export interface ProviderModelsRequest {
   base_url?: string;
 }
 
+export type ProviderModelsStatus =
+  | "ok"
+  | "missing_key"
+  | "untrusted_url"
+  | "authentication_failed"
+  | "timeout"
+  | "malformed_response"
+  | "response_too_large"
+  | "empty_catalog"
+  | "redirect_blocked"
+  | "upstream_error";
+
 export interface ProviderModelsResponse {
   base_url: string;
   models: string[];
   has_api_key: boolean;
+  status: ProviderModelsStatus;
   detail: string;
 }
 
