@@ -2,7 +2,7 @@
 
 # VulnClaw 🦞
 
-> *AI-Powered Penetration Testing CLI — Speak plainly, find real bugs.*
+> AI-Powered Penetration Testing CLI — Speak plainly, find real bugs.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
@@ -24,9 +24,12 @@
 Official Website: https://unclecheng-li.github.io/vulnclaw.com/
 <br>
 
-Built on LLM Agent + MCP Toolchain + optional Skill reference material,
-compatible with OpenAI / Anthropic / MiniMax / DeepSeek and similar models.
-Natural language input → automated "Recon → Vulnerability Discovery → Exploitation → Reporting".
+Built on an LLM agent, an MCP toolchain, and optional skill reference material.
+Compatible with OpenAI, Anthropic, MiniMax, DeepSeek, and other OpenAI-compatible models.
+
+Natural language input is automatically translated into the following workflow:
+
+Recon → Vulnerability Discovery → Exploitation → Reporting
 
 [Quick Start](#quick-start) · [Architecture](#architecture) · [Built-in Skills](#built-in-skills)
 
@@ -66,25 +69,26 @@ Suitable for authorized pentests, CTF competitions, security training, and red t
 - **AgentState Evidence Memory** — Tool results are stored in `AgentState.evidence` with complete raw text preserved; active context receives bounded high-signal previews by default, while `evidence_search` / `evidence_view` revisit raw evidence on demand
 - **Lightweight Correction Layer** — Records repeated calls, degraded tools, timing, and new observations; repeated reads of the same evidence range are suppressed and evidence-only stalls trigger a stall guard without restoring the old stage planner
 - **Evidence-Level Anti-Hallucination Gate** — Claims about flags/conclusions must appear verbatim in real tool output to be accepted; prevents fabricated flags
-- **Natural Language Driven** — Describe your goal in plain English, auto-identifies phases and tools
+ - **Natural Language Driven** — Describe your goal in plain English. VulnClaw automatically identifies the required phases and tools.
 - **13 LLM Providers** — OpenAI / Anthropic / MiniMax / DeepSeek / Zhipu / Moonshot / Qwen / SiliconFlow / Doubao / Baichuan / StepFun / SenseTime / Yi, one-command switch
 - **MCP Toolchain** — 4 MCP services: `fetch` / `memory` run locally out-of-the-box, `chrome-devtools` / `burp` connect to external MCP servers for browser automation and HTTP interception
 - **Enhanced fetch request tool** — Defaults to GET, returns the full response body, and supports HTTP/HTTPS, custom method/headers/params/cookies/body/data/form/json, timeout/redirect/TLS controls; TLS verification is off by default for CTF/lab HTTPS targets
 - **Native Traffic Evidence Store** — In-scope request/response pairs land in an append-only JSONL index under `evidence/traffic/`. Built-in `traffic_list` / `traffic_view` / `traffic_repeat` / `traffic_sitemap` tools read and replay the store
 - **AI Agent Core** — OpenAI-compatible protocol + Tool Calling + autonomous pentest loop
 - **Structured Reasoning + Adaptive Reflection** — Facts/constraints/attack chains structured and injected into prompts; failures auto-classified with L0-L4 payload escalation
-- **Vulnerability Detection Plugin System** — Low-coupling plugin runtime + built-in read-only Web plugins, results auto-merged into reports (`vulnclaw plugins`)
+- **Vulnerability Detection Plugin System** — Low-coupling plugin runtime with built-in read-only web plugins, results auto-merged into reports (`vulnclaw plugins`)
+ - **Vulnerability Detection Plugin System** — Low-coupling plugin runtime with built-in read-only Web plugins; results auto-merged into reports (`vulnclaw plugins`)
 - **50 Specialized Skills** — CTF, Web, intranet, reversing, vulnerability validation, and authorized red-team knowledge; skills are exposed as optional reference indexes only, and full reference bodies are loaded only when the model explicitly calls `load_skill_reference`
 - **Encode/Decode & Crypto Tools** — 29 operations (Base64/Hex/URL/AES/JWT/Morse etc.), LLM calls them directly, no guessing
 - **Automatic Source Rendering** — `fetch` / `http_probe_batch` automatically prepend clean source before raw bodies when they see `highlight_file`, highlighted HTML source, or noisy HTML/JS bodies; `http_probe_batch` disables TLS verification by default and records full response headers so runtime clues such as `X-Powered-By` are not lost; built-in `source_extract` remains available for revisiting saved evidence and pinning dangerous sinks, forms, inputs, and endpoints
 - **Local Command Verification** — Built-in `shell_command` supports Codex-style local checks such as `php -r` serialization tests, exact `curl` requests, and `rg`/`Select-String` file searches; raw stdout/stderr are preserved in evidence, and large active-context observations use high-signal previews
 - **Runtime Differential Probing** — Built-in `runtime_diff_probe` helps the model build compact local tables for regex/string-filter vs runtime-parser mismatches, including PHP serialize/unserialize lexical variants, target/local runtime version mismatch notes, and PHP5 signed-length candidates that must be verified remotely instead of being discarded due to newer local PHP behavior
-- **Python Code Execution** — Built-in `python_execute` tool for payload crafting and response parsing; currently still a high-risk experimental capability, not a strong isolation sandbox
+- **Python Code Execution** — Built-in `python_execute` tool for payload crafting and response parsing; currently an experimental, high-risk capability
 - **Batch HTTP Probing** — Built-in `http_probe_batch` compares URL/parameter/header/body/raw-URL variants in one call, preserves each raw response body in evidence, and shows the audited request surface plus high-signal response preview in model-visible output to reduce repeated LLM/tool rounds
 - **Near-Miss Stop Guard** — solve keeps the evidence gate and adds a generic `NO_PATH` guard: when unresolved high-signal anchors such as source sinks, forms/parameters, request surfaces, local proof or response differentials exist, a single no-output/same-body payload attempt is not accepted as proof that the path is dead
 - **Persistent Pentesting** — Cyclic runs (100 rounds/cycle × 10 cycles = 1000 rounds), auto-reports every cycle
 - **Thinking Process Control** — `think on/off` toggles LLM reasoning visibility
-- **Sandbox Mode Prompting** — Unlocks AI security testing capabilities, for CTF and authorized pentest scenarios
+- **Sandbox Mode Prompting** — Unlocks AI security testing capabilities for CTFs and authorized penetration testing scenarios.
 - **Auto Report & PoC** — Generates structured Markdown reports and runnable Python PoC scripts
 - **Web UI Mode** — `vulnclaw web` launches a local web interface, default `127.0.0.1:7788`
 - **Security Knowledge Base** — Includes KB module and baseline seed data; retrieval augmentation being integrated
@@ -108,7 +112,7 @@ pip install -e .
 
 ### Run with Docker (optional)
 
-The image bundles the Web UI plus runtimes (`npx` / `uvx`) for default MCP servers. All state persists in a `/data` volume.
+The image bundles the Web UI plus runtimes (e.g., `npx` / `uvx`) for default MCP servers. All state persists in a `/data` volume.
 
 ```bash
 cp .env.example .env          # add VULNCLAW_LLM_API_KEY etc.
@@ -125,7 +129,7 @@ docker run --rm -it \
   vulnclaw:latest scan <target>
 ```
 
-> ⚠️ `localhost` inside the container refers to the container itself. To scan a host service use `host.docker.internal`. See [DOCKER.md](DOCKER.md).
+> ⚠️ Inside the container, localhost (127.0.0.1) refers to the container itself. To scan a host service use `host.docker.internal`. See [DOCKER.md](DOCKER.md).
 
 ### Four-Step Launch
 
@@ -328,7 +332,7 @@ Operate the full pentest workflow through a browser.
 
 ```bash
 pip install 'vulnclaw[web]'  # install Web dependencies
-vulnclaw web                  # launch (default 127.0.0.1:7788)
+vulnclaw web                  # launch (defaults to 127.0.0.1:7788)
 vulnclaw web --port 8080      # custom port
 ```
 
