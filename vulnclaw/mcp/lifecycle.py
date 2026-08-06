@@ -19,7 +19,7 @@ from vulnclaw.config.source_render import render_highlighted_source_block
 # 修改时间: 2026-07-08
 # 修改原因: 消除 V1 违规 — mcp/ 基础设施层不应反向依赖 agent/ 领域层，
 #          改为从 config/url_utils.py 导入纯 URL 工具函数。
-from vulnclaw.config.url_utils import infer_port_from_url
+from vulnclaw.config.url_utils import infer_port_from_url, is_cloud_metadata_address
 from vulnclaw.mcp._probe_mixin import ProbeMixin
 from vulnclaw.mcp.registry import HealthStatus, MCPRegistry
 
@@ -136,10 +136,6 @@ class MCPLifecycleManager(ProbeMixin):
         self._task_constraints = constraints
 
     def _check_fetch_constraints(self, arguments: dict[str, Any]) -> dict[str, Any] | None:
-        constraints = self._task_constraints
-        if constraints is None or constraints.is_empty():
-            return None
-
         url = str(arguments.get("url", "") or "").strip()
         if not url:
             return None
@@ -150,6 +146,28 @@ class MCPLifecycleManager(ProbeMixin):
             parsed = None
         host = parsed.hostname.lower() if parsed and parsed.hostname else ""
         path = parsed.path.rstrip("/") if parsed and parsed.path else ""
+
+        # Hard, always-on floor -- checked regardless of whether any
+        # TaskConstraints scope is set. See url_utils.is_cloud_metadata_address
+        # for why this is narrow (specific metadata endpoints) rather than a
+        # blanket block on private ranges, which are legitimate in-scope
+        # targets for an authorized internal pentest.
+        if host:
+            is_metadata, reason = is_cloud_metadata_address(host)
+            if is_metadata:
+                return self._tool_result(
+                    ok=False,
+                    server="fetch",
+                    tool="fetch",
+                    execution_mode="local",
+                    error_type="constraint_violation",
+                    message=f"Host {host} is blocked: {reason}.",
+                    suggestion="Cloud metadata endpoints are never a legitimate pentest target.",
+                )
+
+        constraints = self._task_constraints
+        if constraints is None or constraints.is_empty():
+            return None
 
         port = infer_port_from_url(url)
         if port is None:
@@ -224,6 +242,88 @@ class MCPLifecycleManager(ProbeMixin):
                 suggestion="Remove the blocked port from the request or adjust constraints.",
             )
 
+        return None
+
+    def _check_chrome_constraints(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Gate browser navigation the same way _check_fetch_constraints gates
+        fetch -- chrome-devtools tool calls had NO scope/SSRF check at all
+        before this (found while auditing the tool's real network-touching
+        surface). Only navigate_page carries a fresh URL; every other chrome
+        tool (click, evaluate_script, take_screenshot, ...) operates on a
+        page the browser already navigated to, so gating navigation is what
+        actually matters here."""
+        url = str(arguments.get("url", "") or "").strip()
+        if not url:
+            return None
+
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            parsed = None
+        host = parsed.hostname.lower() if parsed and parsed.hostname else ""
+        path = parsed.path.rstrip("/") if parsed and parsed.path else ""
+
+        if host:
+            is_metadata, reason = is_cloud_metadata_address(host)
+            if is_metadata:
+                return self._tool_result(
+                    ok=False,
+                    server="chrome-devtools",
+                    tool=tool_name,
+                    execution_mode="sdk",
+                    error_type="constraint_violation",
+                    message=f"Host {host} is blocked: {reason}.",
+                    suggestion="Cloud metadata endpoints are never a legitimate pentest target.",
+                )
+
+        constraints = self._task_constraints
+        if constraints is None or constraints.is_empty():
+            return None
+
+        if constraints.allowed_hosts and host and host not in constraints.allowed_hosts:
+            allowed_hosts = ", ".join(constraints.allowed_hosts)
+            return self._tool_result(
+                ok=False,
+                server="chrome-devtools",
+                tool=tool_name,
+                execution_mode="sdk",
+                error_type="constraint_violation",
+                message=f"Host {host} is outside allowed scope [{allowed_hosts}] for url {url}",
+                suggestion="Adjust the task scope or navigate to an allowed host.",
+            )
+        if host and host in constraints.blocked_hosts:
+            return self._tool_result(
+                ok=False,
+                server="chrome-devtools",
+                tool=tool_name,
+                execution_mode="sdk",
+                error_type="constraint_violation",
+                message=f"Host {host} is blocked by task constraints for url {url}",
+                suggestion="Remove the blocked host from the request or adjust constraints.",
+            )
+        if constraints.allowed_paths and path and path not in constraints.allowed_paths:
+            allowed_paths = ", ".join(constraints.allowed_paths)
+            return self._tool_result(
+                ok=False,
+                server="chrome-devtools",
+                tool=tool_name,
+                execution_mode="sdk",
+                error_type="constraint_violation",
+                message=f"Path {path} is outside allowed scope [{allowed_paths}] for url {url}",
+                suggestion="Adjust the task scope or navigate to an allowed path.",
+            )
+        if path and path in constraints.blocked_paths:
+            return self._tool_result(
+                ok=False,
+                server="chrome-devtools",
+                tool=tool_name,
+                execution_mode="sdk",
+                error_type="constraint_violation",
+                message=f"Path {path} is blocked by task constraints for url {url}",
+                suggestion="Remove the blocked path from the request or adjust constraints.",
+            )
         return None
 
     def _tool_result(
@@ -1305,6 +1405,10 @@ class MCPLifecycleManager(ProbeMixin):
                     structured_content=None,
                 )
             if server_name == "chrome-devtools":
+                violation = self._check_chrome_constraints(tool_name, arguments)
+                if violation is not None:
+                    self.registry.record_tool_call(server_name, success=False)
+                    return violation
                 try:
                     content, structured = await self._call_chrome(tool_name, arguments)
                     self.registry.record_tool_call(server_name, success=True)

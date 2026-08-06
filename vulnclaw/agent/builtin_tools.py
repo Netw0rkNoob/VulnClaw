@@ -53,6 +53,7 @@ from vulnclaw.config.source_render import (
 # 修改原因: 消除 V1 违规 — infer_port_from_url 已移至 config/url_utils.py，
 #          此处重新导出以保持向后兼容。
 from vulnclaw.config.url_utils import infer_port_from_url  # noqa: F401 — re-export
+from vulnclaw.config.url_utils import is_cloud_metadata_address
 from vulnclaw.intel.tools import (
     INTEL_TOOL_NAMES,
     dispatch_intel_tool,
@@ -1040,7 +1041,22 @@ def enforce_port_constraints(agent: AgentContext, ports: list[int], *, target: s
 def enforce_host_path_constraints(
     agent: AgentContext, *, host: str = "", path: str = "", target: str = ""
 ) -> str | None:
-    """Return a user-facing violation when host/path are out of scope."""
+    """Return a user-facing violation when host/path are out of scope.
+
+    Checks the cloud-metadata hard denylist unconditionally, before the
+    optional scope allowlist below and regardless of whether any
+    TaskConstraints scope is configured -- an empty/unset scope must not mean
+    "anything goes" for these specific addresses. See url_utils.py for why
+    this is a narrow, always-on floor rather than blocking all of RFC1918.
+    """
+    if host:
+        is_metadata, reason = is_cloud_metadata_address(host)
+        if is_metadata:
+            return (
+                f"[constraint_violation] Host {host} is blocked: {reason}. "
+                "Cloud metadata endpoints are never a legitimate pentest target."
+            )
+
     session = getattr(agent, "session_state", None)
     constraints = getattr(session, "task_constraints", None)
     if constraints is None or constraints.is_empty():

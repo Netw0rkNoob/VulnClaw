@@ -470,8 +470,22 @@ class AgentCore:
         """
         result = AgentResult()
 
-        # Chat mode is free-form — don't inherit constraints from previous sessions
-        self.context.state.task_constraints = TaskConstraints()
+        # Chat mode is free-form — don't inherit constraints from a previous,
+        # unrelated chat turn. That used to mean an *always-empty* scope for
+        # every chat message regardless of content, though, which is exactly
+        # what enforce_host_path_constraints/_check_fetch_constraints treat
+        # as "no restriction at all" -- so fetch/browse/python_execute's
+        # embedded-URL checks had zero scope enforcement in the tool's single
+        # most common interaction mode. Derive fresh constraints from what
+        # *this* message actually says instead: if it names a target/URL,
+        # extract_task_constraints (the same parser structured commands use)
+        # picks it up and scope enforcement applies; if it genuinely names no
+        # target (a bare "what does SSRF mean" Q&A), constraints stay empty,
+        # same as before -- this only tightens the common case where a target
+        # actually is mentioned, never a message that mentions none.
+        self.context.state.task_constraints = (
+            extract_task_constraints(user_input) if user_input else TaskConstraints()
+        )
 
         # Detect target and phase from input
         detected_target = target or self._detect_target(user_input)
