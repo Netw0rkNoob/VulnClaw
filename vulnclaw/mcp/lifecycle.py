@@ -47,6 +47,20 @@ HTTP_TRANSPORT_TYPES = frozenset(
 )
 SSE_TRANSPORT_TYPES = frozenset({"sse", "sse-client", "sse_client", "sseclient"})
 
+# These 4 names appear in KNOWN_TOOLS for chrome-devtools but do not exist on
+# the real chrome-devtools-mcp server (verified live: 29 real tools, none
+# named chrome_pentest_*). MCPLifecycleManager._call_chrome implements them
+# locally as composite helpers over the real primitives (navigate_page,
+# list_network_requests, get_network_request, evaluate_script).
+_CHROME_PENTEST_TOOL_NAMES = frozenset(
+    {
+        "chrome_pentest_headers",
+        "chrome_pentest_http",
+        "chrome_pentest_cookies",
+        "chrome_pentest_js_analyze",
+    }
+)
+
 _BENIGN_SHUTDOWN_KEYWORDS = (
     "cancel scope",
     "generator didn't stop",
@@ -473,7 +487,7 @@ class MCPLifecycleManager(ProbeMixin):
         timeout_s = self._tool_timeout_seconds(config)
         async with stdio_client(server) as (read_stream, write_stream):
             async with ClientSession(
-                read_stream, write_stream, read_timeout_seconds=timedelta(seconds=timeout_s)
+                read_stream, write_stream, read_timeout_seconds=timeout_s
             ) as session:
                 await session.initialize()
                 return await asyncio.wait_for(
@@ -516,7 +530,7 @@ class MCPLifecycleManager(ProbeMixin):
         cm = stdio_client(server)
         read_stream, write_stream = await cm.__aenter__()
         session = ClientSession(
-            read_stream, write_stream, read_timeout_seconds=timedelta(seconds=timeout_s)
+            read_stream, write_stream, read_timeout_seconds=timeout_s
         )
         # 进入 ClientSession 上下文以启动 _receive_loop；否则后续调用读不到响应而卡死。
         try:
@@ -601,7 +615,7 @@ class MCPLifecycleManager(ProbeMixin):
             )
             read_stream, write_stream, _get_session_id = await cm.__aenter__()
             session = ClientSession(
-                read_stream, write_stream, read_timeout_seconds=timedelta(seconds=read_s)
+                read_stream, write_stream, read_timeout_seconds=read_s
             )
             await session.__aenter__()
             await session.initialize()
@@ -675,7 +689,7 @@ class MCPLifecycleManager(ProbeMixin):
             cm = sse_client(url)
             read_stream, write_stream = await cm.__aenter__()
             session = ClientSession(
-                read_stream, write_stream, read_timeout_seconds=timedelta(seconds=read_s)
+                read_stream, write_stream, read_timeout_seconds=read_s
             )
             await session.__aenter__()
             await session.initialize()
@@ -1655,8 +1669,267 @@ class MCPLifecycleManager(ProbeMixin):
         return rendered, structured
 
     async def _call_chrome(self, tool_name: str, args: dict) -> tuple[str, dict[str, Any] | None]:
-        """Execute a Chrome DevTools tool call."""
+        """Execute a Chrome DevTools tool call.
+
+        The 4 `chrome_pentest_*` names declared in KNOWN_TOOLS do not exist on
+        the real chrome-devtools-mcp server (verified: it exposes 29 real
+        tools -- navigate_page/list_network_requests/get_network_request/
+        evaluate_script/etc. -- none named chrome_pentest_*). These are
+        composite security-analysis helpers implemented locally on top of
+        those real primitives, not passed through.
+        """
+        if tool_name in _CHROME_PENTEST_TOOL_NAMES:
+            return await self._call_chrome_pentest_wrapper(tool_name, args)
         return await self._call_attached_server("chrome-devtools", tool_name, args)
+
+    async def _chrome_navigate_if_url(self, url: str | None) -> None:
+        if url:
+            await self._call_attached_server(
+                "chrome-devtools", "navigate_page", {"type": "url", "url": url}
+            )
+
+    async def _chrome_main_document_headers(self) -> tuple[dict[str, str], dict[str, str], str]:
+        """Return (request_headers, response_headers, raw_text) for the most
+        recent document-type network request on the currently selected page."""
+        listing, _ = await self._call_attached_server(
+            "chrome-devtools", "list_network_requests", {"resourceTypes": ["document"]}
+        )
+        match = re.search(r"reqid=(\d+)", listing or "")
+        if not match:
+            return {}, {}, listing or ""
+        reqid = int(match.group(1))
+        detail, _ = await self._call_attached_server(
+            "chrome-devtools", "get_network_request", {"reqid": reqid}
+        )
+        return self._parse_network_request_headers(detail or "")
+
+    @staticmethod
+    def _parse_network_request_headers(detail: str) -> tuple[dict[str, str], dict[str, str], str]:
+        """Parse get_network_request's markdown text into header dicts.
+
+        Format (verified live against chrome-devtools-mcp@1.6.0):
+            ### Request Headers
+            - key:value
+            ### Response Headers
+            - key:value
+            ### Response Body
+            ...
+        Multiple headers sharing the same key (e.g. repeated Set-Cookie) are
+        preserved as a list under that key rather than overwritten, since a
+        response can legally carry more than one Set-Cookie header.
+        """
+
+        def _section(name: str) -> list[str]:
+            block = re.search(
+                rf"###\s*{name}\s*\n(.*?)(?=\n###\s|\Z)", detail, re.DOTALL
+            )
+            if not block:
+                return []
+            return [
+                line[2:].strip()
+                for line in block.group(1).splitlines()
+                if line.strip().startswith("- ")
+            ]
+
+        def _to_multimap(lines: list[str]) -> dict[str, Any]:
+            out: dict[str, Any] = {}
+            for line in lines:
+                if ":" not in line:
+                    continue
+                key, _, value = line.partition(":")
+                key = key.strip().lower()
+                value = value.strip()
+                if key in out:
+                    existing = out[key]
+                    if isinstance(existing, list):
+                        existing.append(value)
+                    else:
+                        out[key] = [existing, value]
+                else:
+                    out[key] = value
+            return out
+
+        req_headers = _to_multimap(_section("Request Headers"))
+        resp_headers = _to_multimap(_section("Response Headers"))
+        return req_headers, resp_headers, detail
+
+    @staticmethod
+    def _cookie_flag_findings(set_cookie_value: str) -> dict[str, Any]:
+        """Analyze one raw Set-Cookie header value for HttpOnly/Secure/SameSite."""
+        lowered = set_cookie_value.lower()
+        name = set_cookie_value.split("=", 1)[0].strip()
+        same_site_match = re.search(r"samesite=([a-z]+)", lowered)
+        return {
+            "cookie": name,
+            "http_only": "httponly" in lowered,
+            "secure": "secure" in lowered,
+            "same_site": same_site_match.group(1) if same_site_match else None,
+            "raw": set_cookie_value,
+        }
+
+    _SECURITY_HEADER_CHECKS: tuple[tuple[str, str], ...] = (
+        ("content-security-policy", "No Content-Security-Policy header -- no mitigation against XSS/data injection via restricting allowed sources."),
+        ("x-frame-options", "No X-Frame-Options header -- page may be embeddable in a clickjacking iframe (unless CSP frame-ancestors is set instead)."),
+        ("x-content-type-options", "No X-Content-Type-Options: nosniff -- browser may MIME-sniff responses, enabling some content-type confusion attacks."),
+        ("strict-transport-security", "No Strict-Transport-Security header -- no HSTS enforcement; a MITM can downgrade the connection to plain HTTP."),
+        ("referrer-policy", "No Referrer-Policy header -- full URLs (possibly containing sensitive query params/tokens) may leak to third-party Referer headers."),
+        ("permissions-policy", "No Permissions-Policy header -- browser features (camera/mic/geolocation/etc.) are not explicitly restricted."),
+    )
+
+    async def _pentest_headers_impl(self, args: dict) -> tuple[str, dict[str, Any]]:
+        await self._chrome_navigate_if_url(args.get("url"))
+        _, resp_headers, raw = await self._chrome_main_document_headers()
+        if not resp_headers and not raw:
+            return "No document request found on the current page (navigate first or pass a url).", {
+                "url": args.get("url"), "findings": [], "present_headers": {},
+            }
+        findings = [
+            {"header": header, "severity": "info", "detail": detail}
+            for header, detail in self._SECURITY_HEADER_CHECKS
+            if header not in resp_headers
+        ]
+        present = {h: resp_headers[h] for h, _ in self._SECURITY_HEADER_CHECKS if h in resp_headers}
+        lines = [f"Security header check for {args.get('url') or '(current page)'}:"]
+        if findings:
+            lines.append(f"{len(findings)} missing security header(s):")
+            lines.extend(f"  - {f['detail']}" for f in findings)
+        else:
+            lines.append("All 6 checked security headers are present.")
+        if present:
+            lines.append("Present:")
+            lines.extend(f"  - {k}: {v}" for k, v in present.items())
+        return "\n".join(lines), {
+            "url": args.get("url"), "findings": findings, "present_headers": present,
+        }
+
+    async def _pentest_http_impl(self, args: dict) -> tuple[str, dict[str, Any]]:
+        header_text, header_structured = await self._pentest_headers_impl(args)
+        _, resp_headers, _ = await self._chrome_main_document_headers()
+        cors_value = resp_headers.get("access-control-allow-origin")
+        cors_finding = None
+        if cors_value == "*":
+            cors_finding = "Access-Control-Allow-Origin: * -- any origin may read this response via CORS; a real issue only if the response also carries credentials/sensitive data."
+        elif cors_value:
+            cors_finding = f"Access-Control-Allow-Origin: {cors_value} (reflects a specific origin -- verify it isn't a wildcard-reflecting misconfiguration)."
+        set_cookie = resp_headers.get("set-cookie")
+        cookie_findings = []
+        if set_cookie:
+            values = set_cookie if isinstance(set_cookie, list) else [set_cookie]
+            cookie_findings = [self._cookie_flag_findings(v) for v in values]
+        lines = [header_text, ""]
+        lines.append(f"CORS: {cors_finding or 'no Access-Control-Allow-Origin header on this response.'}")
+        if cookie_findings:
+            lines.append(f"Cookies set on this response: {len(cookie_findings)}")
+            for cf in cookie_findings:
+                flags = []
+                if not cf["http_only"]:
+                    flags.append("missing HttpOnly")
+                if not cf["secure"]:
+                    flags.append("missing Secure")
+                if not cf["same_site"]:
+                    flags.append("missing SameSite")
+                lines.append(f"  - {cf['cookie']}: {', '.join(flags) if flags else 'HttpOnly+Secure+SameSite all present'}")
+        structured = dict(header_structured)
+        structured["cors"] = {"access_control_allow_origin": cors_value, "finding": cors_finding}
+        structured["cookies"] = cookie_findings
+        return "\n".join(lines), structured
+
+    async def _pentest_cookies_impl(self, args: dict) -> tuple[str, dict[str, Any]]:
+        await self._chrome_navigate_if_url(args.get("url"))
+        _, resp_headers, _ = await self._chrome_main_document_headers()
+        set_cookie = resp_headers.get("set-cookie")
+        if not set_cookie:
+            return "No Set-Cookie header on the most recent document request (this page may set cookies on a different request, e.g. a login XHR -- call list_network_requests/get_network_request directly for other requests).", {"cookies": []}
+        values = set_cookie if isinstance(set_cookie, list) else [set_cookie]
+        findings = [self._cookie_flag_findings(v) for v in values]
+        lines = [f"{len(findings)} cookie(s) set on the most recent document response:"]
+        for cf in findings:
+            flags = []
+            if not cf["http_only"]:
+                flags.append("missing HttpOnly (JS-readable -- XSS could steal it)")
+            if not cf["secure"]:
+                flags.append("missing Secure (sent over plain HTTP too)")
+            if not cf["same_site"]:
+                flags.append("missing SameSite (weaker CSRF protection)")
+            lines.append(f"  - {cf['cookie']}: {'; '.join(flags) if flags else 'HttpOnly+Secure+SameSite all present'}")
+        return "\n".join(lines), {"cookies": findings}
+
+    _JS_DANGEROUS_PATTERNS: tuple[tuple[str, str], ...] = (
+        (r"\beval\s*\(", "eval() call -- executes arbitrary strings as code"),
+        (r"\.innerHTML\s*=", "innerHTML assignment -- can introduce DOM XSS if the value is not sanitized"),
+        (r"document\.write\s*\(", "document.write() -- classic DOM XSS sink"),
+        (r"\bnew Function\s*\(", "new Function() -- executes arbitrary strings as code, same risk class as eval"),
+        (r"postMessage\s*\(", "postMessage() usage -- verify the receiving handler validates event.origin"),
+        (r"(sk-[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)", "possible hardcoded secret/API key/private key literal"),
+    )
+
+    async def _pentest_js_analyze_impl(self, args: dict) -> tuple[str, dict[str, Any]]:
+        await self._chrome_navigate_if_url(args.get("url"))
+        result, _ = await self._call_attached_server(
+            "chrome-devtools",
+            "evaluate_script",
+            {
+                "function": (
+                    "async () => {"
+                    "  const srcs = Array.from(document.scripts).map(s => s.src).filter(Boolean);"
+                    "  const inline = Array.from(document.scripts).filter(s => !s.src).map(s => s.textContent).join('\\n');"
+                    "  const fetched = [];"
+                    "  for (const src of srcs.slice(0, 20)) {"
+                    "    try { const t = await (await fetch(src)).text(); fetched.push({src, text: t}); }"
+                    "    catch (e) { fetched.push({src, text: '', error: String(e)}); }"
+                    "  }"
+                    "  return { inline, fetched };"
+                    "}"
+                )
+            },
+        )
+        payload_match = re.search(r"```json\n(.*)\n```", result or "", re.DOTALL)
+        if not payload_match:
+            return "Could not retrieve script sources from the current page (navigate first).", {"matches": []}
+        try:
+            payload = json.loads(payload_match.group(1))
+        except json.JSONDecodeError:
+            return "Script source retrieval returned non-JSON output; skipping analysis.", {"matches": []}
+        sources: list[tuple[str, str]] = [("inline", payload.get("inline") or "")]
+        for entry in payload.get("fetched") or []:
+            sources.append((entry.get("src") or "external", entry.get("text") or ""))
+        all_matches: list[dict[str, Any]] = []
+        for source_name, text in sources:
+            if not text:
+                continue
+            for pattern, description in self._JS_DANGEROUS_PATTERNS:
+                for m in re.finditer(pattern, text):
+                    start = max(0, m.start() - 40)
+                    end = min(len(text), m.end() + 40)
+                    all_matches.append(
+                        {
+                            "source": source_name,
+                            "pattern": description,
+                            "snippet": text[start:end],
+                        }
+                    )
+                    if len(all_matches) >= 50:
+                        break
+                if len(all_matches) >= 50:
+                    break
+        if not all_matches:
+            lines = [f"Scanned {len(sources)} script source(s) (inline + external), no dangerous patterns matched."]
+        else:
+            lines = [f"Scanned {len(sources)} script source(s), {len(all_matches)} finding(s):"]
+            for m in all_matches[:30]:
+                lines.append(f"  - [{m['source']}] {m['pattern']}: ...{m['snippet']}...")
+        return "\n".join(lines), {"matches": all_matches, "sources_scanned": len(sources)}
+
+    async def _call_chrome_pentest_wrapper(
+        self, tool_name: str, args: dict
+    ) -> tuple[str, dict[str, Any] | None]:
+        impl = {
+            "chrome_pentest_headers": self._pentest_headers_impl,
+            "chrome_pentest_http": self._pentest_http_impl,
+            "chrome_pentest_cookies": self._pentest_cookies_impl,
+            "chrome_pentest_js_analyze": self._pentest_js_analyze_impl,
+        }[tool_name]
+        return await impl(args)
 
     async def _call_burp(self, tool_name: str, args: dict) -> tuple[str, dict[str, Any] | None]:
         """Execute a Burp Suite tool call."""
