@@ -1032,6 +1032,53 @@ class MCPLifecycleManager(ProbeMixin):
                         "required": ["url"],
                     },
                 },
+                {
+                    "name": "stealth_fetch",
+                    "description": (
+                        "Like fetch, but through a realistic-browser HTTP channel intended to test "
+                        "WAF/anti-bot/DPI detection efficacy: real Chrome/Firefox/Safari TLS fingerprint "
+                        "(curl_cffi impersonation), matching header set/order and Client Hints, human-like "
+                        "timing jitter, and an adaptive circuit breaker that backs off and reports its own "
+                        "threat-level read after repeated 403/429/503 rather than hammering through. "
+                        "Ported from the AI Karmous project's human_mimicry engine (see vulnclaw/stealth/). "
+                        "Same scope/SSRF gate as fetch -- realistic evasion does not exempt a call from "
+                        "being in-scope for the authorized test. Use this specifically to evaluate whether "
+                        "a target's bot-detection/WAF can tell realistic traffic from the plain fetch tool, "
+                        "not as a default replacement for fetch."
+                    ),
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "HTTP/HTTPS URL to request"},
+                            "method": {
+                                "type": "string",
+                                "description": "HTTP method: GET, POST, PUT, HEAD",
+                                "default": "GET",
+                            },
+                            "headers": {"type": "object", "description": "Additional HTTP request headers"},
+                            "data": {
+                                "type": "string",
+                                "description": "Raw request body for POST/PUT",
+                            },
+                            "timeout": {
+                                "type": "number",
+                                "description": "Request timeout seconds, default 30",
+                            },
+                            "browser": {
+                                "type": "string",
+                                "description": "Browser family to impersonate: chrome, firefox, safari, edge. Default chrome.",
+                            },
+                            "proxy": {
+                                "type": "string",
+                                "description": (
+                                    "Optional SOCKS5/HTTP proxy, e.g. socks5://127.0.0.1:9050 (Tor) or "
+                                    "http://proxy:8080 -- for IP hiding, not identity/scope evasion."
+                                ),
+                            },
+                        },
+                        "required": ["url"],
+                    },
+                },
             ],
             "memory": [
                 {
@@ -1392,6 +1439,22 @@ class MCPLifecycleManager(ProbeMixin):
                     content=content,
                     structured_content=None,
                 )
+            if server_name == "fetch" and tool_name == "stealth_fetch":
+                violation = self._check_fetch_constraints(arguments)
+                if violation is not None:
+                    self.registry.record_tool_call(server_name, success=False)
+                    return violation
+                content = await self._call_stealth_fetch(arguments)
+                self.registry.record_tool_call(server_name, success=True)
+                self.registry.set_server_health(server_name, "healthy")
+                return self._tool_result(
+                    ok=True,
+                    server=server_name,
+                    tool=tool_name,
+                    execution_mode=mode,
+                    content=content,
+                    structured_content=None,
+                )
             if server_name == "memory":
                 content = await self._call_memory(tool_name, arguments)
                 self.registry.record_tool_call(server_name, success=True)
@@ -1723,6 +1786,98 @@ class MCPLifecycleManager(ProbeMixin):
                     rendered_json = f"{rendered_json[:json_limit]}..."
                 lines.append(f"JSON: {rendered_json}")
         return "\n".join(lines)
+
+    def _stealth_pair(self, family: Any) -> tuple[Any, Any]:
+        """Return the cached (HumanMimicryClient, StealthManager) pair for a
+        browser family, building one on first use. Cached per-family (not
+        per-call) so identity-rotation cadence and the circuit breaker's
+        failure count are meaningful across a session -- a fresh client on
+        every call would reset both every time."""
+        from vulnclaw.stealth import HumanMimicryClient, StealthManager
+
+        cache = getattr(self, "_stealth_pairs", None)
+        if cache is None:
+            cache = {}
+            self._stealth_pairs = cache
+        key = getattr(family, "value", str(family))
+        if key not in cache:
+            cache[key] = (HumanMimicryClient(family=family), StealthManager())
+        return cache[key]
+
+    async def _call_stealth_fetch(self, args: dict) -> str:
+        """Execute a request through the human-mimicry stealth channel
+        (vulnclaw/stealth/, ported from the AI Karmous project) instead of
+        plain httpx. HumanMimicryClient/StealthManager are synchronous, so
+        the actual request runs in a thread executor."""
+        try:
+            from vulnclaw.stealth import BrowserFamily
+        except ImportError as exc:
+            return f"[!] stealth_fetch unavailable, missing dependency: {exc}"
+
+        url = str(args.get("url", "") or "").strip()
+        if not url:
+            return "[!] stealth_fetch requires url"
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return "[!] stealth_fetch only supports absolute http/https URLs"
+
+        method = str(args.get("method", "GET") or "GET").strip().upper()
+        headers = args.get("headers") if isinstance(args.get("headers"), dict) else None
+        data = args.get("data")
+
+        try:
+            timeout_s = int(args.get("timeout") or 30)
+        except (TypeError, ValueError):
+            timeout_s = 30
+        timeout_s = max(1, min(timeout_s, 120))
+
+        family_map = {
+            "chrome": BrowserFamily.CHROME,
+            "firefox": BrowserFamily.FIREFOX,
+            "safari": BrowserFamily.SAFARI,
+            "edge": BrowserFamily.EDGE,
+        }
+        browser_name = str(args.get("browser", "chrome") or "chrome").strip().lower()
+        family = family_map.get(browser_name, BrowserFamily.CHROME)
+
+        client, stealth_mgr = self._stealth_pair(family)
+
+        proxy = str(args.get("proxy", "") or "").strip()
+        if proxy:
+            client.set_proxy(proxy)
+
+        layers = stealth_mgr.pre_request()
+
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(
+                None,
+                lambda: client.request(method, url, data=data, headers=headers, timeout=timeout_s),
+            )
+        except Exception as exc:
+            stealth_mgr.post_request(success=False)
+            return f"[!] stealth_fetch failed: {exc}"
+
+        response = result.response
+        if response is None:
+            stealth_mgr.post_request(success=False)
+            return f"[!] stealth_fetch failed: {result.error or 'no response from transport'}"
+
+        stealth_mgr.post_request(success=response.status < 400, status_code=response.status)
+
+        body = response.body
+        body_text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
+
+        return "\n".join([
+            f"Request: {method} {url}",
+            f"Transport: {client.transport_name} (impersonating {family.value})",
+            f"Pre-request stealth layers: {layers}",
+            f"Status: {response.status}",
+            f"Headers: {response.headers}",
+            f"Stealth state after this request: {stealth_mgr.state}",
+            "Body:",
+            body_text,
+        ])
 
     async def _call_memory(self, tool_name: str, args: dict) -> str:
         """Execute a memory tool call (local implementation)."""

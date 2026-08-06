@@ -69,6 +69,13 @@ traffic = [
     "mitmproxy>=10.0",
     "playwright>=1.40",
 ]
+stealth = [
+    # Optional: real TLS fingerprint impersonation (curl_cffi) for the
+    # stealth_fetch tool (vulnclaw/stealth/). Without it, stealth_fetch still
+    # works via AutoTransport's stdlib fallback (~70% mimicry -- realistic
+    # headers/timing/ordering, but no TLS/JA3 impersonation).
+    "curl_cffi>=0.7",
+]
 
 [project.urls]
 Homepage = "https://github.com/Unclecheng-li/VulnClaw"
