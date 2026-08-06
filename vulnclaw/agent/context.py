@@ -15,6 +15,7 @@ from pydantic import AliasChoices, BaseModel, Field, PrivateAttr
 
 from vulnclaw.agent.agent_state import AgentState
 from vulnclaw.agent.reasoning_state import ReasoningState
+from vulnclaw.config.secret_redaction import redact_secrets
 
 # ──────────────────────────────────────────────────────────────
 # 叶子类型已提取到 config/domain_models.py，此处重新导出以保持兼容。
@@ -1019,6 +1020,15 @@ class SessionState(BaseModel):
             data = self._checkpoint_transform(self, data)
         data["executed_steps"] = self.executed_steps
         content = json.dumps(data, ensure_ascii=False, indent=2)
+        # 修改者: security-hardening pass (plaintext credential persistence fix)
+        # 修改原因: this session dump includes raw tool call arguments/results
+        # verbatim -- a captured Authorization header, Set-Cookie, or a
+        # brute_force_login success carries a real, reusable credential for
+        # the target straight onto disk with zero redaction. Applied once
+        # here (not per-field) so it covers wherever a secret ended up in
+        # this deeply nested, varied structure -- see
+        # config/secret_redaction.py for the exact patterns and their limits.
+        content = redact_secrets(content)
 
         content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()
         if content_hash == self._content_hash:

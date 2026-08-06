@@ -512,8 +512,22 @@ def generate_report(
         report_content += "\n\n" + _render_target_state_context(target_state_context)
 
     if report_format.lower() == "html":
+        # 修改者: security-hardening pass (self-XSS in HTML report fix)
+        # 修改原因: this template used to render with Jinja2's default
+        # autoescape=False. report_content is built from finding evidence/PoC
+        # text verbatim -- for an XSS finding, that text *is* something like
+        # "<script>alert(1)</script>" by construction, since documenting the
+        # payload is the whole point of the finding. Rendered unescaped, that
+        # payload executes the moment the operator (or anyone they share the
+        # report with) opens their own report in a browser -- <pre> only
+        # affects whitespace display, it does not stop the browser from
+        # parsing tags inside it. autoescape=True makes Jinja2 HTML-escape
+        # `content` (and any other future variables in this template)
+        # automatically; the escaped text is still fully readable, it just
+        # can no longer execute as markup.
         html_content = Template(
-            """<!doctype html><html><head><meta charset="utf-8"><title>VulnClaw Report</title></head><body><pre>{{ content }}</pre></body></html>"""
+            """<!doctype html><html><head><meta charset="utf-8"><title>VulnClaw Report</title></head><body><pre>{{ content }}</pre></body></html>""",
+            autoescape=True,
         ).render(content=report_content)
         output = output.with_suffix(".html") if output.suffix.lower() != ".html" else output
         output.write_text(html_content, encoding="utf-8")

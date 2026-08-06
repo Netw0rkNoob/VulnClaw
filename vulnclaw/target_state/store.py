@@ -14,8 +14,9 @@ from typing import Any, Optional
 # 修改原因: 消除 V3 违规 — 叶子类型已移至 config/domain_models.py。
 from vulnclaw.agent.context import SessionState
 from vulnclaw.config.domain_models import PentestPhase
+from vulnclaw.config.secret_redaction import redact_secrets
 from vulnclaw.config.settings import TARGETS_DIR, ensure_dirs
-from vulnclaw.run_context import RunContext, atomic_write_json
+from vulnclaw.run_context import RunContext, atomic_write_json, atomic_write_text
 from vulnclaw.target_state.planner import (
     build_resume_plan,
     compute_finding_confidence,
@@ -275,8 +276,17 @@ def save_target_state(
     else:
         snapshots = _snapshot_dir(model.raw)
     snapshots.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(path, raw)
-    atomic_write_json(snapshots / f"{snapshot_id}.json", raw)
+    # 修改者: security-hardening pass (plaintext credential persistence fix)
+    # 修改原因: `raw` carries the full session (tool call args/results
+    # verbatim) into a *second* on-disk location beyond SessionState.save()'s
+    # own file -- same redaction, applied once here via atomic_write_text
+    # instead of atomic_write_json so the generic JSON-writing helper (used
+    # elsewhere for things like config files that may legitimately need
+    # their own keys preserved) doesn't get redaction behavior forced onto
+    # every caller.
+    redacted_content = redact_secrets(json.dumps(raw, ensure_ascii=False, indent=2))
+    atomic_write_text(path, redacted_content)
+    atomic_write_text(snapshots / f"{snapshot_id}.json", redacted_content)
 
     if run_context is not None:
         atomic_write_json(run_context.target_json_path(model), model.to_manifest())
