@@ -29,7 +29,21 @@ https://github.com/ChromeDevTools/chrome-devtools-mcp
 
 ### 安装
 
-无需手动安装，VulnClaw 配置中已使用 `npx -y chrome-devtools-mcp@latest` 自动拉取。
+VulnClaw 配置默认使用 `npx -y chrome-devtools-mcp@latest` 自动拉取，无需手动安装 —— 但**强烈建议改为本地固定版本安装**：
+
+```bash
+npm install -g chrome-devtools-mcp@1.6.0
+which chrome-devtools-mcp   # 记录这个绝对路径，下面配置要用
+```
+
+> **为什么不要用 `npx -y ...@latest`**：VulnClaw 的启动探测逻辑（`_is_deferred_package_command`）会
+> 主动跳过对 `npx`/`pnpx`/`bunx` 命令的真实探测，以避免健康检查触发不必要的包下载。跳过探测的后果是
+> attach 会退化为 `mode=placeholder`，此时暴露给模型的工具名来自 VulnClaw 内部一份**手写的猜测列表**
+> （`chrome_navigate`、`chrome_javascript` 等），而不是通过 MCP 协议真正发现的服务器实际工具名
+> （`navigate_page`、`evaluate_script` 等）——这份猜测列表与 chrome-devtools-mcp 1.6.0 的真实 API
+> 完全不匹配，导致 13 个工具里有 8 个（包括执行 JavaScript 的那个）每次调用都会失败，报
+> `Tool X not found`。改为本地固定版本安装后，`command` 不再是 `npx`，探测跳过逻辑不再触发，
+> VulnClaw 会做真实的 MCP 协议探测，正确发现并暴露服务器的真实工具集（29 个，而非 13 个占位符）。
 
 ### 启动 Chrome 远程调试
 
@@ -62,12 +76,13 @@ mcp:
       enabled: true
       transport:
         type: stdio
-        command: npx
+        command: /usr/local/bin/chrome-devtools-mcp   # 上面 `which` 输出的绝对路径
         args:
-          - "-y"
-          - "chrome-devtools-mcp@latest"
           - "--browser-url=http://127.0.0.1:9222"
 ```
+
+如果暂时不想本地安装，仍可以用旧的 `npx -y chrome-devtools-mcp@latest` 写法 —— 只是会退化为
+`mode=placeholder`，只有 4 个专用渗透测试工具（`chrome_pentest_*`）能用，其余通用浏览器工具会失败。
 
 可以通过 CLI 启用 Chrome DevTools MCP：
 

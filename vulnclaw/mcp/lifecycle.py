@@ -61,6 +61,52 @@ _CHROME_PENTEST_TOOL_NAMES = frozenset(
     }
 )
 
+# 修改者: security-hardening pass (browser JS fix)
+# 修改原因: chrome-devtools used to attach in "placeholder" mode (the npx
+# startup probe is deliberately skipped for package-manager commands, see
+# _is_deferred_package_command), so _register_known_tools's static KNOWN_TOOLS
+# fallback list was the ONLY thing exposing these 4 synthetic pentest tools —
+# and that same fallback list also exposed 8 OTHER tool names
+# (chrome_navigate/chrome_javascript/etc.) that never matched anything the
+# real chrome-devtools-mcp server understands, so every call to them failed
+# with "Tool X not found". Fixed by installing chrome-devtools-mcp locally
+# and pinned (not via ephemeral `npx -y ...@latest`) so the real stdio attach
+# succeeds and the SDK discovers the server's *actual* tool names via the MCP
+# protocol instead of a hand-written guess list. That fix alone would have
+# silently dropped these 4 pentest tools, though: _register_known_tools (the
+# only thing that ever registered them) is skipped once attach succeeds. This
+# constant lets _start_server register them unconditionally, additively,
+# regardless of whether the underlying attach used real discovery or the
+# placeholder fallback.
+_CHROME_PENTEST_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "name": "chrome_pentest_http",
+        "description": "Analyze HTTP security: CORS, CSP, HSTS, cookie flags, security headers",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"url": {"type": "string", "description": "URL to analyze"}},
+        },
+    },
+    {
+        "name": "chrome_pentest_js_analyze",
+        "description": "Analyze JavaScript for security issues: eval, innerHTML, postMessage, secrets",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "chrome_pentest_cookies",
+        "description": "Analyze cookies for security: HttpOnly, Secure, SameSite flags",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "chrome_pentest_headers",
+        "description": "Check HTTP response security headers",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"url": {"type": "string", "description": "URL to check"}},
+        },
+    },
+]
+
 _BENIGN_SHUTDOWN_KEYWORDS = (
     "cancel scope",
     "generator didn't stop",
@@ -349,6 +395,8 @@ class MCPLifecycleManager(ProbeMixin):
             )
             if not attached:
                 self._register_known_tools(name)
+            if name == "chrome-devtools":
+                self._register_chrome_pentest_tools()
             return True
 
         if transport.type in SSE_TRANSPORT_TYPES:
@@ -455,6 +503,17 @@ class MCPLifecycleManager(ProbeMixin):
             public_tool = dict(tool)
             public_tool["name"] = public_name
             self.registry.register_tool(server_name, public_tool)
+
+    def _register_chrome_pentest_tools(self) -> None:
+        """Additively register the 4 synthetic chrome_pentest_* tools.
+
+        Unlike _register_runtime_tools, this does NOT clear existing
+        registrations first -- it must be safe to call after a successful
+        real-discovery attach (which already populated the server's actual
+        tools) without wiping them out.
+        """
+        for schema in _CHROME_PENTEST_TOOL_SCHEMAS:
+            self.registry.register_tool("chrome-devtools", schema)
 
     def _public_runtime_tool_name(self, server_name: str, runtime_name: str) -> str:
         """Return the project-facing name for a discovered runtime MCP tool."""
