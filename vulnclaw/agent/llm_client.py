@@ -37,6 +37,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 from vulnclaw.agent.context_budget import prepare_context  # noqa: E402
+from vulnclaw.agent.cost_budget import (  # noqa: E402
+    SessionCostExceeded,
+    check_and_accumulate_cost,
+)
 from vulnclaw.agent.token_counter import (  # noqa: E402
     estimate_tokens,
     group_tool_exchanges,
@@ -510,6 +514,19 @@ async def _call_with_persistent_retries_unbudgeted(
 async def _call_with_persistent_retries(
     agent: AgentContext, request_fn, stage_label: str, max_retries: int = 20
 ) -> tuple[Any, int]:
+    """Note: the subagent-scoped token budget above (reserve/settle) and the
+    session-wide USD cost ceiling below are two independent, complementary
+    checks -- the former bounds a sub-agent's own token allotment, the latter
+    bounds real dollar spend for the whole session (main agent included,
+    which the subagent budget never covers -- see is_subagent() in
+    subagent/budget.py). Checked once per call, before issuing it, mirroring
+    how solve_max_steps already gates once per round rather than mid-call.
+    """
+    safety = getattr(getattr(agent, "config", None), "safety", None)
+    limit_usd = float(getattr(safety, "max_session_cost_usd", 0.0) or 0.0)
+    if limit_usd > 0 and float(getattr(agent, "session_cost_usd", 0.0) or 0.0) > limit_usd:
+        raise SessionCostExceeded(float(agent.session_cost_usd), limit_usd)
+
     admission = _reserve_subagent_llm_request(agent)
     try:
         response, retries = await _call_with_persistent_retries_unbudgeted(
@@ -518,6 +535,14 @@ async def _call_with_persistent_retries(
         actual_tokens = _record_subagent_llm_usage(agent, response)
         _settle_subagent_llm_admission(agent, admission, actual_tokens)
         admission = None
+        try:
+            check_and_accumulate_cost(agent, response)
+        except SessionCostExceeded:
+            # This call's tokens are already spent -- returning the response
+            # it paid for doesn't cost anything further. The pre-check above
+            # stops the *next* call once session_cost_usd (just updated) is
+            # past the ceiling.
+            pass
         return response, retries
     finally:
         if admission is not None:

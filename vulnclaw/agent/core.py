@@ -80,6 +80,12 @@ class AgentCore:
         # Failover key pool: prefer llm.api_keys, else the single llm.api_key.
         self._key_pool = config.llm.key_pool()
         self._key_index = 0
+        # Cumulative estimated USD spend for the lifetime of this AgentCore
+        # instance (i.e. one CLI process/session) -- see cost_budget.py.
+        # Deliberately NOT reset by apply_config or _reset_runtime_state: a
+        # config reload or a fresh chat turn mid-session must not zero out
+        # money already spent.
+        self.session_cost_usd: float = 0.0
         self.runtime = RuntimeState()
         self._reset_runtime_state()
         # Optional KB retriever — lazily initialized on first use

@@ -302,6 +302,21 @@ class SafetyConfig(BaseModel):
         description="Max number of tool calls executed concurrently per round (1=serial)",
     )
 
+    # ── Real dollar cost ceiling, independent of step count ─────────────
+    # session.solve_max_steps bounds *how many rounds* a solve loop may run,
+    # not what those rounds cost -- 240 rounds of cheap short completions and
+    # 240 rounds of reasoning_effort=high on an expensive model are very
+    # different dollar amounts, and nothing stopped the latter before this.
+    max_session_cost_usd: float = Field(
+        default=0.0,
+        description=(
+            "Hard USD ceiling on estimated LLM spend for one session, independent of "
+            "solve_max_steps. 0 = disabled (no cost ceiling). Cost is approximated from "
+            "actual token usage x a built-in per-model price table (see agent/cost_budget.py) "
+            "-- close enough to catch a runaway loop, not a billing reconciliation tool."
+        ),
+    )
+
 
 class SessionConfig(BaseModel):
     """Session / output configuration."""
