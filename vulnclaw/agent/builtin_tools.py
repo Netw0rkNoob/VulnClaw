@@ -501,7 +501,6 @@ async def execute_shell_command(agent: AgentContext, args: dict[str, Any]) -> st
     max_output_chars = int(args.get("max_output_chars") or 0)
     shell_name = str(args.get("shell") or "")
     argv = _shell_argv(command, shell_name)
-    use_shell = os.name != "nt"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     started = time.perf_counter()
     safety = getattr(agent.config, "safety", None)
@@ -545,14 +544,26 @@ async def execute_shell_command(agent: AgentContext, args: dict[str, Any]) -> st
             return raw_output[:clip] + "\n...[truncated by max_output_chars]...\n" + raw_output[-clip:]
         return raw_output
 
+    # Normalize to an explicit argv list even on POSIX (where `shell=True`
+    # would otherwise implicitly do this same `/bin/sh -c command` internally)
+    # so a cgroup wrapper (a real executable + its own args) can be prefixed
+    # in front of it -- `shell=True` and a systemd-run prefix don't compose.
+    if isinstance(argv, str):
+        base_argv: list[str] = ["/bin/sh", "-c", argv]
+    else:
+        base_argv = argv
+    from vulnclaw.agent.cgroup_exec import wrap_argv_for_cgroup
+
+    final_argv = wrap_argv_for_cgroup(base_argv, safety=safety, label="shell")
+
     try:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None,
             lambda: subprocess.run(
-                argv,
+                final_argv,
                 cwd=str(workdir),
-                shell=use_shell,
+                shell=False,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -2138,12 +2149,15 @@ async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
         base_env = {"PYTHONIOENCODING": "utf-8"}
         env = {**{k: v for k, v in os.environ.items() if not k.startswith("VULNCLAW_")}, **base_env} if mode == "trusted-local" else base_env
         preexec_fn = _resource_limit_preexec_fn(safety)
+        from vulnclaw.agent.cgroup_exec import wrap_argv_for_cgroup
+
+        final_argv = wrap_argv_for_cgroup([sys.executable, tmp_path], safety=safety, label="python")
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None,
             lambda: subprocess.run(
-                [sys.executable, tmp_path],
+                final_argv,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

@@ -339,6 +339,47 @@ class SafetyConfig(BaseModel):
         description="RLIMIT_NOFILE: max open file descriptors for the child",
     )
 
+    # ── cgroups v2 (systemd-run --user --scope), live-system-aware ──────
+    # A second, stronger confinement layer on the direct-host execution path
+    # (see agent/cgroup_exec.py for the full rationale). Unlike the POSIX
+    # rlimits above, these limits are enforced per-cgroup by the kernel (no
+    # RLIMIT_NPROC-style system-wide-per-UID surprise) and the memory ceiling
+    # is computed against /proc/meminfo's MemAvailable *at call time* — the
+    # whole point being that a call can never be assigned more memory than
+    # the host can actually spare right now, which is what actually prevents
+    # the host from being pushed into swapping/thrashing. Auto-detected and
+    # skipped (falls back to the rlimit-only path) when systemd-run/cgroups
+    # v2 aren't usable on this host — never a hard requirement.
+    resource_limit_dynamic_memory_fraction: float = Field(
+        default=0.5,
+        description=(
+            "Max fraction of *currently available* host memory (from /proc/meminfo's "
+            "MemAvailable, read fresh at call time) a single call may be granted, even if "
+            "resource_limit_max_memory_mb is configured higher. This is what keeps the cap "
+            "honest on a busy host instead of a number chosen once, in advance."
+        ),
+    )
+    resource_limit_min_memory_mb: int = Field(
+        default=64,
+        description="Floor for the dynamic memory cap, so trivial scripts still get a workable minimum",
+    )
+    resource_limit_max_swap_mb: int = Field(
+        default=128,
+        description="MemorySwapMax for the cgroup scope — kept low so a runaway call is OOM-killed "
+        "promptly inside its own cgroup rather than slowly swap-thrashing the whole host",
+    )
+    resource_limit_cpu_quota_percent: int = Field(
+        default=100,
+        description="CPUQuota for the cgroup scope, as % of one core — an absolute ceiling even when "
+        "the host is otherwise idle",
+    )
+    resource_limit_cpu_weight: int = Field(
+        default=50,
+        description="CPUWeight for the cgroup scope (systemd default is 100) — set below default so "
+        "this workload proportionally yields to other real work under contention, adapting "
+        "automatically instead of us guessing a load threshold",
+    )
+
     # ── Opt-in container sandbox ─────────────────────────────────────────
     # When enabled (and Docker is reachable), routes python_execute and/or
     # shell_command through a disposable, network-isolated, capability-
