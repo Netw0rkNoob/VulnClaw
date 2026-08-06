@@ -302,6 +302,70 @@ class SafetyConfig(BaseModel):
         description="Max number of tool calls executed concurrently per round (1=serial)",
     )
 
+    # ── Kernel-enforced resource limits (POSIX rlimits) ─────────────────
+    # Applied to every shell_command/python_execute child process regardless
+    # of python_execute_mode. Source-pattern checks (BLOCKED_PATTERNS, the AST
+    # bypass checker) can never be a complete defense in a Turing-complete
+    # language — these limits are the backstop: even code that slips past
+    # static analysis is still capped by the kernel on CPU time, address
+    # space, process count (fork-bomb protection), and open file descriptors.
+    # No-op on non-POSIX platforms (the `resource` module is Unix-only).
+    resource_limits_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enforce POSIX rlimits (CPU/memory/process-count/fd caps) on every "
+            "shell_command/python_execute child process. No-op on Windows."
+        ),
+    )
+    resource_limit_max_cpu_seconds: int = Field(
+        default=30,
+        description="RLIMIT_CPU: max CPU seconds a shell_command/python_execute child may consume",
+    )
+    resource_limit_max_memory_mb: int = Field(
+        default=512,
+        description="RLIMIT_AS: max address space (MB) a shell_command/python_execute child may map",
+    )
+    resource_limit_max_processes: int = Field(
+        default=32,
+        description=(
+            "RLIMIT_NPROC headroom: how many NEW processes/threads this call may add on top "
+            "of whatever the user's other sessions already have running (fork-bomb cap). "
+            "Not an absolute ceiling — RLIMIT_NPROC is enforced per-UID system-wide on Linux, "
+            "so an absolute cap would fail on a busy host even for one benign thread."
+        ),
+    )
+    resource_limit_max_open_files: int = Field(
+        default=256,
+        description="RLIMIT_NOFILE: max open file descriptors for the child",
+    )
+
+    # ── Opt-in container sandbox ─────────────────────────────────────────
+    # When enabled (and Docker is reachable), routes python_execute and/or
+    # shell_command through a disposable, network-isolated, capability-
+    # dropped container instead of running directly on the host. Off by
+    # default: it changes tool behavior (host CLI tools like nmap/sqlmap are
+    # not present in the sandbox image unless the user supplies one) so it
+    # must be an explicit choice, not a silent default.
+    container_sandbox_mode: str = Field(
+        default="off",
+        description=(
+            "Container isolation for dangerous tools: off, python_execute, "
+            "shell_command, or all. Requires Docker reachable on the host."
+        ),
+    )
+    container_sandbox_image: str = Field(
+        default="python:3.13-slim",
+        description="Docker image used for the container sandbox execution backend",
+    )
+    container_sandbox_network: bool = Field(
+        default=False,
+        description="Allow the sandbox container outbound network access (default: none)",
+    )
+    container_sandbox_memory_mb: int = Field(
+        default=512,
+        description="Memory limit (MB) passed to `docker run --memory` for the sandbox container",
+    )
+
 
 class SessionConfig(BaseModel):
     """Session / output configuration."""

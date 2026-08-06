@@ -71,7 +71,14 @@ def role_allows_tool(role: str | None, tool_name: str) -> bool:
 
 BLOCKED_PATTERNS: list[str] = [
     r"os\.\s*system\s*\(",
+    r"os\.\s*popen[234]?\s*\(",
+    r"os\.\s*posix_spawn[p]?\s*\(",
+    r"os\.\s*spawn[lv][ep]{0,2}\s*\(",
+    r"os\.\s*fork(pty)?\s*\(",
+    r"os\.\s*exec[lv][ep]{0,2}\s*\(",
     r"subprocess\.\s*Popen\s*\(",
+    r"subprocess\.\s*(run|call|check_call|check_output)\s*\(",
+    r"pty\.\s*spawn\s*\(",
     r"shutil\.\s*rmtree\s*\(",
     r"__import__\s*\(\s*['\"]os['\"]",
     r"open\s*\(\s*['\"].*vulnclaw.*config",
@@ -90,7 +97,8 @@ BLOCKED_PATTERNS: list[str] = [
 _DANGEROUS_MODULES = frozenset({
     "os", "subprocess", "shutil", "sys", "socket",
     "http", "urllib", "requests", "ftplib", "smtplib",
-    "pathlib", "importlib",
+    "pathlib", "importlib", "pty", "ctypes", "multiprocessing",
+    "posix", "signal", "resource",
 })
 
 _DANGEROUS_BUILTIN_NAMES = frozenset({
@@ -98,6 +106,34 @@ _DANGEROUS_BUILTIN_NAMES = frozenset({
     "getattr", "setattr", "delattr", "globals", "locals",
     "vars", "dir", "type",
 })
+
+# 修改者: security-hardening pass
+# 修改原因: the old blocklist only matched `subprocess.Popen(` — every other
+# process-spawning entry point on these modules (subprocess.run/call/
+# check_call/check_output, os.system/popen/posix_spawn/spawn*/fork/exec*,
+# pty.spawn) sailed straight through untouched, including in the default
+# "trusted-local" mode where SAFE_MODE_PATTERNS/LAB_MODE_PATTERNS are not
+# applied at all. Enumerate by (module, dangerous-attribute) pair instead of
+# growing an ad-hoc regex list per call spelling — this still cannot catch
+# every theoretical bypass (ctypes.CDLL(...).system(...), raw syscalls via
+# array-of-bytes shellcode, etc.) which is precisely why this check is
+# defense-in-depth layered under the kernel-enforced rlimits in
+# execute_python/execute_shell_command, not the only control.
+_DANGEROUS_MODULE_METHODS: dict[str, frozenset[str]] = {
+    "os": frozenset({
+        "system", "popen", "popen2", "popen3", "popen4",
+        "posix_spawn", "posix_spawnp",
+        "spawnl", "spawnle", "spawnlp", "spawnlpe",
+        "spawnv", "spawnve", "spawnvp", "spawnvpe",
+        "fork", "forkpty",
+        "execl", "execle", "execlp", "execlpe",
+        "execv", "execve", "execvp", "execvpe",
+    }),
+    "subprocess": frozenset({"run", "call", "check_call", "check_output", "Popen"}),
+    "pty": frozenset({"spawn"}),
+    "shutil": frozenset({"rmtree"}),
+    "multiprocessing": frozenset({"Process"}),
+}
 
 
 def _ast_check_sandbox_bypass(code: str) -> str | None:
@@ -109,6 +145,8 @@ def _ast_check_sandbox_bypass(code: str) -> str | None:
     - exec("import os; os.system('id')")
     - getattr(__builtins__, "open")
     - getattr(alias, "attr") where alias is a dangerous module
+    - os.system(...) / subprocess.run(...) / os.popen(...) / pty.spawn(...)
+      and their aliased or `from X import Y` forms
     """
     try:
         tree = ast.parse(code)
@@ -117,11 +155,18 @@ def _ast_check_sandbox_bypass(code: str) -> str | None:
 
     # Pass 1: collect import aliases (import socket as s → s = socket)
     _alias_to_module: dict[str, str] = {}
+    # Pass 1b: collect `from module import attr [as alias]` -> (module, attr)
+    _from_import_to_target: dict[str, tuple[str, str]] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 local_name = alias.asname if alias.asname else alias.name
                 _alias_to_module[local_name] = alias.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            module_root = node.module.split(".")[0]
+            for alias in node.names:
+                local_name = alias.asname if alias.asname else alias.name
+                _from_import_to_target[local_name] = (module_root, alias.name)
 
     def _resolve_name(name: str) -> str | None:
         """Resolve a name to its real module, checking alias map."""
@@ -173,7 +218,22 @@ def _ast_check_sandbox_bypass(code: str) -> str | None:
                         if resolved:
                             return f"getattr on module '{resolved}' detected"
 
-        # 4. __builtins__ direct access
+            # 4. module.dangerous_method(...) — e.g. os.system(, subprocess.run(,
+            #    pty.spawn(, including aliased imports (import os as _o).
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                resolved_module = _resolve_name(func.value.id)
+                if resolved_module and func.attr in _DANGEROUS_MODULE_METHODS.get(
+                    resolved_module, frozenset()
+                ):
+                    return f"{resolved_module}.{func.attr}() detected (process/exec spawn)"
+
+            # 5. bare name from `from subprocess import run` / `from os import system`
+            if isinstance(func, ast.Name) and func.id in _from_import_to_target:
+                module_root, orig_attr = _from_import_to_target[func.id]
+                if orig_attr in _DANGEROUS_MODULE_METHODS.get(module_root, frozenset()):
+                    return f"{module_root}.{orig_attr}() detected via 'from {module_root} import {orig_attr}'"
+
+        # 6. __builtins__ direct access
         if isinstance(node, ast.Attribute) and node.attr == "__builtins__":
             return "__builtins__ access detected"
         if isinstance(node, ast.Name) and node.id == "__builtins__":
@@ -316,6 +376,99 @@ def _validate_command_url_scope(agent: AgentContext, command: str) -> str | None
     return None
 
 
+def _current_uid_task_count() -> int:
+    """Best-effort count of extant processes/threads for our real UID.
+
+    RLIMIT_NPROC is enforced by the Linux kernel as a system-wide count for
+    the calling process's real UID — NOT scoped to this process's own
+    subtree. Setting an absolute small ceiling (e.g. 16) breaks completely
+    benign code (even a single `threading.Thread()`) on any host that
+    already runs many unrelated processes under the same user — verified
+    empirically: this dev machine runs ~220 processes/threads under one UID
+    from unrelated sessions, so a hardcoded cap of 16 made a bare thread
+    start fail with "can't start new thread" despite nothing malicious
+    happening. Sizing the new limit relative to what is already running
+    avoids punishing the sandboxed call for its neighbors' activity.
+    """
+    try:
+        my_uid = os.getuid()
+    except AttributeError:
+        return 0  # Windows; RLIMIT_NPROC is POSIX-only and not applied there.
+
+    total = 0
+    try:
+        proc_entries = os.listdir("/proc")
+    except OSError:
+        return 200  # /proc unavailable (non-Linux POSIX) — generous fallback.
+
+    for entry in proc_entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/status", encoding="utf-8", errors="ignore") as f:
+                threads = 1
+                uid_matches = False
+                for line in f:
+                    if line.startswith("Uid:"):
+                        parts = line.split()
+                        uid_matches = len(parts) > 1 and parts[1] == str(my_uid)
+                    elif line.startswith("Threads:"):
+                        parts = line.split()
+                        threads = int(parts[1]) if len(parts) > 1 else 1
+                if uid_matches:
+                    total += threads
+        except (OSError, ValueError):
+            continue
+    return total or 200
+
+
+def _resource_limit_preexec_fn(safety: Any) -> Any:
+    """Build a preexec_fn applying POSIX rlimits, or None (no-op) when unavailable.
+
+    Runs inside the forked child, before exec(), so the limits are enforced by
+    the kernel for the remaining lifetime of that process — they hold no
+    matter what the child executes, unlike the source-level pattern checks in
+    execute_python which only inspect the code we were told about.
+    """
+    if os.name == "nt" or safety is None:
+        return None
+    if not getattr(safety, "resource_limits_enabled", True):
+        return None
+
+    max_cpu = int(getattr(safety, "resource_limit_max_cpu_seconds", 30) or 30)
+    max_mem_bytes = int(getattr(safety, "resource_limit_max_memory_mb", 512) or 512) * 1024 * 1024
+    max_procs = int(getattr(safety, "resource_limit_max_processes", 16) or 16)
+    max_files = int(getattr(safety, "resource_limit_max_open_files", 256) or 256)
+
+    def _apply() -> None:
+        try:
+            import resource as _resource
+        except ImportError:
+            return
+
+        # RLIMIT_NPROC is a system-wide-per-UID ceiling on Linux, not a
+        # per-subtree one — size it as headroom above what's already
+        # running so unrelated processes under the same user don't cause
+        # this sandboxed call's own first thread/fork to fail immediately.
+        nproc_ceiling = _current_uid_task_count() + max_procs
+
+        for limit, value in (
+            (getattr(_resource, "RLIMIT_CPU", None), (max_cpu, max_cpu)),
+            (getattr(_resource, "RLIMIT_AS", None), (max_mem_bytes, max_mem_bytes)),
+            (getattr(_resource, "RLIMIT_NPROC", None), (nproc_ceiling, nproc_ceiling)),
+            (getattr(_resource, "RLIMIT_NOFILE", None), (max_files, max_files)),
+            (getattr(_resource, "RLIMIT_CORE", None), (0, 0)),
+        ):
+            if limit is None:
+                continue
+            try:
+                _resource.setrlimit(limit, value)
+            except (ValueError, OSError):
+                pass  # platform/container may already cap this lower; skip
+
+    return _apply
+
+
 def _shell_argv(command: str, shell_name: str) -> list[str] | str:
     normalized = (shell_name or "").strip().lower()
     if os.name == "nt":
@@ -351,6 +504,46 @@ async def execute_shell_command(agent: AgentContext, args: dict[str, Any]) -> st
     use_shell = os.name != "nt"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     started = time.perf_counter()
+    safety = getattr(agent.config, "safety", None)
+    preexec_fn = _resource_limit_preexec_fn(safety)
+
+    container_mode = str(getattr(safety, "container_sandbox_mode", "off") or "off").strip().lower()
+    if container_mode in ("shell_command", "all"):
+        from vulnclaw.agent.sandbox import SandboxUnavailableError, run_shell_in_container
+
+        try:
+            sandbox_result = await run_shell_in_container(
+                command, safety=safety, timeout_s=timeout_ms / 1000, workdir=str(workdir)
+            )
+        except SandboxUnavailableError as exc:
+            return f"[!] {exc}"
+
+        elapsed_ms = sandbox_result.elapsed_ms
+        if sandbox_result.timed_out:
+            return (
+                f"[!] shell_command timed out after {timeout_ms}ms (container sandbox)\n"
+                f"Command: {command}\nWorkdir: {workdir}\n"
+                f"Output:\n{sandbox_result.stdout}{sandbox_result.stderr}"
+            )
+        parts = [
+            f"Command: {command}",
+            f"Workdir: {workdir} (container sandbox, read-only mount)",
+            f"Exit code: {sandbox_result.exit_code}",
+            f"Wall time: {elapsed_ms}ms",
+            "Output:",
+        ]
+        output = ""
+        if sandbox_result.stdout:
+            output += sandbox_result.stdout
+        if sandbox_result.stderr:
+            output += ("\n" if output else "") + "[stderr]\n" + sandbox_result.stderr
+        if not output:
+            output = "(no output)"
+        raw_output = "\n".join(parts + [output])
+        if max_output_chars > 0 and len(raw_output) > max_output_chars:
+            clip = max_output_chars // 2
+            return raw_output[:clip] + "\n...[truncated by max_output_chars]...\n" + raw_output[-clip:]
+        return raw_output
 
     try:
         loop = asyncio.get_running_loop()
@@ -366,6 +559,7 @@ async def execute_shell_command(agent: AgentContext, args: dict[str, Any]) -> st
                 errors="replace",
                 timeout=timeout_ms / 1000,
                 env=env,
+                preexec_fn=preexec_fn,
             ),
         )
     except subprocess.TimeoutExpired as exc:
@@ -1877,23 +2071,73 @@ async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
         return f"[!] Sandbox bypass detected: {ast_bypass}"
 
     max_output_chars = getattr(safety, "python_execute_max_output_chars", 0)
+    preamble = (
+        "import sys, json, re, os, base64, hashlib, itertools, collections, datetime, struct, binascii, textwrap\n"
+        "try:\n    import requests\nexcept ImportError:\n    pass\n"
+        "try:\n    from bs4 import BeautifulSoup\nexcept ImportError:\n    pass\n"
+        "try:\n    from Crypto.Cipher import AES\nexcept ImportError:\n    pass\n\n"
+    )
+
+    container_mode = str(getattr(safety, "container_sandbox_mode", "off") or "off").strip().lower()
+    if container_mode in ("python_execute", "all"):
+        from vulnclaw.agent.sandbox import SandboxUnavailableError, run_python_in_container
+
+        try:
+            sandbox_result = await run_python_in_container(
+                code, safety=safety, timeout_s=timeout_seconds, preamble=preamble
+            )
+        except SandboxUnavailableError as exc:
+            _write_python_audit(
+                agent, purpose=purpose, code=code, mode=mode,
+                outcome="blocked", blocked_reason="sandbox_unavailable",
+            )
+            return f"[!] {exc}"
+
+        if sandbox_result.timed_out:
+            agent.runtime.python_timeout_rounds += 1
+            _write_python_audit(agent, purpose=purpose, code=code, mode=mode, outcome="timeout")
+            return f"[!] Python execution timed out after {timeout_seconds} seconds (container sandbox)"
+
+        output_parts: list[str] = []
+        if sandbox_result.stdout:
+            output_parts.append(sandbox_result.stdout)
+        if sandbox_result.stderr:
+            stderr_lines = [
+                line for line in sandbox_result.stderr.splitlines()
+                if "ImportError" not in line and "No module named" not in line
+            ]
+            if stderr_lines:
+                output_parts.append("[stderr]\n" + "\n".join(stderr_lines))
+
+        _write_python_audit(agent, purpose=purpose, code=code, mode=mode, outcome="success")
+        if not output_parts:
+            return f"{warning_prefix}[+] Python executed successfully with no output (container sandbox)"
+
+        output = "\n".join(output_parts)
+        for sig in ["[DONE]", "[COMPLETE]"]:
+            output = output.replace(sig, f"[BLOCKED_{sig[1:-1]}]")
+        display_output = output
+        if max_output_chars > 0 and len(display_output) > max_output_chars:
+            clip = max_output_chars // 2
+            display_output = display_output[:clip] + "\n...[truncated]...\n" + display_output[-clip:]
+        set_raw_tool_output_override(
+            agent, tool="python_execute", arguments=args,
+            output=f"[+] Python execution result ({mode}, container sandbox):\n{output}",
+        )
+        return f"{warning_prefix}[+] Python execution result ({mode}, container sandbox):\n{display_output}"
+
     tmp_path = ""
     try:
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".py", delete=False, encoding="utf-8"
         ) as f:
-            preamble = (
-                "import sys, json, re, os, base64, hashlib, itertools, collections, datetime, struct, binascii, textwrap\n"
-                "try:\n    import requests\nexcept ImportError:\n    pass\n"
-                "try:\n    from bs4 import BeautifulSoup\nexcept ImportError:\n    pass\n"
-                "try:\n    from Crypto.Cipher import AES\nexcept ImportError:\n    pass\n\n"
-            )
             f.write(preamble)
             f.write(code)
             tmp_path = f.name
 
         base_env = {"PYTHONIOENCODING": "utf-8"}
         env = {**{k: v for k, v in os.environ.items() if not k.startswith("VULNCLAW_")}, **base_env} if mode == "trusted-local" else base_env
+        preexec_fn = _resource_limit_preexec_fn(safety)
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
@@ -1907,6 +2151,7 @@ async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
                 timeout=timeout_seconds,
                 cwd=tempfile.gettempdir(),
                 env=env,
+                preexec_fn=preexec_fn,
             ),
         )
 
