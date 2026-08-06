@@ -105,8 +105,20 @@ https://github.com/PortSwigger/mcp-server
 ### 前置条件
 
 - Java（PATH 中可用，`java --version` 验证）
-- Burp Suite Professional（Community 版功能有限）
+- Burp Suite（Community 或 Professional 均可 —— 见下方说明）
 - `jar` 命令可用
+
+> **Community vs Professional**：实测（对照 PortSwigger/mcp-server 源码
+> `Tools.kt`）该扩展仅有一个工具受 Edition 限制——`get_proxy_issues`
+> （`api.burpSuite().version().edition() == PROFESSIONAL` 时才注册，对应
+> Burp Scanner，Community 版本身就没有 Scanner）。抓包/重放/拦截相关的
+> 全部工具（`send_http1_request`、`send_http2_request`、
+> `create_repeater_tab`、`send_to_intruder`、`get_proxy_http_history` 等）
+> 与 Edition 无关，在 Community 版上同样可用。已在 Kali 自带的 Burp Suite
+> Community Edition 上端到端验证：加载扩展、启用 MCP、通过 SSE 发送真实
+> HTTP 请求并在 Burp 自己的 Logger 中确认该请求确实经过了 Burp 的引擎。
+> 因此本文档一直标注的“Community 版功能有限”对本节描述的抓包/重放场景
+> 并不成立——只有想用 Burp Scanner 才需要 Professional。
 
 ### 安装步骤
 
