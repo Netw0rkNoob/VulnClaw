@@ -75,6 +75,12 @@ stealth = [
     # works via AutoTransport's stdlib fallback (~70% mimicry -- realistic
     # headers/timing/ordering, but no TLS/JA3 impersonation).
     "curl_cffi>=0.7",
+    # Optional: decode Content-Encoding: br responses. The client advertises
+    # gzip/deflate support as part of realistic browser mimicry, and some
+    # servers respond with brotli regardless; without this, a brotli response
+    # degrades to returning the raw compressed bytes unchanged rather than
+    # crashing (see transport.py's _maybe_decompress).
+    "brotli>=1.1",
 ]
 
 [project.urls]

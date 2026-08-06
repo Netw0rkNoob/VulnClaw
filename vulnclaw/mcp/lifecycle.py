@@ -1075,6 +1075,10 @@ class MCPLifecycleManager(ProbeMixin):
                                     "http://proxy:8080 -- for IP hiding, not identity/scope evasion."
                                 ),
                             },
+                            "max_body_chars": {
+                                "type": "integer",
+                                "description": "Optional response body character limit; omitted or 0 returns the full body.",
+                            },
                         },
                         "required": ["url"],
                     },
@@ -1792,17 +1796,32 @@ class MCPLifecycleManager(ProbeMixin):
         browser family, building one on first use. Cached per-family (not
         per-call) so identity-rotation cadence and the circuit breaker's
         failure count are meaningful across a session -- a fresh client on
-        every call would reset both every time."""
+        every call would reset both every time.
+
+        Guarded by a plain threading.Lock: this method itself has no
+        `await` in it, so under normal asyncio scheduling on one event loop
+        it cannot actually be preempted mid-check-then-set -- but
+        _call_stealth_fetch's own request runs via run_in_executor (a real
+        OS thread), so a defensive lock here costs nothing and removes any
+        doubt rather than relying on that scheduling guarantee holding.
+        """
+        import threading
         from vulnclaw.stealth import HumanMimicryClient, StealthManager
 
-        cache = getattr(self, "_stealth_pairs", None)
-        if cache is None:
-            cache = {}
-            self._stealth_pairs = cache
-        key = getattr(family, "value", str(family))
-        if key not in cache:
-            cache[key] = (HumanMimicryClient(family=family), StealthManager())
-        return cache[key]
+        lock = getattr(self, "_stealth_pairs_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._stealth_pairs_lock = lock
+
+        with lock:
+            cache = getattr(self, "_stealth_pairs", None)
+            if cache is None:
+                cache = {}
+                self._stealth_pairs = cache
+            key = getattr(family, "value", str(family))
+            if key not in cache:
+                cache[key] = (HumanMimicryClient(family=family), StealthManager())
+            return cache[key]
 
     async def _call_stealth_fetch(self, args: dict) -> str:
         """Execute a request through the human-mimicry stealth channel
@@ -1867,6 +1886,25 @@ class MCPLifecycleManager(ProbeMixin):
 
         body = response.body
         body_text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
+
+        # 修改者: security-hardening pass (stealth_fetch self-audit)
+        # 修改原因: fetch has always had max_body_chars; stealth_fetch didn't,
+        # so a huge response from a target had no display-side cap here even
+        # though fetch's own equivalent tool does. Same caveat as fetch's own
+        # implementation: this truncates the *returned* text after the body
+        # is already fully read by the transport, it does not cap the actual
+        # network read/memory use during the request itself -- matching
+        # fetch's existing behavior exactly, not claiming to exceed it.
+        try:
+            max_body_chars = int(args.get("max_body_chars") or 0)
+        except (TypeError, ValueError):
+            max_body_chars = 0
+        if max_body_chars > 0 and len(body_text) > max_body_chars:
+            clip = max_body_chars // 2
+            body_text = (
+                f"{body_text[:clip]}\n...[truncated by max_body_chars, "
+                f"full length {len(body_text)}]...\n{body_text[-clip:]}"
+            )
 
         return "\n".join([
             f"Request: {method} {url}",

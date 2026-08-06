@@ -31,6 +31,76 @@ except ImportError:
     pass
 
 
+# 修改者: security-hardening pass (VulnClaw integration self-audit)
+# 修改原因: the client advertises `Accept-Encoding: gzip, deflate` as part of
+# realistic browser mimicry (profiles.py) -- so a server is entitled to
+# compress its response, and real ones do. StdlibTransport's urllib-based
+# request() never decompressed anything at all: it handed back the exact
+# wire bytes and TransportResponse.text just UTF-8-decoded them, silently
+# producing garbled binary text for any compressed response while still
+# reporting a normal 200 status -- a false-positive "success" that would
+# badly mislead whoever (human or model) reads the "body". Reproduced
+# against a real target: a `Content-Encoding: br` response came back as
+# unreadable bytes through the stdlib fallback path (which is not a rare
+# corner case -- it is what runs whenever curl_cffi isn't installed, or
+# fails for any reason, e.g. a plain HTTP/1.1-only server not tolerating an
+# HTTP/2-impersonated handshake).
+#
+# Fixed at the single point both transports funnel through
+# (TransportResponse construction) rather than in each transport
+# separately, and made resilient either way: gzip/deflate use the stdlib
+# (zlib/gzip, no new dependency); brotli needs an optional `brotli` package
+# (declared in pyproject.toml's `stealth` extra) and degrades to returning
+# the raw bytes unchanged if it isn't installed, rather than raising --
+# some evidence is better than a crash. If a transport (e.g. curl_cffi) has
+# *already* decompressed the body itself, decompressing again would raise
+# (the bytes are no longer valid gzip/br), which is caught and the
+# already-correct bytes are kept as-is -- safe regardless of which
+# transport handled it.
+def _maybe_decompress(body: bytes, headers: dict[str, str]) -> bytes:
+    if not body:
+        return body
+    encoding = ""
+    for key, value in headers.items():
+        if key.lower() == "content-encoding":
+            encoding = (value or "").strip().lower()
+            break
+    if not encoding or encoding == "identity":
+        return body
+
+    try:
+        if encoding == "gzip":
+            import gzip
+
+            return gzip.decompress(body)
+        if encoding == "deflate":
+            import zlib
+
+            try:
+                return zlib.decompress(body)
+            except zlib.error:
+                # Some servers send raw deflate without the zlib header.
+                return zlib.decompress(body, -zlib.MAX_WBITS)
+        if encoding == "br":
+            try:
+                import brotli
+
+                return brotli.decompress(body)
+            except ImportError:
+                try:
+                    import brotlicffi as brotli  # type: ignore[no-redef]
+
+                    return brotli.decompress(body)
+                except ImportError:
+                    return body  # no brotli decoder available -- return as-is
+    except Exception:
+        # Decompression failed -- most likely because the transport (e.g.
+        # curl_cffi) already decompressed this body itself. Keep the bytes
+        # as received rather than raising.
+        return body
+    return body
+
+
 @dataclass
 class TransportResponse:
     status: int
@@ -38,6 +108,9 @@ class TransportResponse:
     body: bytes
     url: str
     error: str | None = None
+
+    def __post_init__(self) -> None:
+        self.body = _maybe_decompress(self.body, self.headers)
 
     @property
     def text(self) -> str:
