@@ -28,7 +28,7 @@ SKILL_INTENT_MAP: dict[str, list[str]] = {
         "web-security-advanced"
     ],
     "cors|graphql|websocket|oauth|请求走私|jwt|csrf|原型污染": ["web-security-advanced"],
-    "认证漏洞|逻辑漏洞|越权|idor|支付逻辑|文件上传|路径穿越": ["web-security-advanced"],
+    "认证漏洞|逻辑漏洞|越权|idor|支付逻辑|文件上传|路径穿越|authentication flaw|logic flaw|authorization bypass|payment logic|file upload|path traversal": ["web-security-advanced"],
     "ai安全|mcp安全|prompt注入|工具滥用|agent安全|模型安全": ["ai-mcp-security"],
     "ai渗透|大模型安全|llm安全|prompt injection|tool abuse": ["ai-mcp-security"],
     "mcp投毒|skills供应链|角色逃逸|数据泄露|prompt泄漏": ["ai-mcp-security"],
@@ -42,6 +42,7 @@ SKILL_INTENT_MAP: dict[str, list[str]] = {
     # SecKnowledge: practical CTF/SRC/Web+AI security testing knowledge base
     "src|漏洞挖掘|众测|补天|edusrc|cnvd": ["secknowledge-skill"],
     "wooyun|乌云|先知|l1-l4|gaarm|owasp wstg|owasp llm|owasp asi": ["secknowledge-skill"],
+    "bug bounty|vulnerability hunting|bounty|vulnerability hunter|漏洞猎人": ["secknowledge-skill"],
     "实战安全测试|安全测试知识库|web+ai|web ai安全|ai应用安全测试": [
         "secknowledge-skill"
     ],
@@ -71,7 +72,7 @@ SKILL_INTENT_MAP: dict[str, list[str]] = {
     # ── OSINT specialized skill — refined routing ───────────────────
     # osint-recon: Full-dimension recon (OSINT + social engineering)
     # Triggered only when user explicitly mentions social engineering / OSINT / author tracking
-    "社会工程|社工|作者追踪|人物追踪|目标画像|人物画像": ["osint-recon"],
+    "社会工程|社工|作者追踪|人物追踪|目标画像|人物画像|social engineering|person tracking|author tracking|profiling": ["osint-recon"],
     "跨平台|用户名搜索|身份关联|github追踪|bilibili追踪": ["osint-recon"],
     # Full/deep recon — trigger osint-recon for comprehensive 4-dimension collection
     "全面侦察|深度侦察|完整信息收集|全面信息收集|深度收集|搜集基础信息": ["osint-recon"],

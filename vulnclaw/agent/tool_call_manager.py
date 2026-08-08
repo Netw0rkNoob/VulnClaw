@@ -28,6 +28,7 @@ from vulnclaw.agent.subagent.tooling import (
     reserve_tool_call as _reserve_subagent_tool_call,
 )
 from vulnclaw.agent.tool_result_overrides import pop_raw_tool_output_override
+from vulnclaw.i18n import _
 
 if TYPE_CHECKING:
     from vulnclaw.agent.agent_context import AgentContext
@@ -135,11 +136,14 @@ async def handle_tool_calls_with_results(
     skipped_info: list[str] = []
 
     if total_count > dedup_count:
-        skipped_info.append(f"[去重] {total_count - dedup_count} 个重复调用已合并")
+        skipped_info.append(
+            f"[{_('agent.tool.dedup')}] {total_count - dedup_count} {_('agent.tool.dedup_merged')}"
+        )
     if skipped_calls:
         for sc in skipped_calls:
             skipped_info.append(
-                f"[跳过] {sc['func_name']}({str(sc['func_args'])[:100]}) — 本轮已达上限，下轮继续"
+                f"[{_('agent.tool.skip')}] {sc['func_name']}({str(sc['func_args'])[:100]}) "
+                f"{_('agent.tool.skip_reason')}"
             )
 
     # Meta calls mutate task ownership. Execute them first so a spawn and a

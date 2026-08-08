@@ -96,6 +96,9 @@ def test_to_prompt_block_empty_state_returns_empty_string():
 
 
 def test_prompt_block_and_summary_include_state():
+    from vulnclaw.i18n import init_i18n
+
+    init_i18n(lang="zh")  # prompt-block headings are localized; pin Chinese
     state = ReasoningState()
     state.add_fact("server", "nginx", confidence=0.9)
     state.add_constraint("403 on admin", category="auth", severity="blocking")

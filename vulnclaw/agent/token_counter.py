@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from vulnclaw.i18n import current_lang
+
 # Approximate average characters per token for mixed English/Chinese text.
 _CHARS_PER_TOKEN = 4.0
 # Per-message structural overhead (role tokens, message framing).
@@ -17,10 +19,17 @@ _MESSAGE_OVERHEAD = 4
 # Per-tool-call structural overhead (id, type, function wrapper).
 _TOOL_CALL_OVERHEAD = 8
 
-_TRUNCATION_NOTICE = (
-    "[上下文截断] 为控制 token 用量，部分较早的历史消息已被移除，"
-    "仅保留系统提示和最近的对话。"
-)
+def _truncation_notice() -> str:
+    """Return the context-truncation notice in the active UI language."""
+    if current_lang() == "en":
+        return (
+            "[Context truncated] To control token usage, some earlier history was removed; "
+            "only the system prompt and the most recent messages are kept."
+        )
+    return (
+        "[上下文截断] 为控制 token 用量，部分较早的历史消息已被移除，"
+        "仅保留系统提示和最近的对话。"
+    )
 
 
 def _text_tokens(text: str) -> int:
@@ -201,7 +210,7 @@ def truncate_message_groups(
     recent = groups[-min_recent_groups:]
     middle = groups[:-min_recent_groups]
     notice_message = (
-        {"role": "system", "content": notice or _TRUNCATION_NOTICE}
+        {"role": "system", "content": notice or _truncation_notice()}
         if middle
         else None
     )
@@ -262,7 +271,7 @@ def truncate_messages(
         recent_count += len(group)
     recent = [message for group in recent_groups for message in group]
 
-    notice = {"role": "system", "content": _TRUNCATION_NOTICE}
+    notice = {"role": "system", "content": _truncation_notice()}
     base_tokens = estimate_tokens(system_msgs) + estimate_tokens(recent)
     base_tokens += estimate_message_tokens(notice)
 

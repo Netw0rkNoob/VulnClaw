@@ -600,6 +600,7 @@ vulnclaw config set session.show_thinking false  # hide thinking process
 | `session.output_dir` | ./vulnclaw-output | Report output directory |
 | `session.report_format` | markdown | Report format (markdown / html) |
 | `session.poc_language` | python | PoC language (python / bash) |
+| `session.language` | auto | UI language (auto / zh / en), defaults to English |
 | `session.show_thinking` | false | Show LLM reasoning |
 | `session.persistent_rounds_per_cycle` | 100 | Rounds per cycle in persistent mode |
 | `session.persistent_max_cycles` | 10 | Max cycles (0=unlimited) |
@@ -638,6 +639,22 @@ vulnclaw config set session.show_thinking false  # hide thinking process
 Priority: **Environment Variables > Config File > Built-in Defaults**
 
 Config file: `~/.vulnclaw/config.yaml`.
+
+---
+
+## Language
+
+VulnClaw ships with a built-in **English / 中文 (Chinese)** bilingual interface. The default is **English** (`auto` mode falls back to English), so international users never hit a language wall; Chinese is fully preserved and both modes produce identical behavior.
+
+Switch the UI language any of three ways:
+
+| Method | Example |
+|---|---|
+| REPL command | `/language en` or `/language zh` (or `/language auto`) inside the interactive REPL |
+| Environment variable | `VULNCLAW_LANG=zh` / `VULNCLAW_LANG=en` |
+| Config file | `session.language: auto \| zh \| en` in `~/.vulnclaw/config.yaml` |
+
+Everything user-visible follows the current language: CLI/REPL messages and status banners, event stream, solve reports, knowledge-base status, LLM retry/recovery notices, and web dashboard (see Settings > Language). Agent detection keyword tables are bilingual, so English or Chinese task phrasing is classified the same way.
 
 ---
 

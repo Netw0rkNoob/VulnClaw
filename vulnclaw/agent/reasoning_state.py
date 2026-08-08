@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from vulnclaw.i18n import _
+
 
 class ConstraintCategory(str, Enum):
     WAF = "waf"
@@ -256,14 +258,14 @@ class ReasoningState(BaseModel):
     def to_prompt_block(self, max_facts: int = 8, max_paths: int = 5) -> str:
         if not self.facts and not self.constraints and not self.paths:
             return ""
-        lines = ["🧭 当前推理状态"]
+        lines = [_("agent.reasoning.current")]
         if self.facts:
-            lines.append("已知事实（置信度）：")
+            lines.append(_("agent.reasoning.facts"))
             for fact in sorted(self.facts, key=lambda item: item.confidence, reverse=True)[:max_facts]:
                 source = f", source={fact.source}" if fact.source else ""
                 lines.append(f"- {fact.key}={fact.value} (confidence={fact.confidence:.2f}{source})")
         if self.constraints:
-            lines.append("障碍（推理层）：")
+            lines.append(_("agent.reasoning.constraints"))
             severity_order = {
                 ConstraintSeverity.BLOCKING: 0,
                 ConstraintSeverity.HIGH: 1,
@@ -279,7 +281,7 @@ class ReasoningState(BaseModel):
                     f"- [{constraint.category.value}/{constraint.severity.value}] {constraint.description}"
                 )
         if self.paths:
-            lines.append("候选攻击链（按优先级）：")
+            lines.append(_("agent.reasoning.paths"))
             for idx, path in enumerate(sorted(self.paths, key=lambda item: item.priority, reverse=True)[:max_paths]):
                 original_idx = next(
                     (path_idx for path_idx, item in enumerate(self.paths) if item is path),

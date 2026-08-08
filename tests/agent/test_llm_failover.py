@@ -117,6 +117,7 @@ class TestFailover:
 
     async def test_failed_logical_request_charges_conservative_estimate(self, monkeypatch):
         from vulnclaw.agent import llm_client
+        from vulnclaw.i18n import current_lang, init_i18n
 
         agent = FakeAgent(["only"])
         agent._subagent_ctx = SubagentContext(
@@ -131,13 +132,18 @@ class TestFailover:
             return None
 
         monkeypatch.setattr(llm_client.asyncio, "sleep", no_sleep)
-        with pytest.raises(RuntimeError, match="最大重试"):
-            await _call_with_persistent_retries(
-                agent,
-                lambda: (_ for _ in ()).throw(ConnectionError("offline")),
-                "test",
-                max_retries=2,
-            )
+        prev_lang = current_lang()
+        init_i18n(lang="zh")  # error message is localized; pin Chinese
+        try:
+            with pytest.raises(RuntimeError, match="最大重试"):
+                await _call_with_persistent_retries(
+                    agent,
+                    lambda: (_ for _ in ()).throw(ConnectionError("offline")),
+                    "test",
+                    max_retries=2,
+                )
+        finally:
+            init_i18n(lang=prev_lang)
 
         snapshot = agent._subagent_ctx.usage_budget.snapshot()
         assert snapshot["inflight_tokens"] == 0

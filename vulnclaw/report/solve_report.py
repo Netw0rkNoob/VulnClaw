@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from vulnclaw.agent.agent_state import AgentState, clip_text, extract_flags, one_line
+from vulnclaw.i18n import _
 
 _HTTP_PROBE_SECTION_RE = re.compile(
     r"^\[(?P<index>\d+)\]\s+(?P<method>[A-Z]+)\s+(?P<label>.*?)\s+"
@@ -117,17 +118,17 @@ def render_solve_report(state: AgentState) -> str:
     if flags:
         lines.append(f"- Flag / proof: `{flags[0]}`")
 
-    lines.extend(["", "## 1. 解题思路 / 攻击链"])
+    lines.extend(["", _("report.solve.step1")])
     lines.extend(_render_solution_chain(state, sql_facts, key_requests, flags))
 
-    lines.extend(["", "## 2. 关键证据"])
+    lines.extend(["", _("report.solve.step2")])
     if pinned:
         for fact in pinned[:24]:
             lines.append(f"- {fact}")
     else:
         lines.append("- No pinned facts were recorded.")
 
-    lines.extend(["", "## 3. 复现请求包"])
+    lines.extend(["", _("report.solve.step3")])
     if key_requests:
         for index, request in enumerate(key_requests, start=1):
             title = request.label or f"{request.method} {request.url}"
@@ -162,7 +163,7 @@ def render_solve_report(state: AgentState) -> str:
     else:
         lines.append("- No replayable HTTP request was extracted from evidence.")
 
-    lines.extend(["", "## 4. 执行时间线"])
+    lines.extend(["", _("report.solve.step4")])
     if state.steps:
         for step in state.steps:
             tools = ", ".join(step.tool_calls) or "none"
@@ -173,7 +174,7 @@ def render_solve_report(state: AgentState) -> str:
     else:
         lines.append("- No model steps were recorded.")
 
-    lines.extend(["", "## 5. 证据索引"])
+    lines.extend(["", _("report.solve.step5")])
     if state.evidence:
         for item in state.evidence:
             lines.append(

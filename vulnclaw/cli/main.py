@@ -270,7 +270,7 @@ def _repl_switch_language(args: str, agent: Any, config: Any) -> Any:
     init_i18n(lang=lang if lang != "auto" else None, config=config)
     rebuild_translations()
     agent.apply_config(config)
-    console.print(f"[green]✓[/] f{_('cli.language_set_to')} [bold]{lang}[/].")
+    console.print(f"[green]✓[/] {_('cli.language_set_to')} [bold]{lang}[/].")
     return config
 
 
@@ -613,11 +613,11 @@ def _run_repl() -> None:
                                 console.print()
                                 console.print(
                                     Panel(
-                                        f"{'✅ 目标达成' if done else '⊘ 未达成'} — "
+                                        f"{_('cli.goal_achieved') if done else _('cli.goal_not_achieved')} — "
                                         f"steps={agent_state.get('steps', 0)} "
                                         f"evidence={agent_state.get('evidence', 0)} "
                                         f"tools={agent_state.get('tool_calls', 0)}\n"
-                                        f"原因: {agent_state.get('complete_reason') or '仍未达到完成条件'}",
+                                        f"{_('cli.reason')}: {agent_state.get('complete_reason') or _('cli.reason_not_complete')}",
                                         title="Solve",
                                         border_style="green" if done else "yellow",
                                     )
@@ -1213,12 +1213,12 @@ def run(
     orchestrated = asyncio.run(_run())
     if agent_state_holder.get("agent_state"):
         agent_state = agent_state_holder["agent_state"]
-        status = "✅ 目标达成" if agent_state.get("completed") else "⊘ 未达成"
+        status = _("cli.goal_achieved") if agent_state.get("completed") else _("cli.goal_not_achieved")
         console.print(
             f"\n[bold]{status}[/bold] — steps={agent_state.get('steps', 0)} "
             f"evidence={agent_state.get('evidence', 0)} "
             f"tools={agent_state.get('tool_calls', 0)} "
-            f"原因: {agent_state.get('complete_reason') or '仍未达到完成条件'}"
+            f"{_('cli.reason')}: {agent_state.get('complete_reason') or _('cli.reason_not_complete')}"
         )
     else:
         total_findings = orchestrated.summary["findings_count"]
@@ -1272,10 +1272,8 @@ def solve(
         err_console.print("[!] Configure LLM credentials first (api_key or auth_mode).")
         raise typer.Exit(1)
 
-    resolved_goal = goal or "找到 flag / 拿到 shell / 确认并验证高价值漏洞"
-    task_prompt = prompt or (
-        f"对 {target} 进行授权渗透测试。这是明确授权、在范围内的目标。目标(goal)：{resolved_goal}。"
-    )
+    resolved_goal = goal or _("cli.default_goal")
+    task_prompt = prompt or _("cli.task_prompt", target=target, goal=resolved_goal)
     console.print(f"[*] Target: [bold]{target}[/] | Goal: [bold]{resolved_goal}[/]")
 
     on_event = _make_solve_event_printer(console)
@@ -1318,12 +1316,12 @@ def solve(
 
     asyncio.run(_run())
     agent_state = holder.get("agent_state") or {}
-    status = "✅ 目标达成" if agent_state.get("completed") else "⊘ 未达成"
+    status = _("cli.goal_achieved") if agent_state.get("completed") else _("cli.goal_not_achieved")
     console.print(
         f"\n[bold]{status}[/bold] — steps={agent_state.get('steps', 0)} "
         f"evidence={agent_state.get('evidence', 0)} "
         f"tools={agent_state.get('tool_calls', 0)} "
-        f"原因: {agent_state.get('complete_reason') or '仍未达到完成条件'}"
+        f"{_('cli.reason')}: {agent_state.get('complete_reason') or _('cli.reason_not_complete')}"
     )
     if agent_state.get("completed"):
         # ``holder`` stores only the summary for status printing, so generate
@@ -1783,7 +1781,7 @@ def network_scan(
     """运行基于 nmap 的网络扫描，并对薄弱环节进行跟进。"""
     normalized_profile = profile.strip().lower()
     if normalized_profile not in {"adaptive", "fast", "thorough", "stealth"}:
-        err_console.print("[!] profile 必须是以下之一: adaptive, fast, thorough, stealth")
+        err_console.print(f"[!] {_('cli.invalid_profile')}")
         raise typer.Exit(1)
 
     detected_wifi = None

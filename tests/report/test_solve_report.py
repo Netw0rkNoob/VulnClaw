@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from vulnclaw.agent.agent_state import AgentState
+from vulnclaw.i18n import current_lang, init_i18n
 from vulnclaw.report.solve_report import (
     extract_reproduction_requests,
     generate_solve_report,
@@ -75,20 +76,30 @@ def test_extract_reproduction_requests_prefers_flag_response():
 
 
 def test_render_solve_report_contains_replay_and_reasoning():
-    report = render_solve_report(_completed_state())
+    previous_lang = current_lang()
+    init_i18n(lang="zh")  # headings are localized; pin Chinese for this assertion
+    try:
+        report = render_solve_report(_completed_state())
 
-    assert "# VulnClaw Solve Report" in report
-    assert "ctfshow{report-ok}" in report
-    assert "select-waf.php" in report
-    assert "api/?id=" in report
-    assert "Raw HTTP request" in report
-    assert "curl -k -i" in report
-    assert "解题思路" in report
-    assert "Source SQL" in report
+        assert "# VulnClaw Solve Report" in report
+        assert "ctfshow{report-ok}" in report
+        assert "select-waf.php" in report
+        assert "api/?id=" in report
+        assert "Raw HTTP request" in report
+        assert "curl -k -i" in report
+        assert "解题思路" in report
+        assert "Source SQL" in report
+    finally:
+        init_i18n(lang=previous_lang)
 
 
 def test_generate_solve_report_writes_markdown(tmp_path):
-    output = generate_solve_report(_completed_state(), tmp_path / "solve.md")
+    previous_lang = current_lang()
+    init_i18n(lang="zh")  # pin Chinese: "复现请求包" is the localized heading
+    try:
+        output = generate_solve_report(_completed_state(), tmp_path / "solve.md")
+    finally:
+        init_i18n(lang=previous_lang)
 
     assert output == Path(tmp_path / "solve.md")
     assert output.exists()

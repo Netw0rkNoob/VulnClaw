@@ -100,12 +100,19 @@ class TestTruncateMessages:
         assert result[-4:] == msgs[-4:]
 
     def test_inserts_truncation_notice(self):
-        msgs = self._msgs(20)
-        result = truncate_messages(msgs, max_tokens=600)
-        notices = [m for m in result if "上下文截断" in str(m.get("content", ""))]
-        assert len(notices) == 1
-        # Notice sits right after the system prompt
-        assert result[1] is notices[0]
+        from vulnclaw.i18n import current_lang, init_i18n
+
+        previous_lang = current_lang()
+        init_i18n(lang="zh")  # notice text is localized; pin Chinese for the assertion
+        try:
+            msgs = self._msgs(20)
+            result = truncate_messages(msgs, max_tokens=600)
+            notices = [m for m in result if "上下文截断" in str(m.get("content", ""))]
+            assert len(notices) == 1
+            # Notice sits right after the system prompt
+            assert result[1] is notices[0]
+        finally:
+            init_i18n(lang=previous_lang)
 
     def test_result_fits_budget(self):
         msgs = self._msgs(40)

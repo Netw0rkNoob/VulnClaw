@@ -28,6 +28,13 @@ FAILED_ACCESS_PATTERNS = [
     "No route to host",
     "SSL: CERTIFICATE_VERIFY_FAILED",
     "超时",
+    "connection timed out",
+    "connection failed",
+    "cannot access",
+    "access failed",
+    "unreachable",
+    "connection reset",
+    "timed out",
 ]
 
 
@@ -37,19 +44,19 @@ def detect_phase_from_output(output: str) -> Optional[PentestPhase]:
     transitions = [
         (
             PentestPhase.VULN_DISCOVERY,
-            ["进入漏洞发现", "开始漏洞扫描", "漏洞检测", "切换到漏洞发现", "phase: vuln_discovery"],
+            ["进入漏洞发现", "开始漏洞扫描", "漏洞检测", "切换到漏洞发现", "phase: vuln_discovery", "vulnerability discovery", "start vulnerability scan", "scanning for vulnerabilities", "vuln scan", "vulnerability scanning"],
         ),
         (
             PentestPhase.EXPLOITATION,
-            ["进入漏洞利用", "开始利用", "尝试利用", "切换到漏洞利用", "phase: exploitation"],
+            ["进入漏洞利用", "开始利用", "尝试利用", "切换到漏洞利用", "phase: exploitation", "starting exploitation", "begin exploitation", "attempting exploit", "try to exploit", "exploitation phase"],
         ),
         (
             PentestPhase.POST_EXPLOITATION,
-            ["进入后渗透", "内网渗透", "横向移动", "切换到后渗透", "phase: post_exploitation"],
+            ["进入后渗透", "内网渗透", "横向移动", "切换到后渗透", "phase: post_exploitation", "post-exploitation", "lateral movement", "pivot", "privilege escalation"],
         ),
         (
             PentestPhase.REPORTING,
-            ["生成报告", "整理结果", "渗透测试完成", "切换到报告", "phase: reporting"],
+            ["生成报告", "整理结果", "渗透测试完成", "切换到报告", "phase: reporting", "generate report", "write report", "compile results", "pentest complete", "reporting phase"],
         ),
     ]
 
@@ -67,6 +74,10 @@ def is_completion_signal(output: str) -> bool:
         "渗透测试已完成",
         "测试结束",
         "任务完成",
+        "pentest completed",
+        "testing complete",
+        "task completed",
+        "all tasks completed",
     ]
     return any(signal in output for signal in completion_signals)
 

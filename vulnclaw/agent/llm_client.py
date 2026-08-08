@@ -395,6 +395,7 @@ def _is_openai_reasoning_model(provider: str, model: str) -> bool:
 from vulnclaw.config.llm_utils import (  # noqa: E402
     build_chat_completion_kwargs as _build_chat_completion_kwargs_llm,
 )
+from vulnclaw.i18n import _  # noqa: E402
 
 
 def build_chat_completion_kwargs(
@@ -502,9 +503,7 @@ async def _call_with_persistent_retries_unbudgeted(
             )
             await asyncio.sleep(5)
 
-    raise RuntimeError(
-        f"{stage_label} LLM 调用失败：已达到最大重试次数 {max_retries}"
-    )
+    raise RuntimeError(_("agent.llm.max_retries", stage=stage_label, retries=max_retries))
 
 
 async def _call_with_persistent_retries(
@@ -528,7 +527,7 @@ def _prepend_retry_notice(text: str, retry_attempts: int) -> str:
     """Annotate a successful response if retries happened within the same round."""
     if retry_attempts <= 0:
         return text
-    return f"[LLM恢复] 本轮在第 {retry_attempts} 次重连后恢复。\n{text}"
+    return _("agent.llm.recovered", attempts=retry_attempts) + "\n" + text
 
 
 def _format_tool_results_fallback(

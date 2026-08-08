@@ -770,7 +770,7 @@ class TestWebServices:
         import vulnclaw.web.services.task_service as task_service
         from vulnclaw.agent.context import SessionState
         from vulnclaw.config.schema import VulnClawConfig
-        from vulnclaw.i18n import current_lang
+        from vulnclaw.i18n import current_lang, init_i18n
         from vulnclaw.web.schemas import TaskCreateRequest
         from vulnclaw.web.task_manager import WebTaskManager
 
@@ -826,6 +826,9 @@ class TestWebServices:
         request = TaskCreateRequest(command="persistent", target="https://example.com")
         record = manager.create_task(request)
 
+        # Start from a deterministic non-config state (a previously active
+        # language). The service must resolve the config language itself.
+        init_i18n(lang="zh")
         assert current_lang() == "zh"
 
         await task_service._run_task(manager, record.task_id, request)

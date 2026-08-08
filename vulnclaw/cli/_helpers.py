@@ -14,6 +14,7 @@ from rich.text import Text
 
 from vulnclaw import __version__
 from vulnclaw.config.text_utils import format_think_tags, strip_think_tags
+from vulnclaw.i18n import _
 
 console = Console()
 err_console = Console(stderr=True)
@@ -182,7 +183,7 @@ class TerminalStreamSink:
 
     def on_tool_call(self, tool_name: str, args: str) -> None:
         self._console.print()
-        call_text = Text(f"→ 调用工具: {tool_name} ", style="bold cyan")
+        call_text = Text(f"{_('cli.tool_calling')} {tool_name} ", style="bold cyan")
         call_text.append(str(args or "")[:100])
         self._console.print(call_text, soft_wrap=True)
         self._status_printed = False
@@ -200,7 +201,7 @@ class TerminalStreamSink:
                 hint += f"; saved as {evidence_id}, use evidence_search/evidence_view to revisit"
             hint += "]"
             preview = f"{preview}{hint}"
-        _print_styled_plain(self._console, "→ 工具结果: ", preview)
+        _print_styled_plain(self._console, _("cli.tool_result"), preview)
 
     def on_stream_end(self) -> None:
         self._status_printed = False
@@ -256,21 +257,21 @@ def _make_solve_event_printer(target_console: Console) -> Any:
         elif kind == "agent_step":
             target_console.print(f"[cyan]◆ Turn {payload.get('step', '?')}[/cyan]")
         elif kind == "agent_observation":
-            reason = payload.get("reason") or "模型继续自主判断"
-            tools = ", ".join(payload.get("tools") or []) or "无"
+            reason = payload.get("reason") or _("cli.auto_continue")
+            tools = ", ".join(payload.get("tools") or []) or _("cli.none_short")
             evidence = (payload.get("evidence") or "").strip()
-            _print_styled_plain(target_console, "理由: ", str(reason)[:120], style="yellow")
-            _print_styled_plain(target_console, "工具: ", tools, style="magenta")
+            _print_styled_plain(target_console, _("cli.reason"), str(reason)[:120], style="yellow")
+            _print_styled_plain(target_console, _("cli.tools"), tools, style="magenta")
             if evidence:
-                _print_styled_plain(target_console, "发现: ", evidence[:220], style="green")
+                _print_styled_plain(target_console, _("cli.evidence"), evidence[:220], style="green")
         elif kind == "completed":
-            target_console.print("[green]✓ Goal: 目标达成[/green]")
+            target_console.print(f"[green]{_('cli.goal_completed')}[/green]")
         elif kind == "complete_rejected":
-            _print_styled_plain(target_console, "⚠ 拒绝完成: ", str(payload.get("reason", ""))[:90], style="red")
+            _print_styled_plain(target_console, _("cli.complete_rejected"), str(payload.get("reason", ""))[:90], style="red")
         elif kind == "ask_user":
-            _print_styled_plain(target_console, "? 需要用户: ", str(payload.get("question", ""))[:160], style="yellow")
+            _print_styled_plain(target_console, _("cli.ask_user"), str(payload.get("question", ""))[:160], style="yellow")
         elif kind == "no_path":
-            _print_styled_plain(target_console, "⊘ 无可行路径: ", str(payload.get("reason", ""))[:160], style="yellow")
+            _print_styled_plain(target_console, _("cli.no_path"), str(payload.get("reason", ""))[:160], style="yellow")
         elif kind == "error":
             _print_styled_plain(target_console, "error: ", str(payload.get("error", ""))[:160], style="red")
 

@@ -577,6 +577,7 @@ vulnclaw config set session.show_thinking false # 隐藏推理过程
 | `session.output_dir` | ./vulnclaw-output | 报告输出目录 |
 | `session.report_format` | markdown | 报告格式（markdown / html） |
 | `session.poc_language` | python | PoC 生成语言（python / bash） |
+| `session.language` | auto | 界面语言（auto / zh / en），默认英文 |
 | `session.show_thinking` | false | 显示 LLM 推理过程 |
 | `session.persistent_rounds_per_cycle` | 100 | 持续性渗透每周期轮数 |
 | `session.persistent_max_cycles` | 10 | 持续性渗透最大周期数（0=无限） |

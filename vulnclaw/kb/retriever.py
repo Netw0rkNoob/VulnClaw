@@ -199,20 +199,22 @@ class KnowledgeRetriever:
 
     def _init_backend(self) -> None:
         """Pick the retrieval backend and record the resulting status."""
+        from vulnclaw.i18n import _
+
         if CHROMADB_AVAILABLE:
             try:
                 backend = _ChromaRetriever(self.store)
                 if backend.has_data():
                     self._backend = backend
                     self._status = RetrieverStatus.CHROMADB_ACTIVE
-                    self._status_detail = "ChromaDB 语义检索已启用"
+                    self._status_detail = _("kb.status.chroma_enabled")
                     return
                 # ChromaDB present but no data → nothing to disable yet,
                 # keep probing the keyword backend below.
                 logger.info("ChromaDB available but KB corpus is empty")
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("ChromaDB backend init failed, falling back: %s", exc)
-                self._status_detail = f"ChromaDB 初始化失败: {exc}"
+                self._status_detail = _("kb.status.chroma_init_failed", exc=exc)
 
         try:
             keyword = KeywordRetriever(self.store)
@@ -220,22 +222,22 @@ class KnowledgeRetriever:
             logger.warning("Keyword retriever init failed: %s", exc)
             self._backend = None
             self._status = RetrieverStatus.DISABLED
-            self._status_detail = f"关键词检索初始化失败: {exc}"
+            self._status_detail = _("kb.status.keyword_init_failed", exc=exc)
             return
 
         self._backend = keyword
         if keyword.has_data():
             self._status = RetrieverStatus.KEYWORD_FALLBACK
             if not CHROMADB_AVAILABLE:
-                self._status_detail = (
-                    f"chromadb 未安装 ({CHROMADB_IMPORT_ERROR or 'not installed'})，"
-                    "已降级为关键词检索"
+                self._status_detail = _(
+                    "kb.status.chroma_missing",
+                    reason=CHROMADB_IMPORT_ERROR or "not installed",
                 )
             elif not self._status_detail:
-                self._status_detail = "已降级为关键词检索"
+                self._status_detail = _("kb.status.keyword_fallback")
         else:
             self._status = RetrieverStatus.DISABLED
-            self._status_detail = "知识库为空，无可用数据"
+            self._status_detail = _("kb.status.empty")
 
     # ── Status reporting ─────────────────────────────────────────────
 

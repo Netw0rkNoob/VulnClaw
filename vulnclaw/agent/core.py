@@ -47,6 +47,7 @@ from vulnclaw.agent.system_prompt import build_dynamic_system_prompt
 from vulnclaw.agent.tool_call_manager import safe_parse_tool_args
 from vulnclaw.config.schema import VulnClawConfig, resolve_engine
 from vulnclaw.config.settings import make_openai_client
+from vulnclaw.i18n import _
 from vulnclaw.target_state.store import save_target_state
 
 # Optional KB integration — gracefully degrade if KB data is unavailable
@@ -120,14 +121,11 @@ class AgentCore:
         if RetrieverStatus is None:
             return
         if status == RetrieverStatus.CHROMADB_ACTIVE:
-            console.print("[green]✓ 知识库已启用 (ChromaDB)[/green]")
+            console.print(f"[green]{_('agent.kb_enabled')}[/green]")
         elif status == RetrieverStatus.KEYWORD_FALLBACK:
-            console.print(
-                "[yellow]⚠ 知识库已降级为关键词模式 "
-                "(chromadb 未安装，运行 pip install vulnclaw[kb] 启用语义搜索)[/yellow]"
-            )
+            console.print(f"[yellow]{_('agent.kb_fallback')}[/yellow]")
         else:
-            console.print("[red]✗ 知识库已禁用 (无可用数据)[/red]")
+            console.print(f"[red]{_('agent.kb_disabled')}[/red]")
 
     def _maybe_auto_save_session(self) -> None:
         """Persist session state when auto-save is enabled."""

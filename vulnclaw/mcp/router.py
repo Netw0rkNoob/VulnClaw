@@ -11,7 +11,7 @@ from vulnclaw.i18n import _
 
 INTENT_TOOL_MAP: dict[str, list[dict[str, Any]]] = {
     # Browser automation
-    "打开网页|访问url|访问页面|navigate": [
+    "打开网页|访问url|访问页面|navigate|open url|open page|browse": [
         {"tool": "new_page", "server": "chrome-devtools"},
         {"tool": "navigate", "server": "chrome-devtools"},
     ],
@@ -22,12 +22,12 @@ INTENT_TOOL_MAP: dict[str, list[dict[str, Any]]] = {
         {"tool": "evaluate_js", "server": "chrome-devtools"},
     ],
     # HTTP requests
-    "发请求|http请求|fetch|访问接口|调用api": [
+    "发请求|http请求|fetch|访问接口|调用api|send request|make request": [
         {"tool": "fetch", "server": "fetch"},
         {"tool": "send_http1_request", "server": "burp"},
     ],
     # Burp Suite
-    "抓包|查看请求|拦截请求|proxy": [
+    "抓包|查看请求|拦截请求|proxy|view request|intercept requests": [
         {"tool": "get_proxy_http_history", "server": "burp"},
     ],
     "修改数据包|重放|replay|篡改": [

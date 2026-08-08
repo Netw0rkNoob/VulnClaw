@@ -613,7 +613,8 @@ _DESTRUCTIVE_RE = re.compile(
 _AUTHWALL_MARKERS = (
     "请登录", "请先登录", "未登录", "未授权", "无权限", "权限不足", "登录后查看",
     "unauthorized", "access denied", "not logged in", "please log in",
-    "authentication required", "需要登录",
+    "authentication required", "需要登录", "login required", "please sign in",
+    "must be logged in", "forbidden",
 )
 _PASSWORD_FIELD_RE = re.compile(r"""(?i)(?:type|name)\s*=\s*["']password["']""")
 
