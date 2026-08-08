@@ -654,7 +654,7 @@ Switch the UI language any of three ways:
 | Environment variable | `VULNCLAW_LANG=zh` / `VULNCLAW_LANG=en` |
 | Config file | `session.language: auto \| zh \| en` in `~/.vulnclaw/config.yaml` |
 
-Everything user-visible follows the current language: CLI/REPL messages and status banners, event stream, solve reports, knowledge-base status, LLM retry/recovery notices, and web dashboard (see Settings > Language). Agent detection keyword tables are bilingual, so English or Chinese task phrasing is classified the same way.
+Everything user-visible in the CLI follows the current language: REPL messages and status banners, event stream, solve reports, knowledge-base status, and LLM retry/recovery notices. Agent detection keyword tables are bilingual, so English or Chinese task phrasing is classified the same way. (Note: the web dashboard is not yet localized; that's planned separately.)
 
 ---
 

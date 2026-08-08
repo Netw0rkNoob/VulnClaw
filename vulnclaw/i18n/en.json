@@ -554,12 +554,16 @@
   "agent.tool.skip": "Skipped",
   "agent.tool.skip_reason": "— round limit reached; continuing next round",
   "agent.llm.max_retries": "{stage} LLM call failed: reached max retries {retries}",
-  "agent.llm.recovered": "[LLM recovered] Recovered after {attempt} retries this round.",
+  "agent.llm.recovered": "[LLM recovered] Recovered after {attempts} retries this round.",
   "kb.status.chroma_enabled": "ChromaDB semantic retrieval enabled",
   "kb.status.chroma_init_failed": "ChromaDB init failed: {exc}",
   "kb.status.keyword_init_failed": "Keyword retriever init failed: {exc}",
   "kb.status.chroma_missing": "chromadb not installed ({reason}); degraded to keyword retrieval",
   "kb.status.keyword_fallback": "Degraded to keyword retrieval",
   "kb.status.empty": "Knowledge base empty, no usable data",
-  "cli.invalid_profile": "profile must be one of: adaptive, fast, thorough, stealth"
+  "cli.invalid_profile": "profile must be one of: adaptive, fast, thorough, stealth",
+  "cli.kb_active": "✓ Knowledge base enabled (ChromaDB semantic retrieval)",
+  "cli.kb_fallback": "⚠ Knowledge base degraded to keyword mode (chromadb not installed)",
+  "cli.kb_disabled": "✗ Knowledge base disabled (no data available)",
+  "cli.kb_semantic_hint": "Semantic search: run [bold]pip install vulnclaw\\\\[kb][/] to enable ChromaDB"
 }

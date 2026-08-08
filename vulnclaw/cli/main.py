@@ -2648,11 +2648,11 @@ def kb_status() -> None:
     category_summary = ", ".join(f"{cat}={count}" for cat, count in sorted(stats.items()))
 
     if status == RetrieverStatus.CHROMADB_ACTIVE:
-        line = "[green]✓ 知识库已启用 (ChromaDB 语义检索)[/green]"
+        line = f"[green]{_('cli.kb_active')}[/green]"
     elif status == RetrieverStatus.KEYWORD_FALLBACK:
-        line = "[yellow]⚠ 知识库已降级为关键词模式 (chromadb 未安装)[/yellow]"
+        line = f"[yellow]{_('cli.kb_fallback')}[/yellow]"
     else:
-        line = "[red]✗ 知识库已禁用 (无可用数据)[/red]"
+        line = f"[red]{_('cli.kb_disabled')}[/red]"
 
     console.print(
         Panel(
@@ -2660,7 +2660,7 @@ def kb_status() -> None:
             f"Backend: [bold]{status.value}[/]\n"
             f"Detail: {detail or 'n/a'}\n"
             f"Entries: [bold]{total}[/] ({category_summary or 'empty'})\n"
-            f"语义搜索: 运行 [bold]pip install vulnclaw\\[kb][/] 启用 ChromaDB",
+            f"{_('cli.kb_semantic_hint')}",
             title="KB Status",
             border_style="cyan",
         )

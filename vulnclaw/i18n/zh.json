@@ -532,12 +532,16 @@
   "agent.tool.skip": "跳过",
   "agent.tool.skip_reason": "— 本轮已达上限，下轮继续",
   "agent.llm.max_retries": "{stage} LLM 调用失败：已达到最大重试次数 {retries}",
-  "agent.llm.recovered": "[LLM恢复] 本轮在第 {attempt} 次重连后恢复。",
+  "agent.llm.recovered": "[LLM恢复] 本轮在第 {attempts} 次重连后恢复。",
   "kb.status.chroma_enabled": "ChromaDB 语义检索已启用",
   "kb.status.chroma_init_failed": "ChromaDB 初始化失败: {exc}",
   "kb.status.keyword_init_failed": "关键词检索初始化失败: {exc}",
   "kb.status.chroma_missing": "chromadb 未安装 ({reason})，已降级为关键词检索",
   "kb.status.keyword_fallback": "已降级为关键词检索",
   "kb.status.empty": "知识库为空，无可用数据",
-  "cli.invalid_profile": "profile 必须是以下之一: adaptive, fast, thorough, stealth"
+  "cli.invalid_profile": "profile 必须是以下之一: adaptive, fast, thorough, stealth",
+  "cli.kb_active": "✓ 知识库已启用 (ChromaDB 语义检索)",
+  "cli.kb_fallback": "⚠ 知识库已降级为关键词模式 (chromadb 未安装)",
+  "cli.kb_disabled": "✗ 知识库已禁用 (无可用数据)",
+  "cli.kb_semantic_hint": "语义搜索: 运行 [bold]pip install vulnclaw\\\\[kb][/] 启用 ChromaDB"
 }
