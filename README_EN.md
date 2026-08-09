@@ -101,7 +101,7 @@ Suitable for authorized pentests, CTF competitions, security training, and red t
 pip install vulnclaw
 
 # Install from source
-git clone https://github.com/Unclecheng-li/VulnClaw.git
+git clone https://github.com/Netw0rkNoob/VulnClaw.git
 cd VulnClaw
 pip install -e .
 ```

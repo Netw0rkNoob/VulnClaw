@@ -70,9 +70,9 @@ traffic = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Unclecheng-li/VulnClaw"
-Repository = "https://github.com/Unclecheng-li/VulnClaw"
-Issues = "https://github.com/Unclecheng-li/VulnClaw/issues"
+Homepage = "https://github.com/Netw0rkNoob/VulnClaw"
+Repository = "https://github.com/Netw0rkNoob/VulnClaw"
+Issues = "https://github.com/Netw0rkNoob/VulnClaw/issues"
 
 [project.scripts]
 vulnclaw = "vulnclaw.cli.main:app"

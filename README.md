@@ -96,7 +96,7 @@ VulnClaw 自动执行：
 pip install vulnclaw
 
 # 从源码安装
-git clone https://github.com/Unclecheng-li/VulnClaw.git
+git clone https://github.com/Netw0rkNoob/VulnClaw.git
 cd VulnClaw
 pip install -e .
 ```
