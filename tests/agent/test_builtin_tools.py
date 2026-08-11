@@ -463,10 +463,13 @@ class TestBuiltinPythonExecute:
         assert 'action="api.php"' in result
 
     async def test_shell_command_runs_local_verification_and_returns_full_output(self):
+        import shlex
+        import sys
+
         import vulnclaw.agent.builtin_tools as builtin_tools
 
         agent = DummyAgent()
-        command = 'python -c "print(\'SHELL_OK\')"'
+        command = f"{shlex.quote(sys.executable)} -c \"print('SHELL_OK')\""
 
         result = await builtin_tools.execute_mcp_tool(
             agent,
