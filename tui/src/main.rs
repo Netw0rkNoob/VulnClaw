@@ -1,19 +1,7 @@
-mod app;
-mod events;
-mod exec;
-mod prompts;
-mod protocol;
-mod sessions;
-mod skills;
-mod theme;
-mod ui;
-mod views;
-
 use std::io::{self, stdout};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use app::App;
 use crossterm::{
     event::{self, Event, MouseEventKind},
     execute,
@@ -25,8 +13,8 @@ use crossterm::{
 // silently does nothing. Only enable it where it actually helps.
 #[cfg(unix)]
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
-use protocol::AppEvent;
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
+use vulnclaw_tui::{events, ui, App, AppEvent};
 
 fn main() -> io::Result<()> {
     enable_raw_mode()?;
@@ -74,8 +62,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> io::Result
             }
         }
     }
-    // Reap any still-running VulnClaw worker so it cannot outlive the TUI as an
-    // orphan (e.g. if the user quits via Ctrl+C while a command is active).
-    app.stop_worker();
+    // Gracefully stop and reap the one session backend. Task cancellation never
+    // tears this process down; only leaving the TUI does.
+    app.shutdown_backend();
     Ok(())
 }

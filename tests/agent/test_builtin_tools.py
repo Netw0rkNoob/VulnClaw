@@ -463,10 +463,18 @@ class TestBuiltinPythonExecute:
         assert 'action="api.php"' in result
 
     async def test_shell_command_runs_local_verification_and_returns_full_output(self):
+        import sys
+
         import vulnclaw.agent.builtin_tools as builtin_tools
 
         agent = DummyAgent()
-        command = 'python -c "print(\'SHELL_OK\')"'
+        # Use the running interpreter instead of a bare ``python``, which is not
+        # on PATH where the interpreter is installed only as ``python3`` (macOS
+        # default, minimal Linux/Docker). The path is left unquoted so the shell
+        # token is a bare executable, exactly like the previous ``python`` — this
+        # keeps the Windows ``cmd`` command line unchanged in shape (POSIX single
+        # quotes from ``shlex.quote`` break ``cmd``; hosted CI paths have no spaces).
+        command = f"{sys.executable} -c \"print('SHELL_OK')\""
 
         result = await builtin_tools.execute_mcp_tool(
             agent,

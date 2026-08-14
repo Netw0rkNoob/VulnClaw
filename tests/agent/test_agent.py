@@ -1326,6 +1326,16 @@ class TestAgentCore:
         assert "/admin" in constraints.allowed_paths
         assert constraints.strict_mode is True
 
+    def test_extract_task_constraints_parses_cli_style_host_and_path(self):
+        from vulnclaw.agent.input_analysis import extract_task_constraints
+
+        constraints = extract_task_constraints(
+            "Only test host app.example. Only test path /admin."
+        )
+
+        assert constraints.allowed_hosts == ["app.example"]
+        assert constraints.allowed_paths == ["/admin"]
+
     def test_extract_task_constraints_url_with_trailing_dot_in_sentence(self):
         """URL at end of sentence should not capture trailing period as part of host.
 

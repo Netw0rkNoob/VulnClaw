@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import re
@@ -466,7 +467,27 @@ def run_tui(
             file=sys.stderr,
         )
         sys.exit(1)
-    sys.exit(subprocess.call([str(binary)]))
+    state = initial_state or TuiState()
+    draft = build_task_draft(state)
+    bootstrap = {
+        "target": state.target.strip(),
+        "mode": state.mode,
+        "command": draft.command,
+        "only_host": draft.only_host,
+        "only_port": draft.only_port,
+        "only_path": draft.only_path,
+        "blocked_host": draft.blocked_host,
+        "blocked_path": draft.blocked_path,
+        "allow_actions": list(draft.allow_actions),
+        "block_actions": list(draft.block_actions),
+        "resume": draft.resume,
+    }
+    env = os.environ.copy()
+    env["VULNCLAW_PYTHON"] = sys.executable
+    env["VULNCLAW_TUI_BOOTSTRAP"] = json.dumps(
+        bootstrap, ensure_ascii=False, separators=(",", ":")
+    )
+    sys.exit(subprocess.call([str(binary)], env=env))
 
 
 def _find_tui_binary() -> Path | str | None:

@@ -67,3 +67,39 @@ jobs:
           flags: python
           fail_ci_if_error: true
           use_oidc: true
+
+  rust-tui:
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python for fake backend tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust format check
+        working-directory: tui
+        run: cargo fmt -- --check
+
+      - name: Rust Clippy
+        working-directory: tui
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Rust TUI tests
+        working-directory: tui
+        run: cargo test

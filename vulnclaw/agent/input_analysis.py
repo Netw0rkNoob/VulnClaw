@@ -204,13 +204,27 @@ def extract_task_constraints(user_input: str) -> TaskConstraints:
 
     blocked_host_match = re.search(r"blocked host\s+([a-z0-9.-]+)", lowered)
     if blocked_host_match:
-        host = blocked_host_match.group(1).strip()
+        host = blocked_host_match.group(1).strip().rstrip(".")
         if host and host not in constraints.blocked_hosts:
             constraints.blocked_hosts.append(host)
 
+    allowed_host_match = re.search(
+        r"(?:only test host|allowed host)\s+([a-z0-9.-]+)", lowered
+    )
+    if allowed_host_match:
+        host = allowed_host_match.group(1).strip().rstrip(".")
+        if host and host not in constraints.allowed_hosts:
+            constraints.allowed_hosts.append(host)
+
+    allowed_path_match = re.search(r"(?:only test path|allowed path)\s+(/[^\s]+)", lowered)
+    if allowed_path_match:
+        path = allowed_path_match.group(1).rstrip(".,;。").rstrip("/") or "/"
+        if path not in constraints.allowed_paths:
+            constraints.allowed_paths.append(path)
+
     blocked_path_match = re.search(r"blocked path\s+(/[^\s]+)", lowered)
     if blocked_path_match:
-        path = blocked_path_match.group(1).rstrip("/")
+        path = blocked_path_match.group(1).rstrip(".,;。").rstrip("/")
         if path and path not in constraints.blocked_paths:
             constraints.blocked_paths.append(path)
 

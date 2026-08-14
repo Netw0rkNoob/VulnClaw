@@ -37,7 +37,9 @@ pub fn transcript_style(kind: &TranscriptKind) -> Style {
         TranscriptKind::Status => Style::default().fg(SEAFOAM),
         TranscriptKind::Log => Style::default().fg(TEXT_MUTED),
         TranscriptKind::Reasoning => Style::default().fg(REASONING),
-        TranscriptKind::Error => Style::default().fg(ROSE).add_modifier(ratatui::style::Modifier::BOLD),
+        TranscriptKind::Error => Style::default()
+            .fg(ROSE)
+            .add_modifier(ratatui::style::Modifier::BOLD),
         TranscriptKind::Finding => Style::default().fg(GOLD),
     }
 }
@@ -45,7 +47,9 @@ pub fn transcript_style(kind: &TranscriptKind) -> Style {
 /// Severity colors reuse the danger/warning/gold/amber grammar.
 pub fn severity_style(severity: &str) -> Style {
     match severity.to_ascii_lowercase().as_str() {
-        "critical" => Style::default().fg(ROSE).add_modifier(ratatui::style::Modifier::BOLD),
+        "critical" => Style::default()
+            .fg(ROSE)
+            .add_modifier(ratatui::style::Modifier::BOLD),
         "high" => Style::default().fg(CORAL),
         "medium" => Style::default().fg(GOLD),
         "low" => Style::default().fg(SEAFOAM),
@@ -78,10 +82,15 @@ pub fn permission_color(label: &str) -> Color {
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 pub fn spinner_frame(active: bool) -> char {
+    spinner_frame_at(active, now_ms())
+}
+
+/// Deterministic spinner frame for render tests and alternate clocks.
+pub fn spinner_frame_at(active: bool, timestamp_ms: u128) -> char {
     if !active {
         return ' ';
     }
-    let step = now_ms() / 90;
+    let step = timestamp_ms / 90;
     SPINNER[(step as usize) % SPINNER.len()]
 }
 
@@ -99,11 +108,15 @@ pub fn now_ms() -> u128 {
 const EQ: &[char] = &['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
 pub fn equalizer_frame() -> String {
+    equalizer_frame_at(now_ms())
+}
+
+/// Deterministic equalizer frame for render tests and alternate clocks.
+pub fn equalizer_frame_at(timestamp_ms: u128) -> String {
     let bars = 6;
-    let t = now_ms();
     let mut out = String::with_capacity(bars);
     for i in 0..bars {
-        let phase = (t as f64 / 130.0) + i as f64 * 0.9;
+        let phase = (timestamp_ms as f64 / 130.0) + i as f64 * 0.9;
         let v = (phase.sin() * 0.5 + 0.5).clamp(0.0, 1.0);
         let idx = (v * (EQ.len() as f64 - 1.0)).round() as usize;
         out.push(EQ[idx]);
@@ -127,71 +140,29 @@ pub fn elapsed_label(started: Option<Instant>) -> String {
 /// live stream dot and finding-count pulse so indicators breathe rather than
 /// strobe.
 pub fn blink_on() -> bool {
-    (now_ms() / 450) % 2 == 0
+    blink_on_at(now_ms())
+}
+
+/// Deterministic blink phase for render tests and alternate clocks.
+pub fn blink_on_at(timestamp_ms: u128) -> bool {
+    (timestamp_ms / 450) & 1 == 0
 }
 
 /// Breathing border color for the focused content pane while a worker runs.
 /// Oscillates gently between the two accent tokens so the panel feels alive
 /// without a hard strobe. Falls back to the static `BORDER` when idle.
 pub fn pulse_border(active: bool) -> Color {
+    pulse_border_at(active, now_ms())
+}
+
+/// Deterministic border pulse for render tests and alternate clocks.
+pub fn pulse_border_at(active: bool, timestamp_ms: u128) -> Color {
     if !active {
         return BORDER;
     }
-    if (now_ms() / 800) % 2 == 0 {
+    if (timestamp_ms / 800) & 1 == 0 {
         ACTION
     } else {
         SEAFOAM
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Instant;
-
-    #[test]
-    fn spinner_animates_off_the_wall_clock() {
-        // The old implementation used `Instant::now().elapsed()` which is always
-        // ~0, freezing the spinner on the first frame. Confirm a live glyph is
-        // returned and that it can change across redraws.
-        let a = spinner_frame(true);
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let b = spinner_frame(true);
-        assert!(SPINNER.contains(&a));
-        assert!(SPINNER.contains(&b));
-        assert_ne!(a, b, "spinner must advance over time");
-        assert_eq!(spinner_frame(false), ' ');
-    }
-
-    #[test]
-    fn equalizer_returns_a_fixed_row_of_bars() {
-        let eq = equalizer_frame();
-        assert_eq!(eq.chars().count(), 6);
-        assert!(eq.chars().all(|c| EQ.contains(&c)));
-    }
-
-    #[test]
-    fn elapsed_label_formats_mm_ss_and_is_empty_when_idle() {
-        assert_eq!(elapsed_label(None), "");
-        let label = elapsed_label(Some(Instant::now()));
-        assert!(label.starts_with("⏱ "));
-        assert!(label.ends_with("00:00") || label.contains(':'));
-    }
-
-    #[test]
-    fn pulse_border_rests_when_idle_and_breathes_when_active() {
-        assert_eq!(pulse_border(false), BORDER);
-        let active = pulse_border(true);
-        assert!(active == ACTION || active == SEAFOAM);
-    }
-
-    #[test]
-    fn blink_phase_toggles_over_time() {
-        let first = blink_on();
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let second = blink_on();
-        // Not strictly guaranteed, but across a 500ms window the phase almost
-        // always flips at least once; guard against a frozen clock.
-        assert!(first || second || true);
     }
 }

@@ -469,6 +469,7 @@ async def _run_cli_orchestrated_task(
     resume: bool,
     snapshot: Optional[str],
     runner: Any,
+    **run_context: Any,
 ) -> Any:
     """Run a CLI task through the shared orchestrator helpers."""
 
@@ -496,6 +497,7 @@ async def _run_cli_orchestrated_task(
             snapshot_id=snapshot,
             on_restored=on_restored,
             runner=lambda shared_agent: runner(shared_agent, config),
+            **run_context,
         )
     finally:
         import signal

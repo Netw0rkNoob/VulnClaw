@@ -202,6 +202,7 @@ $ vulnclaw --help
    doctor        🏥  检查运行环境
    tui           🖥️  打开终端图形化工作台
    web           🌐 启动本地 Web UI
+   code          🧬 本地源码安全扫描（无需网络目标）
 ```
 
 | 命令 | 说明 | 示例 |
@@ -221,6 +222,7 @@ $ vulnclaw --help
 | `vulnclaw plugins list` | 列出漏洞检测插件 | `vulnclaw plugins list --stage discovery` |
 | `vulnclaw plugins info <id>` | 查看插件元信息 | `vulnclaw plugins info builtin.web.headers` |
 | `vulnclaw plugins run <id>` | 运行插件（仅分析传入数据） | `vulnclaw plugins run builtin.web.headers --input headers.json` |
+| `vulnclaw code scan <path>` | 本地源码安全扫描（L1 正则 / L2 结构 / L3 LLM 可选） | `vulnclaw code scan ./src --format sarif` |
 
 ---
 

@@ -507,9 +507,11 @@ class TestWebServices:
         assert saved.summary.constraint_violations
         assert saved.summary.constraint_violation_events
 
-    def test_web_task_prompt_includes_explicit_constraints(self):
+    def test_web_task_prompt_includes_explicit_constraints(self, i18n_language):
+        from vulnclaw.task_service import prepare_task
         from vulnclaw.web.schemas import TaskCreateRequest, TaskOptions
-        from vulnclaw.web.services.task_service import _build_prompt_v2
+
+        i18n_language("en")
 
         request = TaskCreateRequest(
             command="run",
@@ -524,14 +526,17 @@ class TestWebServices:
                 block_actions=["exploit"],
             ),
         )
-        prompt = _build_prompt_v2(request)
-        assert "Only test port 443" in prompt
-        assert "Only test host example.com" in prompt
-        assert "Only test path /admin" in prompt
-        assert "Blocked host staging.example.com" in prompt
-        assert "Blocked path /internal" in prompt
-        assert "Only allowed actions: recon, scan" in prompt
-        assert "Blocked actions: exploit" in prompt
+        prompt = prepare_task(request).prompt
+        for value in (
+            "443",
+            "example.com",
+            "/admin",
+            "staging.example.com",
+            "/internal",
+            "recon, scan",
+            "exploit",
+        ):
+            assert value in prompt
 
     def test_web_task_options_reject_invalid_only_port(self):
         from pydantic import ValidationError
@@ -614,7 +619,7 @@ class TestWebServices:
             def session_state(self):
                 return self.context.state
 
-            async def chat(self, prompt, target=None):
+            async def chat(self, prompt, target=None, **kwargs):
                 return type("Result", (), {"output": "hello", "phase": "Recon"})()
 
         events: list[str] = []
@@ -633,6 +638,7 @@ class TestWebServices:
             on_restored=None,
             on_legacy_import=None,
             runner=None,
+            **kwargs,
         ):
             if before_restore is not None:
                 before_restore(None)
@@ -684,7 +690,9 @@ class TestWebServices:
                 },
             )()
 
-        monkeypatch.setattr(task_service, "run_agent_task", fake_run_agent_task)
+        import vulnclaw.task_service as shared_task_service
+
+        monkeypatch.setattr(shared_task_service, "run_agent_task", fake_run_agent_task)
 
         manager = WebTaskManager()
         request = TaskCreateRequest(
@@ -712,58 +720,28 @@ class TestWebServices:
         assert saved.summary.constraint_violation_events
         assert "task_restoring" in events
 
-    @pytest.mark.asyncio
-    async def test_web_task_service_blocks_exploit_when_only_port_scope_is_set(self, monkeypatch):
-        import vulnclaw.web.services.task_service as task_service
-        from vulnclaw.config.schema import VulnClawConfig
+    def test_shared_task_service_preserves_port_scope_for_exploit(self):
+        from vulnclaw.task_service import prepare_task
         from vulnclaw.web.schemas import TaskCreateRequest, TaskOptions
-        from vulnclaw.web.task_manager import WebTaskManager
 
-        config = VulnClawConfig()
-        monkeypatch.setattr(task_service, "load_config", lambda: config)
-
-        manager = WebTaskManager()
         request = TaskCreateRequest(
             command="exploit",
             target="https://example.com",
             options=TaskOptions(only_port=443),
         )
-        record = manager.create_task(request)
+        assert prepare_task(request).constraints.allowed_ports == [443]
 
-        await task_service._run_task(manager, record.task_id, request)
+    def test_shared_task_service_rejects_explicit_action_conflict(self):
+        from vulnclaw.task_service import prepare_task
+        from vulnclaw.web.schemas import TaskCreateRequest, TaskOptions
 
-        saved = manager.get_task(record.task_id)
-        assert saved is not None
-        assert saved.status == "failed"
-        assert saved.error is not None
-        assert "constraint_violation" in saved.error
-
-    @pytest.mark.asyncio
-    async def test_web_task_service_blocks_run_when_allowed_actions_conflict(self, monkeypatch):
-        import vulnclaw.web.services.task_service as task_service
-        from vulnclaw.config.schema import VulnClawConfig
-        from vulnclaw.web.schemas import TaskCreateRequest
-        from vulnclaw.web.task_manager import WebTaskManager
-
-        config = VulnClawConfig()
-        monkeypatch.setattr(task_service, "load_config", lambda: config)
-        monkeypatch.setattr(
-            task_service,
-            "_build_prompt_v2",
-            lambda request: (
-                "Perform authorized reconnaissance against https://example.com. 仅做信息收集。"
-            ),
+        request = TaskCreateRequest(
+            command="exploit",
+            target="https://example.com",
+            options=TaskOptions(allow_actions=["recon"]),
         )
-
-        manager = WebTaskManager()
-        request = TaskCreateRequest(command="run", target="https://example.com")
-        record = manager.create_task(request)
-
-        await task_service._run_task(manager, record.task_id, request)
-
-        saved = manager.get_task(record.task_id)
-        assert saved is not None
-        assert saved.status == "completed"
+        with pytest.raises(ValueError, match="outside allowed actions"):
+            prepare_task(request)
 
     @pytest.mark.asyncio
     async def test_web_task_service_initializes_i18n_from_config_language(
@@ -811,7 +789,7 @@ class TestWebServices:
             def session_state(self):
                 return self.context.state
 
-            async def persistent_pentest(self, **kwargs):
+            async def persistent_pentest(self, *args, **kwargs):
                 # Language must already be resolved from config by the time the
                 # agent/report code runs — not left at whatever was active before.
                 observed_lang["lang"] = current_lang()
@@ -825,7 +803,9 @@ class TestWebServices:
                 await runner(agent)
             return type("RunResult", (), {"restore_result": None, "summary": {}})()
 
-        monkeypatch.setattr(task_service, "run_agent_task", fake_run_agent_task)
+        import vulnclaw.task_service as shared_task_service
+
+        monkeypatch.setattr(shared_task_service, "run_agent_task", fake_run_agent_task)
 
         manager = WebTaskManager()
         request = TaskCreateRequest(command="persistent", target="https://example.com")

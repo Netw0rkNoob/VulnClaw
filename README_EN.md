@@ -207,6 +207,7 @@ $ vulnclaw --help
    doctor        🏥  Check runtime environment
    tui           🖥️  Open the terminal UI workbench
    web           🌐 Launch local Web UI
+   code          🧬 Local source-code security scan (no network target)
 ```
 
 | Command | Description | Example |
@@ -226,6 +227,7 @@ $ vulnclaw --help
 | `vulnclaw plugins list` | List vulnerability detection plugins | `vulnclaw plugins list --stage discovery` |
 | `vulnclaw plugins info <id>` | View plugin metadata | `vulnclaw plugins info builtin.web.headers` |
 | `vulnclaw plugins run <id>` | Run plugin (analysis only) | `vulnclaw plugins run builtin.web.headers --input headers.json` |
+| `vulnclaw code scan <path>` | Local source-code security scan (L1 regex / L2 structural / L3 LLM optional) | `vulnclaw code scan ./src --format sarif` |
 
 ---
 

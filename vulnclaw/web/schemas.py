@@ -9,7 +9,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
-TaskCommand = Literal["run", "recon", "scan", "exploit", "persistent"]
+from vulnclaw.task_service import TaskCommand, TaskCreateRequest, TaskOptions  # noqa: F401
+
 TaskStatus = Literal["pending", "restoring", "running", "completed", "failed", "stopped"]
 PythonExecuteMode = Literal["safe", "lab", "trusted-local"]
 ContextCompactionMode = Literal["structured"]
@@ -47,81 +48,6 @@ def _validate_http_base_url(value: str | None) -> str | None:
     if parsed.query or parsed.fragment:
         raise ValueError("base_url must not include query strings or fragments")
     return normalized
-
-
-class TaskOptions(BaseModel):
-    max_rounds: Optional[int] = Field(
-        default=None, ge=1, le=100, description="Override for autonomous rounds"
-    )
-    rounds_per_cycle: Optional[int] = Field(
-        default=None, ge=1, le=1000, description="Persistent mode rounds per cycle"
-    )
-    max_cycles: Optional[int] = Field(
-        default=None, ge=0, le=1000, description="Persistent mode max cycles"
-    )
-    cve: Optional[str] = Field(default=None, max_length=64, description="Exploit command CVE hint")
-    cmd: Optional[str] = Field(
-        default=None, max_length=512, description="Exploit command execution hint"
-    )
-    only_port: Optional[int] = Field(
-        default=None,
-        ge=1,
-        le=65535,
-        description="Restrict task scope to a single port",
-    )
-    only_host: Optional[str] = Field(
-        default=None, max_length=253, description="Restrict task scope to a single host"
-    )
-    only_path: Optional[str] = Field(
-        default=None, max_length=2048, description="Restrict task scope to a single path"
-    )
-    blocked_host: Optional[str] = Field(
-        default=None, max_length=253, description="Explicitly blocked host"
-    )
-    blocked_path: Optional[str] = Field(
-        default=None, max_length=2048, description="Explicitly blocked path"
-    )
-    allow_actions: Optional[list[str]] = Field(
-        default=None, max_length=20, description="Explicit allow-list for task actions"
-    )
-    block_actions: Optional[list[str]] = Field(
-        default=None, max_length=20, description="Explicit block-list for task actions"
-    )
-
-    @field_validator("cve", "cmd")
-    @classmethod
-    def validate_injection_fields(cls, value: str | None) -> str | None:
-        return _reject_control_chars(value)
-
-
-class TaskCreateRequest(BaseModel):
-    command: TaskCommand
-    target: str = Field(min_length=1, max_length=2048)
-    resume: bool = True
-    snapshot_id: Optional[str] = Field(default=None, max_length=160)
-    run_name: Optional[str] = Field(default=None, max_length=120)
-    resume_run_name: Optional[str] = Field(default=None, max_length=120)
-    runs_dir: Optional[str] = Field(default=None, max_length=4096)
-    additional_targets: list[str] = Field(default_factory=list, max_length=20)
-    target_type: Optional[str] = Field(default=None, max_length=32)
-    mount: bool = False
-    repair: bool = False
-    force_fresh: bool = False
-    no_import: bool = False
-    options: TaskOptions = Field(default_factory=TaskOptions)
-
-    @field_validator("target")
-    @classmethod
-    def validate_target(cls, value: str) -> str:
-        return _reject_control_chars(value)  # type: ignore[return-value]
-
-    @field_validator("additional_targets")
-    @classmethod
-    def validate_additional_targets(cls, value: list[str]) -> list[str]:
-        for i, t in enumerate(value):
-            if isinstance(t, str):
-                _reject_control_chars(t)  # type: ignore[return-value]
-        return value
 
 
 class TaskEvent(BaseModel):
