@@ -113,7 +113,7 @@ try:
     r = requests.get(target, params=params, timeout=10, verify=False)
     text = r.text.lower()
 
-    # SQL 错误特征
+    # SQL error signatures
     sql_errors = [
         "sql syntax", "mysql", "sqlite", "postgres", "oracle",
         "sqlstate", "microsoft sql", "odbc", "syntax error",
@@ -122,18 +122,18 @@ try:
 
     for err in sql_errors:
         if err in text:
-            print(f"[CONFIRMED] SQL注入漏洞: 检测到SQL错误特征 '{err}'")
-            print(f"[INFO] 响应状态码: {r.status_code}")
+            print(f"[CONFIRMED] SQL injection: detected SQL error signature '{err}'")
+            print(f"[INFO] Response status: {r.status_code}")
             exit(0)
 
-    # 检查响应差异（如果提供正常 baseline）
+    # Check response difference (if a normal baseline is provided)
     baseline_len = {baseline_len}
     if len(r.content) != baseline_len and baseline_len > 0:
-        print(f"[POSSIBLE] 响应长度异常: {len(r.content)} vs baseline {baseline_len}")
+        print(f"[POSSIBLE] Abnormal response length: {len(r.content)} vs baseline {baseline_len}")
 
-    print("[REJECTED] 未检测到SQL注入特征")
+    print("[REJECTED] No SQL injection signature detected")
 except requests.Timeout:
-    print("[REJECTED] 请求超时")
+    print("[REJECTED] Request timed out")
 except Exception as e:
     print(f"[ERROR] {e}")
 """,
@@ -147,11 +147,11 @@ try:
     r = requests.get(target, params={"q": payload}, timeout=10, verify=False)
 
     if payload in r.text:
-        print("[CONFIRMED] XSS漏洞: payload出现在响应中")
-        print("[INFO] 已发送 XSS payload，检测到原样反射")
+        print("[CONFIRMED] XSS: payload reflected in the response")
+        print("[INFO] XSS payload sent; verbatim reflection detected")
         exit(0)
 
-    print("[REJECTED] XSS payload未出现在响应中")
+    print("[REJECTED] XSS payload not found in the response")
 except Exception as e:
     print(f"[ERROR] {e}")
 """,
@@ -167,15 +167,15 @@ try:
     r = requests.get(target, params=params, timeout=10, verify=False)
     text = r.text
 
-    # 命令注入特征
+    # Command-injection signatures
     cmd_indicators = ["uid=", "gid=", "root:", "/bin/bash", "whoami", "linux"]
 
     for indicator in cmd_indicators:
         if indicator in text:
-            print(f"[CONFIRMED] 命令注入漏洞: 检测到 '{indicator}'")
+            print(f"[CONFIRMED] Command injection: detected '{indicator}'")
             exit(0)
 
-    print("[REJECTED] 未检测到命令注入特征")
+    print("[REJECTED] No command-injection signature detected")
 except Exception as e:
     print(f"[ERROR] {e}")
 """,
@@ -185,39 +185,39 @@ import requests
 target = "{target}"
 
 try:
-    # 正常请求
+    # Normal request
     r_normal = requests.get(target, timeout=10, verify=False)
     len_normal = len(r_normal.content)
 
-    # 调试模式请求
+    # Debug-mode request
     r_debug = requests.get(target + "/?debug=1", timeout=10, verify=False)
     len_debug = len(r_debug.content)
 
-    print(f"[INFO] 正常响应长度: {len_normal}")
-    print(f"[INFO] debug=1 响应长度: {len_debug}")
+    print(f"[INFO] Normal response length: {len_normal}")
+    print(f"[INFO] debug=1 response length: {len_debug}")
 
-    # 检查调试信息泄露
+    # Check for debug info disclosure
     if len_debug != len_normal:
         diff = len_debug - len_normal
-        print(f"[POSSIBLE] 调试模式响应与正常响应不同，差异: {diff} 字节")
+        print(f"[POSSIBLE] Debug-mode response differs from normal, delta: {diff} bytes")
 
-        # 检查是否真的泄露敏感信息
+        # Check whether sensitive info is actually leaked
         debug_content = r_debug.text.replace(r_normal.text, "")
         if debug_content:
             sensitive_keywords = ["password", "secret", "api_key", "token", "db_", "connection"]
             for kw in sensitive_keywords:
                 if kw.lower() in debug_content.lower():
-                    print(f"[CONFIRMED] 调试模式泄露敏感信息: 检测到 '{kw}'")
+                    print(f"[CONFIRMED] Debug mode leaks sensitive info: detected '{kw}'")
                     exit(0)
 
-        # 如果只是响应长度不同但没有敏感信息，降级为 Info
-        print("[INFO] 调试模式响应有差异但未发现敏感信息泄露，降级为Info")
+        # If only the length differs but no sensitive info, downgrade to Info
+        print("[INFO] Debug-mode response differs but no sensitive info leak found; downgraded to Info")
 
-    # 检查 debug 相关关键字
+    # Check debug-related keywords
     if "debug" in r_debug.text.lower() and r_debug.text.lower().count("debug") > r_normal.text.lower().count("debug"):
-        print("[POSSIBLE] debug模式包含额外debug信息")
+        print("[POSSIBLE] debug mode contains extra debug info")
 
-    print("[REJECTED] 调试模式未发现明显敏感信息泄露")
+    print("[REJECTED] No obvious sensitive info leak found in debug mode")
 
 except Exception as e:
     print(f"[ERROR] {e}")
@@ -232,15 +232,15 @@ try:
     r = requests.get(target, params={"file": payload}, timeout=10, verify=False)
     text = r.text.lower()
 
-    # LFI 特征
+    # LFI signatures
     lfi_indicators = ["root:", "/bin/bash", "/bin/sh", "[boot loader]", "windows"]
 
     for indicator in lfi_indicators:
         if indicator in text:
-            print(f"[CONFIRMED] LFI漏洞: 检测到 '{indicator}'")
+            print(f"[CONFIRMED] LFI: detected '{indicator}'")
             exit(0)
 
-    print("[REJECTED] 未检测到LFI特征")
+    print("[REJECTED] No LFI signature detected")
 except Exception as e:
     print(f"[ERROR] {e}")
 """,
@@ -254,16 +254,16 @@ try:
     r = requests.get(target + path, timeout=10, verify=False)
 
     if r.status_code == 200 and len(r.content) > 10:
-        print(f"[CONFIRMED] 敏感文件可访问: {path}")
-        print(f"[INFO] 状态码: {r.status_code}, 长度: {len(r.content)}")
+        print(f"[CONFIRMED] Exposed file accessible: {path}")
+        print(f"[INFO] Status: {r.status_code}, length: {len(r.content)}")
 
-        # 检查内容类型
+        # Check content type
         ct = r.headers.get("content-type", "")
         print(f"[INFO] Content-Type: {ct}")
 
         exit(0)
 
-    print(f"[REJECTED] 文件不可访问或为空: {r.status_code}")
+    print(f"[REJECTED] File not accessible or empty: {r.status_code}")
 except Exception as e:
     print(f"[ERROR] {e}")
 """,
@@ -276,12 +276,12 @@ try:
     r = requests.get(target, timeout=10, verify=False)
     headers = {k.lower(): v.lower() for k, v in r.headers.items()}
 
-    # 检查敏感 header
+    # Check response headers
     sensitive_headers = {
-        "x-powered-by": "技术栈信息",
-        "server": "服务器信息",
-        "x-aspnet-version": "ASP.NET版本",
-        "x-generator": "生成器信息",
+        "x-powered-by": "tech-stack info",
+        "server": "server info",
+        "x-aspnet-version": "ASP.NET version",
+        "x-generator": "generator info",
     }
 
     found = []
@@ -290,13 +290,13 @@ try:
             found.append(f"{header}: {headers[header][:50]}")
 
     if found:
-        print(f"[CONFIRMED] 信息泄露: {len(found)}个敏感header")
+        print(f"[CONFIRMED] Info disclosure: {len(found)} disclosing header(s)")
         for item in found:
             print(f"  - {item}")
         exit(0)
 
-    print("[INFO] 未发现明显信息泄露，这是正常的安全配置问题")
-    print("[REJECTED] 响应头信息泄露 - 这是配置问题，不是漏洞")
+    print("[INFO] No obvious info disclosure; this is a normal security-config concern")
+    print("[REJECTED] Response-header info disclosure - a config issue, not a vulnerability")
 except Exception as e:
     print(f"[ERROR] {e}")
 """,
@@ -352,10 +352,10 @@ import requests
 target = "{target}"
 payload = "{payload}"
 
-# 常见的可注入参数名，逐个尝试注入 payload 并与基准响应对比
+# Common injectable parameter names; try each with the payload and compare to the baseline
 CANDIDATE_PARAMS = ["id", "q", "search", "name", "file", "page", "cmd", "url"]
 
-# 通用的异常 / 敏感信息特征
+# Generic error / anomaly signatures
 SIGNATURES = [
     "sql syntax", "sqlstate", "mysql", "odbc", "you have an error in your sql",
     "traceback (most recent call last)", "stack trace", "fatal error",
@@ -371,7 +371,7 @@ try:
     baseline = fetch()
     base_status = baseline.status_code
     base_len = len(baseline.content)
-    print(f"[*] 基准响应: status={base_status}, len={base_len}")
+    print(f"[*] Baseline response: status={base_status}, len={base_len}")
 
     confirmed = False
     for name in CANDIDATE_PARAMS:
@@ -380,31 +380,31 @@ try:
         except Exception:
             continue
 
-        # 1) 反射检测：payload 原样出现在响应中（潜在 XSS / 模板注入）
+        # 1) Reflection check: payload appears verbatim in the response (potential XSS / template injection)
         if payload and payload in r.text:
-            print(f"[CONFIRMED] payload 在参数 '{name}' 处被原样反射到响应中")
+            print(f"[CONFIRMED] payload reflected verbatim via parameter '{name}'")
             confirmed = True
             break
 
-        # 2) 错误 / 敏感信息特征扫描
+        # 2) Error / anomaly signature scan
         low = r.text.lower()
         hit = next((s for s in SIGNATURES if s in low), None)
         if hit:
-            print(f"[CONFIRMED] 参数 '{name}' 触发异常/敏感特征: '{hit}'")
+            print(f"[CONFIRMED] parameter '{name}' triggered an error/anomaly signature: '{hit}'")
             confirmed = True
             break
 
-        # 3) 响应差异：状态码变化或响应长度显著变化
+        # 3) Response difference: status-code change or significant length change
         if r.status_code != base_status:
-            print(f"[POSSIBLE] 参数 '{name}' 改变了响应状态码: {base_status} -> {r.status_code}")
+            print(f"[POSSIBLE] parameter '{name}' changed the response status code: {base_status} -> {r.status_code}")
         elif base_len and abs(len(r.content) - base_len) > max(50, int(base_len * 0.2)):
-            print(f"[POSSIBLE] 参数 '{name}' 显著改变了响应长度: {base_len} -> {len(r.content)}")
+            print(f"[POSSIBLE] parameter '{name}' significantly changed the response length: {base_len} -> {len(r.content)}")
 
     if not confirmed:
-        print("[REJECTED] 通用验证未检测到明确的漏洞特征")
+        print("[REJECTED] Generic verification detected no clear vulnerability signature")
 
 except requests.Timeout:
-    print("[REJECTED] 请求超时")
+    print("[REJECTED] Request timed out")
 except Exception as e:
     print(f"[ERROR] {e}")
 """
@@ -630,9 +630,9 @@ class VulnerabilityVerifier:
         ]
 
         vf.verified_description = (
-            f"PoC 验证通过。原始描述: {original.description}"
+            f"PoC verification passed. Original description: {original.description}"
             if original.description
-            else "PoC 验证确认漏洞存在"
+            else "PoC verification confirmed the vulnerability exists"
         )
         vf.verified_evidence = "\n".join(confirmed_lines) if confirmed_lines else output[:500]
         vf.verified_severity = original.severity  # 保持原严重度，可根据结果调整
@@ -651,18 +651,18 @@ class VulnerabilityVerifier:
 
         # 排除原因映射
         rejection_reasons = {
-            VerificationResult.FALSE_POSITIVE: "PoC 执行后未检测到漏洞特征，判定为误报",
-            VerificationResult.NO_RESPONSE_DIFF: "响应无差异，参数无效或未触发漏洞",
-            VerificationResult.PARAM_INVALID: "参数无效，无法验证漏洞假设",
-            VerificationResult.NORMAL_RESPONSE: "返回正常响应，漏洞不存在",
-            VerificationResult.TIMEOUT: "PoC 执行超时",
-            VerificationResult.ERROR_403_404: "请求被拒绝（403/404），目标不可利用",
-            VerificationResult.EXECUTION_ERROR: "PoC 执行环境错误（如解释器缺失），未能验证漏洞",
+            VerificationResult.FALSE_POSITIVE: "No vulnerability signature detected after running the PoC; judged a false positive",
+            VerificationResult.NO_RESPONSE_DIFF: "No response difference; parameter invalid or vulnerability not triggered",
+            VerificationResult.PARAM_INVALID: "Invalid parameter; unable to verify the vulnerability hypothesis",
+            VerificationResult.NORMAL_RESPONSE: "Normal response returned; the vulnerability does not exist",
+            VerificationResult.TIMEOUT: "PoC execution timed out",
+            VerificationResult.ERROR_403_404: "Request rejected (403/404); the target is not exploitable",
+            VerificationResult.EXECUTION_ERROR: "PoC execution-environment error (e.g. missing interpreter); could not verify the vulnerability",
         }
 
         vf.rejection_reason = rejection_reasons.get(
             result,
-            f"验证失败，原因: {result.value}",
+            f"Verification failed, reason: {result.value}",
         )
 
         # 记录排除原因，但不加入报告

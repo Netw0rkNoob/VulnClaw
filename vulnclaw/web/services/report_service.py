@@ -54,7 +54,7 @@ def generate_target_report(
     # The report generator picks Chinese vs English from current_lang(). Unlike
     # the scan task path, this standalone endpoint has no ambient i18n state, so
     # initialize it from the saved config.session.language before generating —
-    # otherwise the report always falls back to auto-detection (defaults to zh).
+    # otherwise the report always falls back to auto-detection (defaults to en).
     init_i18n(config=load_config())
     raw = load_target_state(target)
     if not raw:

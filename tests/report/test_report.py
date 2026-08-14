@@ -876,7 +876,7 @@ class TestPoCBuilder:
         assert "sql_injection" in content
         assert "requests.get(target, params=params" in content
         assert "http://192.168.1.100/login?id=1" in content
-        assert "[CONFIRMED] SQL注入漏洞" in content
+        assert "[CONFIRMED] SQL injection" in content
 
     def test_poc_is_valid_python(self, tmp_path):
         """Generated PoC should be syntactically valid Python."""

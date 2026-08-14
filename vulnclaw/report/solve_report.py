@@ -326,25 +326,24 @@ def _render_solution_chain(
     forms = [item.text for item in state.pinned_facts if item.text.startswith("HTML ")]
 
     if linked:
-        lines.append(f"1. 从页面/脚本证据中定位入口：{'; '.join(linked[:4])}。")
+        lines.append(_("report.solve.chain.entry", items="; ".join(linked[:4])))
     elif forms:
-        lines.append(f"1. 从页面表单证据中定位输入面：{'; '.join(forms[:4])}。")
+        lines.append(_("report.solve.chain.forms", items="; ".join(forms[:4])))
     else:
-        lines.append("1. 通过模型选择的 HTTP/浏览器工具建立目标页面和接口基线。")
+        lines.append(_("report.solve.chain.baseline"))
 
     if sql_facts:
-        lines.append(f"2. 关键服务端表达式：`{sql_facts[0][len(_SOURCE_SQL_PREFIX):].strip()}`。")
-        lines.append(
-            "3. 利用点来自字符串拼接 SQL。优先从真实表达式推导 payload，而不是泛化枚举。"
-        )
+        expr = sql_facts[0][len(_SOURCE_SQL_PREFIX):].strip()
+        lines.append(_("report.solve.chain.sql_expr", expr=expr))
+        lines.append(_("report.solve.chain.sql_hint"))
     else:
-        lines.append("2. 根据工具响应差异确认可控参数和可复现的利用路径。")
+        lines.append(_("report.solve.chain.confirm_params"))
 
     if requests:
         payload_url = requests[0].url
-        lines.append(f"4. 成功复现请求：`{payload_url}`。")
+        lines.append(_("report.solve.chain.reproduced", url=payload_url))
     if flags:
-        lines.append(f"5. 响应中出现目标 proof/flag：`{flags[0]}`。")
+        lines.append(_("report.solve.chain.flag", flag=flags[0]))
     return lines
 
 

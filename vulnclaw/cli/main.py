@@ -1814,45 +1814,45 @@ def scan(
 @app.command("network-scan")
 def network_scan(
     target: Optional[str] = typer.Argument(
-        None, help="目标主机/IP/CIDR，默认使用当前连接的 Wi-Fi 子网"
+        None, help="Target host/IP/CIDR; defaults to the currently connected Wi-Fi subnet"
     ),
     profile: str = typer.Option(
         "adaptive",
         "--profile",
-        help="网络扫描画像：adaptive、fast、thorough、stealth",
+        help="Network scan profile: adaptive, fast, thorough, stealth",
     ),
-    ports: Optional[str] = typer.Option(None, "--ports", help="端口范围，如 80,443,1-1000"),
+    ports: Optional[str] = typer.Option(None, "--ports", help="Port range, e.g. 80,443,1-1000"),
     max_rounds: int = typer.Option(
-        0, "--max-rounds", help="Agent 后续跟进轮数（0=使用配置默认值）"
+        0, "--max-rounds", help="Agent follow-up rounds (0 = use the configured default)"
     ),
     parallel_agents: int = typer.Option(
         1,
         "--parallel-agents",
         min=1,
-        help="在已发现的攻击面上并行派生的子 Agent 数量（1 表示不启用并行）",
+        help="Number of sub-agents to fan out over discovered attack surfaces (1 disables parallelism)",
     ),
     parallel_depth: int = typer.Option(
         1,
         "--parallel-depth",
         min=1,
-        help="子 Agent 攻击面发现的有界波次数",
+        help="Bounded number of attack-surface discovery waves for sub-agents",
     ),
     worker_rounds: int = typer.Option(
         3,
         "--worker-rounds",
         min=1,
-        help="每个子 Agent worker 的执行轮数",
+        help="Execution rounds per sub-agent worker",
     ),
     surface_limit: int = typer.Option(
         20,
         "--surface-limit",
         min=1,
-        help="用于子 Agent 并行派生的最大攻击面数量",
+        help="Maximum number of attack surfaces to fan sub-agents out over",
     ),
     safe_probes: bool = typer.Option(
         True,
         "--safe-probes/--no-safe-probes",
-        help="nmap 扫描后默认仅执行非破坏性的验证探测",
+        help="After the nmap scan, run only non-destructive verification probes by default",
     ),
     prompt: Optional[str] = typer.Option(
         None, "--prompt", help="Custom natural language prompt (overrides auto-generated prompt)"
@@ -1895,7 +1895,7 @@ def network_scan(
         False, "--stream", help="Emit newline-delimited JSON events for the Rust TUI"
     ),
 ) -> None:
-    """运行基于 nmap 的网络扫描，并对薄弱环节进行跟进。"""
+    """Run an nmap-based network scan and follow up on weak links."""
     normalized_profile = profile.strip().lower()
     if normalized_profile not in {"adaptive", "fast", "thorough", "stealth"}:
         err_console.print(f"[!] {_('cli.invalid_profile')}")
@@ -1950,23 +1950,25 @@ def network_scan(
 
     console.print(
         Panel(
-            f"目标: [bold]{scan_target}[/]\n"
+            f"{_('cli.scan.panel.target')}: [bold]{scan_target}[/]\n"
             + (
-                f"Wi-Fi 接口: [bold]{detected_wifi.interface}[/] ({detected_wifi.address})\n"
+                f"{_('cli.scan.panel.wifi')}: [bold]{detected_wifi.interface}[/] "
+                f"({detected_wifi.address})\n"
                 if detected_wifi
                 else ""
             )
             +
-            f"画像: [bold]{normalized_profile}[/]\n"
-            f"端口: [bold]{ports or '画像默认'}[/]\n"
-            f"跟进策略: [bold]{'安全探测' if safe_probes else '仅摘要'}[/]\n"
-            f"并行 Agent 数: [bold]{parallel_agents}[/]"
+            f"{_('cli.scan.panel.profile')}: [bold]{normalized_profile}[/]\n"
+            f"{_('cli.scan.panel.ports')}: [bold]{ports or _('cli.scan.panel.ports_default')}[/]\n"
+            f"{_('cli.scan.panel.follow_up')}: "
+            f"[bold]{_('cli.scan.panel.safe_probes') if safe_probes else _('cli.scan.panel.summary_only')}[/]\n"
+            f"{_('cli.scan.panel.parallel_agents')}: [bold]{parallel_agents}[/]"
             + (
-                f"（深度 {parallel_depth}，每个 worker {worker_rounds} 轮）"
+                _("cli.scan.panel.parallel_detail", depth=parallel_depth, rounds=worker_rounds)
                 if parallel_agents > 1
                 else ""
             ),
-            title="网络扫描",
+            title=_("cli.scan.panel.title"),
             border_style="cyan",
         )
     )

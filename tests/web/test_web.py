@@ -1368,8 +1368,8 @@ class TestWebApp:
         )
 
         assert "Fallback Web Shell" in source
-        assert "授权安全测试助手" in source
-        assert "输入目标，确认边界，再开始安全检查" in source
+        assert "Authorized security testing assistant" in source
+        assert "Enter a target, confirm the boundary, then start the check" in source
         assert "React 前端仍待后续阶段接入" not in source
         assert "Phase 1 的最小占位控制台" not in source
 

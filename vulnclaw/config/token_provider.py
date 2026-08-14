@@ -167,7 +167,9 @@ def _oauth_token_request(token_url: str, form: dict[str, str], *, attempts: int 
         except urllib.error.HTTPError as exc:
             if exc.code != 429 and 400 <= exc.code < 500:
                 detail = exc.read().decode("utf-8", "replace")[:300] if hasattr(exc, "read") else str(exc)
-                raise OAuthError(f"OAuth token 请求失败 HTTP {exc.code}: {detail}") from exc
+                raise OAuthError(
+                    f"OAuth token 请求失败 / request failed, HTTP {exc.code}: {detail}"
+                ) from exc
             last_exc = exc  # 5xx / 429 → retry
         except urllib.error.URLError as exc:
             last_exc = exc  # network / TLS → retry
@@ -181,9 +183,13 @@ def _oauth_token_request(token_url: str, form: dict[str, str], *, attempts: int 
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise OAuthError(f"OAuth token 端点返回非 JSON: {body[:200]!r}") from exc
+        raise OAuthError(
+            f"OAuth token 端点返回非 JSON / endpoint returned non-JSON: {body[:200]!r}"
+        ) from exc
     if "access_token" not in payload:
-        raise OAuthError(f"OAuth 响应缺少 access_token: {body[:200]!r}")
+        raise OAuthError(
+            f"OAuth 响应缺少 / response missing access_token: {body[:200]!r}"
+        )
     return payload
 
 
@@ -328,7 +334,9 @@ def _refresh_oauth(llm: Any, refresh_token: str) -> dict[str, Any]:
     token_url = str(_get(llm, "oauth_token_url") or "").strip()
     client_id = str(_get(llm, "oauth_client_id") or "").strip()
     if not (token_url and client_id):
-        raise OAuthError("OAuth 刷新需要 llm.oauth_token_url 和 llm.oauth_client_id")
+        raise OAuthError(
+            "OAuth 刷新需要 / refresh requires llm.oauth_token_url and llm.oauth_client_id"
+        )
     payload = _oauth_token_request(
         token_url,
         {
@@ -384,7 +392,9 @@ def resolve_llm_token(llm: Any) -> str:
         return str(_get(llm, "api_key") or "")
     if mode == "oauth":
         return _resolve_oauth_token(llm)
-    raise TokenResolutionError(f"未知的 llm.auth_mode={mode!r}（支持: static/oauth）")
+    raise TokenResolutionError(
+        f"未知的 / unknown llm.auth_mode={mode!r} (supported / 支持: static/oauth)"
+    )
 
 
 def has_llm_credentials(llm: Any) -> bool:

@@ -501,7 +501,7 @@
   "settings.model_hint": "Use the model name configured for your backend.",
   "settings.report_language": "Report language",
   "settings.report_language_auto": "Auto (follow system)",
-  "settings.report_language_hint": "Language of generated reports. Auto detects from the environment (defaults to Chinese).",
+  "settings.report_language_hint": "Language of generated reports. Auto detects from your environment and falls back to English.",
   "settings.base_url": "Base URL",
   "settings.base_url_hint": "Leave blank to use the backend default.",
   "settings.custom_endpoint": "Custom endpoint…",

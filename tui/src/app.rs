@@ -387,7 +387,7 @@ pub const PROVIDERS: &[ProviderPreset] = &[
     },
     ProviderPreset {
         name: "custom",
-        label: "Custom (自定义)",
+        label: "Custom",
         base_url: "",
         model: "",
     },

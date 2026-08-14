@@ -501,7 +501,7 @@
   "settings.model_hint": "使用后端配置的模型名称。",
   "settings.report_language": "报告语言",
   "settings.report_language_auto": "自动（跟随系统）",
-  "settings.report_language_hint": "生成报告使用的语言。自动模式根据环境检测（默认中文）。",
+  "settings.report_language_hint": "生成报告使用的语言。自动模式根据环境检测，默认回退到英文。",
   "settings.base_url": "Base URL",
   "settings.base_url_hint": "留空使用后端默认值。",
   "settings.custom_endpoint": "自定义端点…",

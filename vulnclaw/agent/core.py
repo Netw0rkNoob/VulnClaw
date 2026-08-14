@@ -336,7 +336,9 @@ class AgentCore:
                         api_key="local-proxy", base_url=proxy_base
                     )
                 except ImportError:
-                    raise RuntimeError("请安装 openai 包: pip install openai")
+                    raise RuntimeError(
+                        "The 'openai' package is required. Install it with: pip install openai"
+                    )
             return self._client
 
         auth_mode = str(getattr(llm, "auth_mode", "") or "static").strip().lower()
@@ -353,7 +355,9 @@ class AgentCore:
                     base_url=llm.base_url,
                 )
             except ImportError:
-                raise RuntimeError("请安装 openai 包: pip install openai")
+                raise RuntimeError(
+                    "The 'openai' package is required. Install it with: pip install openai"
+                )
         elif token:
             # Refresh the bearer token in place for rotating / short-lived creds.
             self._client.api_key = token

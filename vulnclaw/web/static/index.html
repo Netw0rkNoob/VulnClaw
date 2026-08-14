@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -240,16 +240,16 @@
         <div class="logo">VC</div>
         <div>
           <strong>VulnClaw</strong>
-          <span>授权安全测试助手</span>
+          <span>Authorized security testing assistant</span>
         </div>
       </div>
       <nav class="nav" aria-label="VulnClaw fallback navigation">
-        <div class="nav-item active">首页 · 开始检查</div>
-        <div class="nav-item">风险结果 · 证据</div>
-        <div class="nav-item">报告 · 导出</div>
-        <div class="nav-item">安全边界 · 拦截</div>
-        <div class="nav-item">历史 · 快照</div>
-        <div class="nav-item">设置 · 模型</div>
+        <div class="nav-item active">Home · Start a check</div>
+        <div class="nav-item">Risk results · Evidence</div>
+        <div class="nav-item">Reports · Export</div>
+        <div class="nav-item">Safety boundary · Blocks</div>
+        <div class="nav-item">History · Snapshots</div>
+        <div class="nav-item">Settings · Models</div>
       </nav>
     </aside>
 
@@ -257,60 +257,63 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">Fallback Web Shell</p>
-          <h1>VulnClaw Web 已启动</h1>
-          <p>后端 API 正在运行，但没有检测到已构建的 React 前端。此页面是轻量 ToC fallback，用于确认服务状态并提示如何进入完整图形界面。</p>
+          <h1>VulnClaw Web is running</h1>
+          <p>The backend API is up, but no built React frontend was detected. This lightweight fallback page confirms the service is running and shows how to reach the full graphical interface.</p>
         </div>
-        <span class="status-pill">需要构建完整前端</span>
+        <span class="status-pill">Full frontend build required</span>
       </header>
 
       <section class="hero">
-        <p class="eyebrow">授权优先</p>
-        <h1>输入目标，确认边界，再开始安全检查</h1>
+        <p class="eyebrow">Authorization first</p>
+        <h1>Enter a target, confirm the boundary, then start the check</h1>
         <p class="hero-copy">
-          完整 ToC Web 界面会提供首页检查向导、风险结果、报告中心、安全边界、历史和设置页。
-          如果你看到这个页面，说明后端回退到了内置静态页，而不是前端构建产物。
+          The full web interface provides a home check wizard, risk results, a report center, safety
+          boundaries, history, and settings. If you are seeing this page, the backend fell back to its
+          built-in static page instead of the frontend build output.
         </p>
         <div class="hero-actions">
-          <a class="btn btn-primary" href="/api/health">检查后端健康状态</a>
-          <a class="btn btn-secondary" href="/api/config">查看公开配置</a>
+          <a class="btn btn-primary" href="/api/health">Check backend health</a>
+          <a class="btn btn-secondary" href="/api/config">View public config</a>
         </div>
       </section>
 
       <section class="grid">
         <article class="card">
-          <small>如何进入完整界面</small>
-          <h2>构建 React 前端</h2>
-          <p>在项目目录执行:</p>
+          <small>How to reach the full interface</small>
+          <h2>Build the React frontend</h2>
+          <p>Run in the project directory:</p>
           <p><code>cd frontend</code></p>
           <p><code>npm install</code></p>
           <p><code>npm run build</code></p>
-          <p>然后重新打开 <code>vulnclaw web</code> 提供的地址。</p>
+          <p>Then reopen the address printed by <code>vulnclaw web</code>.</p>
         </article>
 
         <article class="card">
-          <small>ToC 主流程</small>
-          <h2>用户路径</h2>
+          <small>Main workflow</small>
+          <h2>User path</h2>
           <ol class="flow">
-            <li><span class="dot">1</span><span>输入明确授权的 URL、域名或 IP。</span></li>
-            <li><span class="dot">2</span><span>选择快速摸底、标准检查或深度验证。</span></li>
-            <li><span class="dot">3</span><span>确认端口、主机、路径和动作边界。</span></li>
-            <li><span class="dot">4</span><span>查看风险结果，并导出 Markdown / HTML 报告。</span></li>
+            <li><span class="dot">1</span><span>Enter an explicitly authorized URL, domain, or IP.</span></li>
+            <li><span class="dot">2</span><span>Choose a quick scan, standard check, or deep verification.</span></li>
+            <li><span class="dot">3</span><span>Confirm the port, host, path, and action boundaries.</span></li>
+            <li><span class="dot">4</span><span>Review the risk results and export a Markdown / HTML report.</span></li>
           </ol>
         </article>
 
         <article class="card">
-          <small>安全边界</small>
-          <h2>不要越过授权范围</h2>
+          <small>Safety boundary</small>
+          <h2>Do not exceed the authorized scope</h2>
           <p>
-            VulnClaw 的完整 Web 界面会把 <code>only_*</code>、<code>blocked_*</code>
-            和动作约束展示成可读边界，并在发生越界尝试时进入安全边界页查看拦截原因。
+            VulnClaw's full web interface renders <code>only_*</code>, <code>blocked_*</code>,
+            and action constraints as readable boundaries, and opens the safety-boundary page to show
+            why an out-of-scope attempt was blocked.
           </p>
-          <p class="safe">建议普通自测至少指定主机、端口或路径之一。</p>
+          <p class="safe">For routine self-testing, specify at least one of host, port, or path.</p>
         </article>
       </section>
 
       <footer>
-        如果你已经构建过前端但仍看到此页，请确认 <code>frontend/dist/index.html</code> 存在，并重启 Web 服务。
+        If you already built the frontend but still see this page, confirm that
+        <code>frontend/dist/index.html</code> exists and restart the web service.
       </footer>
     </main>
   </div>

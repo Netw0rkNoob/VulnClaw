@@ -390,8 +390,8 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
                   onChange={(event) => setReportLanguage(event.target.value as ConfigView["language"])}
                 >
                   <option value="auto">{t("settings.report_language_auto")}</option>
-                  <option value="zh">中文</option>
-                  <option value="en">English</option>
+                  <option value="zh">{t("settings.chinese")}</option>
+                  <option value="en">{t("settings.english")}</option>
                 </select>
                 <small>{t("settings.report_language_hint")}</small>
               </label>
