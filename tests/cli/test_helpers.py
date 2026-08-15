@@ -364,6 +364,7 @@ def test_run_stream_emits_progress_and_verified_claims(monkeypatch):
 
     config = VulnClawConfig()
     config.llm.api_key = "test-key"
+    config.session.engine = "solve"
     config.session.show_thinking = True
     monkeypatch.setattr(cli_main, "load_config", lambda: config)
 
@@ -378,12 +379,14 @@ def test_run_stream_emits_progress_and_verified_claims(monkeypatch):
     }
 
     class FakeAgent:
-        session_state = SimpleNamespace(findings=[])
-        context = SimpleNamespace(
-            state=SimpleNamespace(
-                agent_state=SimpleNamespace(get_summary=lambda: summary)
+        def __init__(self):
+            self.config = config
+            self.session_state = SimpleNamespace(findings=[])
+            self.context = SimpleNamespace(
+                state=SimpleNamespace(
+                    agent_state=SimpleNamespace(get_summary=lambda: summary)
+                )
             )
-        )
 
         async def solve(self, prompt, **kwargs):
             sink = kwargs["stream_sink"]
@@ -407,7 +410,10 @@ def test_run_stream_emits_progress_and_verified_claims(monkeypatch):
         cli_main, "_run_cli_orchestrated_task", fake_orchestrated
     )
 
-    result = CliRunner().invoke(cli_main.app, ["run", "example.com", "--stream"])
+    result = CliRunner().invoke(
+        cli_main.app,
+        ["run", "example.com", "--stream", "--engine", "solve"],
+    )
 
     assert result.exit_code == 0, result.exception
     events = [
