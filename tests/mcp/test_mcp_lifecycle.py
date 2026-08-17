@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
@@ -13,6 +14,19 @@ from vulnclaw.mcp.registry import HealthStatus
 
 def _manager() -> MCPLifecycleManager:
     return MCPLifecycleManager(VulnClawConfig())
+
+
+def test_client_session_timeout_adapts_config_seconds_to_sdk_timedelta():
+    """The MCP SDK accepts ``timedelta``, while transport config stores milliseconds."""
+    cfg = MCPServerConfig(
+        name="timeout-probe",
+        transport={"type": "stdio", "command": "noop", "tool_timeout": 1500},
+    )
+
+    timeout = _manager()._client_session_timeout(cfg)
+
+    assert isinstance(timeout, timedelta)
+    assert timeout.total_seconds() == 1.5
 
 
 class _FakeProc:

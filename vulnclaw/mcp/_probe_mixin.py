@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from datetime import timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -195,7 +196,9 @@ class ProbeMixin:
                 url, headers=headers, timeout=connect_s, sse_read_timeout=read_s
             ) as (read_stream, write_stream, _get_session_id):
                 async with ClientSession(
-                    read_stream, write_stream, read_timeout_seconds=read_s
+                    read_stream,
+                    write_stream,
+                    read_timeout_seconds=self._client_session_timeout(config),
                 ) as session:
                     await session.initialize()
                     tools = await session.list_tools()
@@ -221,11 +224,12 @@ class ProbeMixin:
         self, config: MCPServerConfig
     ) -> tuple[bool, str, list[dict[str, Any]]]:
         url = config.transport.url or ""
-        read_s = self._tool_timeout_seconds(config)
         try:
             async with sse_client(url) as (read_stream, write_stream):
                 async with ClientSession(
-                    read_stream, write_stream, read_timeout_seconds=read_s
+                    read_stream,
+                    write_stream,
+                    read_timeout_seconds=self._client_session_timeout(config),
                 ) as session:
                     await session.initialize()
                     tools = await session.list_tools()
@@ -290,6 +294,11 @@ class ProbeMixin:
         if not raw or raw <= 0:
             return 300.0
         return float(raw) / 1000.0
+
+    @classmethod
+    def _client_session_timeout(cls, config: MCPServerConfig) -> timedelta:
+        """Adapt VulnClaw's numeric timeout to the MCP SDK's duration type."""
+        return timedelta(seconds=cls._tool_timeout_seconds(config))
 
     async def _async_probe_stdio_server(
         self, config: MCPServerConfig

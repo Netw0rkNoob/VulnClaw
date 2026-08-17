@@ -472,7 +472,9 @@ class MCPLifecycleManager(ProbeMixin):
         timeout_s = self._tool_timeout_seconds(config)
         async with stdio_client(server) as (read_stream, write_stream):
             async with ClientSession(
-                read_stream, write_stream, read_timeout_seconds=timeout_s
+                read_stream,
+                write_stream,
+                read_timeout_seconds=self._client_session_timeout(config),
             ) as session:
                 await session.initialize()
                 return await asyncio.wait_for(
@@ -510,12 +512,13 @@ class MCPLifecycleManager(ProbeMixin):
             args=transport.args or [],
             env=transport.env,
         )
-        timeout_s = self._tool_timeout_seconds(config)
 
         cm = stdio_client(server)
         read_stream, write_stream = await cm.__aenter__()
         session = ClientSession(
-            read_stream, write_stream, read_timeout_seconds=timeout_s
+            read_stream,
+            write_stream,
+            read_timeout_seconds=self._client_session_timeout(config),
         )
         # 进入 ClientSession 上下文以启动 _receive_loop；否则后续调用读不到响应而卡死。
         try:
@@ -600,7 +603,9 @@ class MCPLifecycleManager(ProbeMixin):
             )
             read_stream, write_stream, _get_session_id = await cm.__aenter__()
             session = ClientSession(
-                read_stream, write_stream, read_timeout_seconds=read_s
+                read_stream,
+                write_stream,
+                read_timeout_seconds=self._client_session_timeout(config),
             )
             await session.__aenter__()
             await session.initialize()
@@ -666,7 +671,6 @@ class MCPLifecycleManager(ProbeMixin):
         url = config.transport.url or ""
         if not url:
             raise RuntimeError(f"sse transport for {server_name} is missing url")
-        read_s = self._tool_timeout_seconds(config)
 
         cm = None
         session = None
@@ -674,7 +678,9 @@ class MCPLifecycleManager(ProbeMixin):
             cm = sse_client(url)
             read_stream, write_stream = await cm.__aenter__()
             session = ClientSession(
-                read_stream, write_stream, read_timeout_seconds=read_s
+                read_stream,
+                write_stream,
+                read_timeout_seconds=self._client_session_timeout(config),
             )
             await session.__aenter__()
             await session.initialize()
