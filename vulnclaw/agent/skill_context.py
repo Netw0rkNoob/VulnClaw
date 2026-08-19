@@ -1,10 +1,10 @@
-"""Skill reference selection helpers for AgentCore.
+"""Skill selection helpers for AgentCore.
 
-Skills are reference material, not execution scripts.  This module keeps the
-deterministic resolver and provenance trail, but prompt rendering deliberately
-exposes only a compact reference index: selected skill names, descriptions,
-resolver reason, and on-demand reference names.  The actual skill/reference body
-is loaded only when the model chooses ``load_skill_reference``.
+Keyword-selected skills remain optional reference indexes (body not injected);
+``load_skill_reference`` is still model-chosen for supporting docs.
+
+Explicit launches (``/skill`` or ``Use VulnClaw skill X``) inject the primary
+skill body so workflow skills such as ``hackerone`` actually execute.
 
 Resolving once per turn is deliberate: the recorded provenance attached to
 findings names the same reference bundle that was offered to the model.
@@ -139,10 +139,11 @@ def resolve_active_skill_selection(
 
 
 def apply_skill_selection(state: Any, user_input: Optional[str] = None) -> Optional[str]:
-    """Resolve, record provenance on ``state``, and return a reference index.
+    """Resolve, record provenance on ``state``, and return skill prompt context.
 
-    Skill bodies are never injected automatically.  A selected bundle only tells
-    the model which reference files may be useful if it decides to load them.
+    Keyword-selected skills stay optional indexes (body not injected). Explicit
+    slash / "Use VulnClaw skill" launches inject the primary skill body so
+    workflow skills such as ``hackerone`` are actually executable.
     """
 
     phase_label = getattr(getattr(state, "phase", None), "value", None)
@@ -163,7 +164,7 @@ def apply_skill_selection(state: Any, user_input: Optional[str] = None) -> Optio
 
 
 def get_active_skill_context(user_input: Optional[str] = None, **kwargs: Any) -> Optional[str]:
-    """Get the most relevant optional reference index without recording provenance."""
+    """Get skill prompt context without recording provenance."""
 
     if user_input or kwargs.get("task_summary"):
         selection = resolve_active_skill_selection(user_input, **kwargs)
@@ -172,21 +173,96 @@ def get_active_skill_context(user_input: Optional[str] = None, **kwargs: Any) ->
     return None
 
 
-def format_selection_context(selection: SkillSelection) -> str:
-    """Render a resolved bundle as optional reference material.
+def _is_explicit_selection(selection: SkillSelection) -> bool:
+    """True when the user explicitly launched this skill (slash or Use-skill)."""
+    if "explicit" in (selection.signals or []):
+        return True
+    reason = (selection.reason or "").lower()
+    return reason.startswith("explicit")
 
-    The primary skill instructions are intentionally not injected here.  This
-    keeps the model in control of strategy and makes ``load_skill_reference`` an
-    explicit, model-chosen read action.
+
+# Soft cap so a huge SKILL.md cannot monopolize the system prompt.
+_EXPLICIT_SKILL_BODY_MAX_CHARS = 48_000
+
+
+def format_selection_context(selection: SkillSelection) -> str:
+    """Render a resolved skill bundle for the system prompt.
+
+    Explicit launches inject the primary skill body as the active workflow.
+    Keyword / fallback selection still injects only an optional reference index
+    so the model remains free to ignore suggested methodology.
     """
 
+    primary = load_skill_by_name(selection.primary) if selection.primary else None
+    if _is_explicit_selection(selection) and primary:
+        return _format_explicit_skill_context(selection, primary)
+    return _format_optional_skill_index(selection, primary)
+
+
+def _format_explicit_skill_context(
+    selection: SkillSelection, primary: dict[str, Any]
+) -> str:
+    body = str(primary.get("content") or "").strip()
+    if len(body) > _EXPLICIT_SKILL_BODY_MAX_CHARS:
+        body = (
+            body[:_EXPLICIT_SKILL_BODY_MAX_CHARS]
+            + "\n\n[skill body truncated for prompt budget]"
+        )
+
+    parts: list[str] = [
+        f"## Active skill (explicit invocation) — `{selection.primary}`",
+        (
+            "The operator launched this skill deliberately via a slash command or "
+            '"Use VulnClaw skill ...". Follow its workflow as the primary plan unless '
+            "the user overrides it. Do not reverse-engineer scope hosts (for example "
+            "do not run js_recon against hackerone.com)."
+        ),
+    ]
+    if body:
+        parts.append(body)
+    else:
+        desc = primary.get("description", "").strip()
+        parts.append(desc or f"(skill {selection.primary} has an empty body)")
+
+    support_lines: list[str] = []
+    for name in selection.supporting:
+        skill = load_skill_by_name(name)
+        if not skill:
+            continue
+        desc = skill.get("description", "").strip()
+        summary = desc.splitlines()[0] if desc else "(no description)"
+        support_lines.append(f"- optional supporting reference: {name} — {summary}")
+    if support_lines:
+        parts.append(
+            "Optional supporting skills (not mandatory):\n" + "\n".join(support_lines)
+        )
+
+    refs = primary.get("references", []) or []
+    if refs:
+        ref_list = ", ".join(refs[:10])
+        if len(refs) > 10:
+            ref_list += f", ... ({len(refs)} total)"
+        parts.append(
+            "Optional reference files for this skill — load only when needed with "
+            f"`load_skill_reference`: {ref_list}"
+        )
+
+    if selection.reason:
+        parts.append(
+            f"<!-- skill routing: {selection.reason}; confidence={selection.confidence:.2f} -->"
+        )
+    return "\n\n".join(part for part in parts if part)
+
+
+def _format_optional_skill_index(
+    selection: SkillSelection, primary: Optional[dict[str, Any]]
+) -> str:
     parts: list[str] = [
         "These skills are optional reference material only. They are not mandatory "
         "workflows, phases, checklists, or tool schedules. Use or ignore them based "
         "on the current evidence and your own reasoning."
     ]
 
-    primary = load_skill_by_name(selection.primary) if selection.primary else None
     if primary:
         desc = primary.get("description", "").strip()
         summary = desc.splitlines()[0] if desc else "(no description)"
