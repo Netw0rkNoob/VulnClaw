@@ -24,6 +24,7 @@ from vulnclaw.agent.builtin_tools import (
 )
 from vulnclaw.agent.context import ContextManager, PentestPhase, SessionState, TaskConstraints
 from vulnclaw.agent.ctf_mode import detect_flag_claim
+from vulnclaw.agent.experience_context import build_experience_context
 from vulnclaw.agent.finding_parser import FindingParser
 from vulnclaw.agent.input_analysis import (
     detect_phase,
@@ -48,6 +49,7 @@ from vulnclaw.agent.tool_call_manager import safe_parse_tool_args
 from vulnclaw.config.schema import VulnClawConfig, resolve_engine
 from vulnclaw.config.settings import make_openai_client
 from vulnclaw.i18n import _
+from vulnclaw.kb.experience import ExperienceStore
 from vulnclaw.target_state.store import save_target_state
 
 # Optional KB integration — gracefully degrade if KB data is unavailable
@@ -88,6 +90,7 @@ class AgentCore:
         # Optional KB retriever — lazily initialized on first use
         self._kb_retriever: Any = None
         self._kb_context_cache: dict[Any, str] = {}
+        self._experience_store: Any = None
         self._finding_parser = FindingParser(self.context, self.runtime)
         self._report_kb_status()
 
@@ -406,6 +409,7 @@ class AgentCore:
             enable_personnel = True
 
         kb_context = self._build_kb_context(user_input)
+        experience_context = self._build_experience_context()
 
         prompt = build_dynamic_system_prompt(
             target=target or self.context.state.target,
@@ -416,6 +420,7 @@ class AgentCore:
             auto_mode=auto_mode,
             user_input=user_input,
             kb_context=kb_context,
+            experience_context=experience_context,
             task_constraints=self.context.state.task_constraints,
         )
         active_role_prompt = role_prompt_block(self.active_role)
@@ -431,6 +436,15 @@ class AgentCore:
 
     def _build_kb_context(self, user_input: Optional[str] = None) -> str:
         return build_kb_context(self, user_input)
+
+    def _build_experience_context(self) -> str:
+        """Load approved cross-session lessons without affecting agent availability."""
+        if self._experience_store is None:
+            try:
+                self._experience_store = ExperienceStore()
+            except Exception:
+                return ""
+        return build_experience_context(self.context.state, self._experience_store)
 
     def _detect_phase(self, user_input: str) -> Optional[PentestPhase]:
         """Detect pentest phase from user input using keyword matching."""

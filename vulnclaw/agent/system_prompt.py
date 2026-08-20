@@ -24,6 +24,7 @@ def build_dynamic_system_prompt(
     auto_mode: bool,
     user_input: Optional[str],
     kb_context: str,
+    experience_context: str = "",
     task_constraints: Optional["TaskConstraints"] = None,
 ) -> str:
     """Build the dynamic system prompt for one turn."""
@@ -72,6 +73,9 @@ def build_dynamic_system_prompt(
 
     if kb_context:
         prompt += "\n\n" + kb_context
+
+    if experience_context:
+        prompt += "\n\n" + experience_context
 
     if task_constraints is not None:
         constraints_block = task_constraints.to_prompt_block()
