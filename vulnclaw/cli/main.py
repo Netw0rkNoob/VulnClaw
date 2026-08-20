@@ -233,7 +233,14 @@ def _read_repl_line(
     return pt_session.prompt(HTML(f"vulnclaw {body}<b>&gt; </b>"))
 
 
-def _run_repl_command(name: str, args: str, agent: Any, config: Any) -> Any:
+def _run_repl_command(
+    name: str,
+    args: str,
+    agent: Any,
+    config: Any,
+    *,
+    mcp_manager: Any = None,
+) -> Any:
     """Execute a built-in classic-REPL slash command.
 
     Returns the (possibly reloaded) config so the caller can keep using it.
@@ -254,6 +261,18 @@ def _run_repl_command(name: str, args: str, agent: Any, config: Any) -> Any:
 
     if name == "language":
         return _repl_switch_language(args, agent, config)
+
+    if name == "wizard":
+        from vulnclaw.cli.wizard import run_setup_wizard
+
+        result = run_setup_wizard(
+            console=console,
+            mcp_manager=mcp_manager,
+            agent=agent,
+        )
+        if result.config is not None:
+            return result.config
+        return load_config()
 
     return config
 
@@ -363,7 +382,13 @@ def _run_repl() -> None:
                     console.print(_("cli.target_set", target=current_target))
                     continue
                 if result.kind == "command":
-                    config = _run_repl_command(result.value, result.text, agent, config)
+                    config = _run_repl_command(
+                        result.value,
+                        result.text,
+                        agent,
+                        config,
+                        mcp_manager=mcp_manager,
+                    )
                     continue
                 # result.kind == "run": fall through with the rewritten prompt.
                 user_input = result.text
