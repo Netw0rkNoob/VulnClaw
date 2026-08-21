@@ -11,6 +11,7 @@
 [![PyPI](https://img.shields.io/badge/PyPI-v0.3.8-blueviolet)](https://pypi.org/project/vulnclaw/)
 [![codecov](https://codecov.io/gh/Netw0rkNoob/VulnClaw/branch/main/graph/badge.svg)](https://codecov.io/gh/Netw0rkNoob/VulnClaw)
 [![Security](https://img.shields.io/badge/Scope-Authorized_Only-red)](#-安全声明)
+[![Discord](https://img.shields.io/badge/Discord-Join_Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/q5nrZpe6S)
 [![AtomGitStars](https://atomgit.com/Unclecheng-li/VulnClaw/star/badge.svg)](https://atomgit.com/Unclecheng-li/VulnClaw)
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/1/2026-06-05/1d8h69mt3v89kkekg24gg">
@@ -23,6 +24,8 @@
 **本项目是可独立运行的 AI 渗透测试 Agent。**
 <br>
 项目官网：https://unclecheng-li.github.io/vulnclaw.com/
+<br>
+💬 **社区**: [加入我们的 Discord](https://discord.gg/q5nrZpe6S)
 <br>
 
 基于 LLM Agent + MCP 工具链 + 可选 Skill 参考资料，
