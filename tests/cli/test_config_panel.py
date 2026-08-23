@@ -638,3 +638,42 @@ def test_every_panel_label_key_exists_in_both_catalogs():
     for name, catalog in catalogs.items():
         missing = sorted(key for key in used if key not in catalog)
         assert missing == [], f"{name}.json is missing: {missing}"
+
+
+def test_env_values_are_masked_until_revealed(model):
+    model.add_server("secretsrv")
+    owner, attr = model._resolve("mcp.secretsrv.transport.env")
+    setattr(owner, attr, {"API_TOKEN": "supersecretvalue", "PORT": "8080"})
+    _focus(model, "mcp.secretsrv.transport.env")
+    row = model.focused
+
+    masked = model.display_value(row)
+    assert "supersecretvalue" not in masked
+    assert "API_TOKEN" in masked  # keys stay visible; values are hidden
+
+    model.toggle_reveal()
+    revealed = model.display_value(row)
+    assert "supersecretvalue" in revealed
+
+
+def test_secret_edit_text_is_not_shown_in_the_clear(model):
+    _focus(model, "llm.api_key")
+    model.activate()
+    model.set_edit_text("sk-livesecret999")
+
+    assert "sk-livesecret999" not in model.edit_display(model.focused)
+
+
+def test_plain_edit_text_is_shown_verbatim(model):
+    _focus(model, "llm.base_url")
+    model.activate()
+    model.set_edit_text("https://typed.test/v1")
+
+    assert model.edit_display(model.focused) == "https://typed.test/v1"
+
+
+def test_server_name_with_a_dot_is_rejected(model):
+    model.add_server("foo.bar")
+
+    assert "foo.bar" not in model.draft.mcp.servers
+    assert model.row_error

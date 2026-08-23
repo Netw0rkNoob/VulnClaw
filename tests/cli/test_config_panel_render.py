@@ -131,3 +131,16 @@ def test_viewport_render_omits_rows_outside_the_window():
     # "Save" is the last logical row and should be scrolled out of view.
     assert "Save" not in output
     assert "Session" not in output
+
+
+def test_editing_a_secret_does_not_render_the_typed_key():
+    model = ConfigPanelModel(VulnClawConfig())
+    model._expanded.add("llm")
+    model._focus_key = "llm.api_key"
+    model.activate()
+    model.set_edit_text("sk-typed-in-the-clear")
+
+    output = _render(model)
+
+    assert "sk-typed-in-the-clear" not in output
+    assert "•" in output

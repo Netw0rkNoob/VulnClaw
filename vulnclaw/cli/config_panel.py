@@ -573,7 +573,11 @@ class ConfigPanelModel:
         if row.value_kind == LIST:
             return ", ".join(value or [])
         if row.value_kind == ENV:
-            return ", ".join(f"{k}={v}" for k, v in sorted((value or {}).items()))
+            items = sorted((value or {}).items())
+            if self._reveal:
+                return ", ".join(f"{k}={v}" for k, v in items)
+            # Env values routinely hold tokens/passwords — keep keys, hide values.
+            return ", ".join(f"{k}={mask_secret(v)}" for k, v in items)
         return str(value)
 
     def _edit_seed(self, row: Row) -> str:
@@ -591,6 +595,17 @@ class ConfigPanelModel:
     @property
     def edit_text(self) -> str:
         return self._edit["text"] if self._edit else ""
+
+    def edit_display(self, row: Row) -> str:
+        """Editor text as it should appear on screen.
+
+        Secret fields are echoed as bullets so a typed API/recon key is never
+        rendered in the clear, mirroring how stored secrets are masked.
+        """
+        text = self.edit_text
+        if row.value_kind in (SECRET, SECRET_LIST) and not self._reveal:
+            return "•" * len(text)
+        return text
 
     def set_edit_text(self, text: str) -> None:
         if self._edit is not None:
@@ -772,6 +787,11 @@ class ConfigPanelModel:
         name = name.strip()
         if not name:
             self.row_error = "Server name cannot be blank."
+            return
+        # Row paths are dotted (mcp.<name>.transport…), so a dot in the name
+        # would make _resolve() split on it and raise KeyError later.
+        if "." in name:
+            self.row_error = "Server name cannot contain '.'."
             return
         if name in self.draft.mcp.servers:
             self.row_error = f"Server '{name}' already exists."

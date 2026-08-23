@@ -26,7 +26,7 @@ def _row_value(model: ConfigPanelModel, row: Row, focused: bool) -> str:
         summary = "" if row.expanded else model.summary(row.key)
         return f"{marker} {summary}".rstrip()
     if focused and model.editing:
-        return f"{model.edit_text}▏"
+        return f"{model.edit_display(row)}▏"
     return model.display_value(row)
 
 
