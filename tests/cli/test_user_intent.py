@@ -35,6 +35,17 @@ class TestIsConversationalCheckin:
     def test_plain_work_order_not_checkin(self):
         assert is_conversational_checkin("recon crypto.com") is False
 
+    def test_operational_request_phrased_as_question_not_checkin(self):
+        # A concrete testing directive must still run, even without a URL and
+        # even when politely phrased as a question.
+        assert is_conversational_checkin("Can you test the login for SQL injection?") is False
+        assert is_conversational_checkin("could you check the upload form for XSS?") is False
+        assert is_conversational_checkin("能帮我测一下登录框的 SQL 注入吗？") is False
+
+    def test_readiness_question_still_checkin_even_with_action_word(self):
+        assert is_conversational_checkin("ready to begin bug hunting?") is True
+        assert is_conversational_checkin("should we start scanning now?") is True
+
 
 class TestShouldAutoPentestRespectsCheckin:
     def test_checkin_never_enters_auto_even_with_target(self):

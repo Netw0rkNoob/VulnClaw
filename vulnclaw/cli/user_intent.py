@@ -56,6 +56,21 @@ _IMPERATIVE_START_RE = re.compile(
     re.IGNORECASE,
 )
 
+# An operational directive names a testing action, even when it is politely
+# phrased as a question and carries no URL ("can you test the login for SQLi?").
+# Readiness/meta questions are filtered out before this runs, so matching an
+# action verb anywhere in the turn is a signal to keep it on the work path.
+_OPERATIONAL_ACTION_RE = re.compile(
+    r"\b(?:scan|test|pentest|exploit|enumerate|probe|fuzz|attack|inject|"
+    r"brute(?:force|-force)?|recon(?:naissance)?)\b|"
+    # A named vulnerability class is itself a testing directive, so it keeps
+    # the turn operational even when the verb is a soft one like "check".
+    r"\b(?:sql\s*injection|sqli|xss|idor|ssrf|rce|csrf|lfi|rfi|xxe|ssti|"
+    r"open\s*redirect|path\s*traversal|command\s*injection)\b|"
+    r"扫描|测试|渗透|侦察|利用|爆破|枚举|注入",
+    re.IGNORECASE,
+)
+
 
 def is_affirmative_continue(user_input: str) -> bool:
     """True when the user is green-lighting the next autonomous step."""
@@ -86,6 +101,11 @@ def is_conversational_checkin(user_input: str) -> bool:
 
     # Short "scan it?"-style commands are not check-ins.
     if _IMPERATIVE_START_RE.match(text) and len(text) <= 40:
+        return False
+
+    # A concrete testing directive stays on the work path even without a host
+    # and even when phrased as a question ("can you test X for SQLi?").
+    if _OPERATIONAL_ACTION_RE.search(text):
         return False
 
     # Short open questions → answer first (status, plan, clarification).
