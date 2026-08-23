@@ -11,6 +11,7 @@ import pytest
 from vulnclaw.agent.hackerone_scope import (
     execute_hackerone_scope,
     extract_program_handle,
+    MAX_PAGES,
     fetch_program_scope,
     format_scope_report,
 )
@@ -122,6 +123,40 @@ class TestFetchProgramScope:
         report = format_scope_report(bundle)
         assert "Starting recon on *.crypto.com" in report
         assert "blog.crypto.com" in report
+
+    def test_truncated_pagination_raises_instead_of_returning_partial_scope(self):
+        """Silently stopping at MAX_PAGES would hide out-of-scope assets."""
+        calls = {"n": 0}
+
+        def opener(_request: Any, timeout: float = 0) -> _FakeResponse:
+            calls["n"] += 1
+            return _FakeResponse(
+                _team_payload(
+                    [
+                        {
+                            "id": f"gid://hackerone/StructuredScope/{calls['n']}",
+                            "asset_type": "URL",
+                            "asset_identifier": f"host{calls['n']}.crypto.com",
+                            "eligible_for_submission": True,
+                            "eligible_for_bounty": True,
+                        }
+                    ],
+                    has_next=True,
+                )
+            )
+
+        with pytest.raises(RuntimeError, match="partial scope"):
+            fetch_program_scope("crypto", opener=opener)
+        assert calls["n"] == MAX_PAGES
+
+    def test_missing_cursor_with_more_pages_raises(self):
+        def opener(_request: Any, timeout: float = 0) -> _FakeResponse:
+            payload = _team_payload([], has_next=True)
+            payload["data"]["team"]["structured_scopes"]["pageInfo"]["endCursor"] = None
+            return _FakeResponse(payload)
+
+        with pytest.raises(RuntimeError, match="no pagination cursor"):
+            fetch_program_scope("crypto", opener=opener)
 
     def test_missing_team_raises(self):
         def opener(_request: Any, timeout: float = 0) -> _FakeResponse:

@@ -122,6 +122,7 @@ def fetch_program_scope(
     program_id = ""
     total_count = 0
     after: str | None = None
+    complete = False
     open_url = opener or urllib.request.urlopen
 
     for _ in range(MAX_PAGES):
@@ -192,10 +193,23 @@ def fetch_program_scope(
 
         page_info = scopes.get("pageInfo") or {}
         if not page_info.get("hasNextPage"):
+            complete = True
             break
         after = page_info.get("endCursor")
         if not after:
-            break
+            raise RuntimeError(
+                f"HackerOne reported more scope pages for {handle!r} but returned "
+                f"no pagination cursor after {len(nodes)} assets"
+            )
+
+    # An incomplete scope is never safe to act on: a missing out-of-scope row
+    # can send recon at an asset the program forbids.
+    if not complete:
+        raise RuntimeError(
+            f"HackerOne scope for {handle!r} exceeds {MAX_PAGES} pages of "
+            f"{page_size} ({len(nodes)} assets read, total_count={total_count}); "
+            "refusing to return a partial scope"
+        )
 
     return _bundle_from_nodes(
         handle=handle,
