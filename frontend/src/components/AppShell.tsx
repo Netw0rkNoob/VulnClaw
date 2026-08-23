@@ -13,7 +13,8 @@ interface ViewMeta {
 
 export interface ShellAction {
   label: string;
-  glyph: string;
+  /** Visual cue for the action rail / footer (label remains the a11y name). */
+  icon: string;
   onClick: () => void;
   active?: boolean;
   disabled?: boolean;
@@ -108,7 +109,7 @@ export function AppShell<T extends string>({
         />
         <div className="view-mount">{children}</div>
       </main>
-      <aside className="quick-rail" aria-label="quick actions">
+      <aside className="quick-rail" aria-label={t("shell.quick_actions")}>
         <div className="quick-rail-main">
           {quickActions.map((item) => (
             <button
@@ -120,7 +121,8 @@ export function AppShell<T extends string>({
               disabled={item.disabled}
               onClick={item.onClick}
             >
-              <span>{item.glyph}</span>
+              <img className="rail-icon" src={item.icon} alt="" aria-hidden="true" />
+              <span className="rail-tooltip" aria-hidden="true">{item.label}</span>
             </button>
           ))}
         </div>

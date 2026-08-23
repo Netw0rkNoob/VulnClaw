@@ -247,12 +247,12 @@ export function App() {
   }
 
   const quickActions: ShellAction[] = useMemo(() => [
-    { label: t("quick.new_scan"), glyph: "+", active: activeView === "home", onClick: () => navigateToView("home") },
-    { label: t("quick.history"), glyph: "T", active: activeView === "history", onClick: () => navigateToView("history") },
-    { label: t("quick.reports"), glyph: "R", active: activeView === "reports", onClick: () => openReports(activeTask?.target ?? selectedTarget) },
+    { label: t("quick.new_scan"), icon: "/icons/rail/plus.svg", active: activeView === "home", onClick: () => navigateToView("home") },
+    { label: t("quick.history"), icon: "/icons/sidebar/history.svg", active: activeView === "history", onClick: () => navigateToView("history") },
+    { label: t("quick.reports"), icon: "/icons/sidebar/reports.svg", active: activeView === "reports", onClick: () => openReports(activeTask?.target ?? selectedTarget) },
     {
       label: t("quick.assets"),
-      glyph: "A",
+      icon: "/icons/rail/assets.svg",
       active: activeView === "risk",
       onClick: () => {
         if (activeTask?.target) setSelectedTarget(activeTask.target);
@@ -261,30 +261,30 @@ export function App() {
     },
     {
       label: t("quick.scope"),
-      glyph: "IP",
+      icon: "/icons/sidebar/scope.svg",
       active: activeView === "boundary",
       onClick: openBoundaryForActiveTask,
     },
     {
       label: t("quick.findings"),
-      glyph: "!",
+      icon: "/icons/sidebar/findings.svg",
       active: activeView === "risk",
       onClick: () => navigateToView("risk"),
     },
-    { label: t("nav.console"), glyph: "C", active: activeView === "advanced", onClick: () => navigateToView("advanced") },
+    { label: t("nav.console"), icon: "/icons/rail/console.svg", active: activeView === "advanced", onClick: () => navigateToView("advanced") },
     {
       label: t("quick.refresh"),
-      glyph: "F",
+      icon: "/icons/rail/refresh.svg",
       onClick: () => refreshTaskData(activeTask?.target ?? selectedTarget),
     },
   ], [t, activeView, activeTask?.target, selectedTarget]);
 
   const sidebarActions: ShellAction[] = useMemo(() => [
     hasStoppableTask
-      ? { label: t("quick.stop_task"), glyph: "ST", onClick: () => setStopConfirmOpen(true) }
-      : { label: t("quick.home"), glyph: "H", active: activeView === "home", onClick: () => navigateToView("home") },
-    { label: t("nav.settings"), glyph: "S", active: activeView === "settings", onClick: () => openSettings("basic") },
-    { label: t("nav.console"), glyph: "C", active: activeView === "advanced", onClick: () => navigateToView("advanced") },
+      ? { label: t("quick.stop_task"), icon: "/icons/rail/stop.svg", onClick: () => setStopConfirmOpen(true) }
+      : { label: t("quick.home"), icon: "/icons/rail/home.svg", active: activeView === "home", onClick: () => navigateToView("home") },
+    { label: t("nav.settings"), icon: "/icons/sidebar/settings.svg", active: activeView === "settings", onClick: () => openSettings("basic") },
+    { label: t("nav.console"), icon: "/icons/rail/console.svg", active: activeView === "advanced", onClick: () => navigateToView("advanced") },
   ], [t, hasStoppableTask, activeView]);
 
   return (

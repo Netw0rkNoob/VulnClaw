@@ -330,10 +330,24 @@ vulnclaw tui --target 192.168.1.100 --mode continuous
 通过浏览器操作渗透测试全流程。
 
 ```bash
-pip install 'vulnclaw[web]'  # 安装 Web 依赖
+git clone https://github.com/Netw0rkNoob/VulnClaw.git
+cd VulnClaw
+pip install -e '.[web]'       # 从源码检出安装 Web 依赖
+
+# 首次使用：构建 React 前端（需要 Node.js 18+）
+cd frontend
+npm install
+npm run build
+cd ..
+
 vulnclaw web                  # 启动（默认 127.0.0.1:7788）
 vulnclaw web --port 8080      # 自定义端口
 ```
+
+PyPI wheel 不包含 React 构建产物或前端源码；完整 Web UI 需要按上面的源码方式安装。
+若浏览器显示 **Fallback Web Shell**（无完整扫描界面），说明缺少
+`frontend/dist/index.html`。按上式构建后重启 `vulnclaw web` 并强制刷新。
+未构建前端时，`/api/health` 等 API 仍可用。
 
 > ⚠️ 默认仅绑定本地回环地址。如需远程访问须显式指定 `--host 0.0.0.0 --allow-remote`。
 

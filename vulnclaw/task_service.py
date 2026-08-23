@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, get_args
 from urllib.parse import urlparse
@@ -48,7 +49,11 @@ class TaskOptions(BaseModel):
     only_port: int | None = Field(default=None, ge=1, le=65535)
     only_host: str | None = Field(default=None, max_length=253)
     only_path: str | None = Field(default=None, max_length=2048)
-    blocked_host: str | None = Field(default=None, max_length=253)
+    blocked_host: str | None = Field(
+        default=None,
+        max_length=4096,
+        description="Comma- or newline-separated explicitly blocked hosts",
+    )
     blocked_path: str | None = Field(default=None, max_length=2048)
     allow_actions: list[str] | None = Field(default=None, max_length=20)
     block_actions: list[str] | None = Field(default=None, max_length=20)
@@ -67,7 +72,6 @@ class TaskOptions(BaseModel):
         "cmd",
         "only_host",
         "only_path",
-        "blocked_host",
         "blocked_path",
     )
     @classmethod
@@ -198,7 +202,7 @@ def build_scope_constraints(target: str, scope: dict[str, Any]) -> TaskConstrain
     constraints = TaskConstraints(
         allowed_ports=[scope["only_port"]] if scope.get("only_port") else [],
         allowed_hosts=[scope["only_host"]] if scope.get("only_host") else ([host] if host else []),
-        blocked_hosts=_values(scope.get("blocked_host")),
+        blocked_hosts=_parse_blocked_hosts(scope.get("blocked_host")),
         allowed_paths=_values(scope.get("only_path")),
         blocked_paths=_values(scope.get("blocked_path")),
         allowed_actions=_values(scope.get("allow_actions")),
@@ -481,3 +485,30 @@ def _values(value: Any) -> list[str]:
         return []
     raw = value if isinstance(value, (list, tuple)) else str(value).split(",")
     return [str(item).strip() for item in raw if str(item).strip()]
+
+
+_BLOCKED_HOST_SEPARATOR_RE = re.compile(r"[,\r\n]+")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _parse_blocked_hosts(value: Any) -> list[str]:
+    """Parse the blocklist field into normalized, ordered host constraints.
+
+    The Web UI lets operators enter several excluded hosts in one field,
+    separated by commas or new lines, so a single string can carry many
+    constraints. Each host is lower-cased, de-duplicated, and rechecked for
+    control characters — newlines are a legitimate separator here, but any
+    other control character inside a host is a prompt-injection attempt.
+    """
+    if value is None:
+        return []
+    hosts: list[str] = []
+    for raw_host in _BLOCKED_HOST_SEPARATOR_RE.split(str(value)):
+        host = raw_host.strip().lower()
+        if not host:
+            continue
+        if _CONTROL_CHAR_RE.search(host):
+            raise ValueError("blocked_host contains invalid control characters")
+        if host not in hosts:
+            hosts.append(host)
+    return hosts

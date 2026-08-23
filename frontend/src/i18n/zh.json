@@ -1,7 +1,6 @@
 {
   "brand.name": "VulnClaw",
   "brand.tagline": "攻击面测绘",
-
   "nav.scan": "扫描",
   "nav.findings": "发现",
   "nav.reports": "报告",
@@ -9,7 +8,6 @@
   "nav.history": "历史",
   "nav.settings": "设置",
   "nav.console": "控制台",
-
   "quick.new_scan": "新建扫描",
   "quick.history": "历史",
   "quick.reports": "报告",
@@ -19,7 +17,6 @@
   "quick.refresh": "刷新",
   "quick.home": "首页",
   "quick.stop_task": "停止任务",
-
   "view.scan.eyebrow": "扫描",
   "view.scan.title": "新建扫描",
   "view.scan.copy": "输入目标并开始。",
@@ -41,15 +38,12 @@
   "view.console.eyebrow": "控制",
   "view.console.title": "任务控制台",
   "view.console.copy": "原始任务控制。",
-
   "topbar.target": "目标: {target}",
   "topbar.no_target": "未选择目标",
   "topbar.idle": "空闲",
-
   "shell.backend_unavailable": "后端不可用",
   "shell.backend_hint": "启动 `vulnclaw web` 并打开本地地址以加载实时控制台。",
   "shell.retry": "重试",
-
   "banner.active_scan": "当前扫描",
   "banner.results": "结果",
   "banner.boundary": "边界",
@@ -58,7 +52,6 @@
   "banner.reports": "报告",
   "banner.stop": "停止",
   "banner.waiting": "等待任务事件...",
-
   "dialog.confirmation_required": "需要确认",
   "dialog.cancel": "取消",
   "dialog.confirm": "确认",
@@ -67,7 +60,6 @@
   "dialog.close": "关闭",
   "dialog.loading_preview": "正在加载报告预览...",
   "dialog.select_report_preview": "选择一份报告进行预览。",
-
   "toast.task_started": "任务已启动",
   "toast.task_finished": "任务完成",
   "toast.task_finished_copy": "查看风险结果或生成报告。",
@@ -79,11 +71,9 @@
   "toast.task_stopped_copy": "保存的状态和报告仍然可用。",
   "toast.stop_sent": "已发送停止请求",
   "toast.stop_sent_copy": "VulnClaw 正在结束当前任务。",
-
   "confirm.stop_scan_title": "停止当前扫描？",
   "confirm.stop_scan_copy": "停止将结束当前任务，但保存的状态和报告仍然可用。",
   "confirm.stop_task_label": "停止任务",
-
   "error.unreachable": "无法连接到 VulnClaw 后端 API。请启动 `vulnclaw web` 后重新连接。",
   "error.request_failed": "请求失败 ({status}): {detail}",
   "error.request_failed_simple": "请求失败 ({status})。请重试或打开高级诊断。",
@@ -96,7 +86,6 @@
   "error.invalid_task_params": "无效的任务参数",
   "error.stop_failed": "停止任务失败",
   "error.select_target_first": "请先选择一个目标。",
-
   "status.idle": "空闲",
   "status.queued": "排队中",
   "status.restoring": "恢复中",
@@ -104,7 +93,6 @@
   "status.completed": "已完成",
   "status.failed": "失败",
   "status.stopped": "已停止",
-
   "phase.scope": "范围确认",
   "phase.recon": "信息收集",
   "phase.scan": "扫描中",
@@ -117,7 +105,6 @@
   "phase.exploitation": "漏洞利用",
   "phase.post_exploitation": "后渗透",
   "phase.reporting": "报告生成",
-
   "command.recon": "快速侦查",
   "command.run": "标准扫描",
   "command.scan": "深度扫描",
@@ -125,14 +112,12 @@
   "command.persistent": "持续扫描",
   "command.default": "扫描",
   "command.custom": "自定义扫描",
-
   "action.recon": "侦查",
   "action.run": "标准扫描",
   "action.scan": "扫描",
   "action.exploit": "验证",
   "action.persistent": "持续扫描",
   "action.post_exploitation": "后渗透",
-
   "event.task_started": "任务已启动",
   "event.task_progress": "任务进行中",
   "event.task_message": "任务消息",
@@ -140,7 +125,6 @@
   "event.task_failed": "任务失败",
   "event.task_stopped": "任务已停止",
   "event.default": "任务事件",
-
   "severity.critical": "严重",
   "severity.high": "高危",
   "severity.medium": "中危",
@@ -148,24 +132,20 @@
   "severity.warning": "警告",
   "severity.low": "低危",
   "severity.info": "信息",
-
   "finding_status.verified": "已验证",
   "finding_status.pending": "待处理",
   "finding_status.candidate": "候选",
   "finding_status.manual_review": "人工审核",
   "finding_status.dismissed": "已忽略",
   "finding_status.false_positive": "误报",
-
   "mcp_health.healthy": "正常",
   "mcp_health.degraded": "降级",
   "mcp_health.unavailable": "离线",
   "mcp_health.unknown": "未知",
-
   "mcp_mode.local": "本地",
   "mcp_mode.placeholder": "占位",
   "mcp_mode.sdk": "SDK",
   "mcp_mode.sse": "SSE",
-
   "resume.stop": "可结束当前扫描",
   "resume.verify": "请先确认已验证的发现",
   "resume.exploit": "验证前请确认授权",
@@ -173,7 +153,6 @@
   "resume.recon": "补充信息收集",
   "resume.continue": "从当前状态恢复",
   "resume.none": "无恢复指导",
-
   "boundary.blocked_label": "已拦截",
   "boundary.host_only": "限定主机",
   "boundary.path_only": "限定路径",
@@ -186,7 +165,6 @@
   "boundary.custom": "自定义边界",
   "boundary.default_scope": "默认范围",
   "boundary.auto_scope": "自动范围",
-
   "home.welcome": "欢迎使用 VulnClaw",
   "home.tagline": "攻击面测绘",
   "home.scan": "扫描",
@@ -194,7 +172,7 @@
   "home.new_scan_task": "新建扫描任务",
   "home.clear_target": "清除目标",
   "home.ip_domain": "IP/域名",
-  "home.black_ip": "黑名单 IP",
+  "home.black_ip": "排除主机",
   "home.port": "端口",
   "home.custom_ports": "自定义端口",
   "home.resume_previous": "恢复之前的状态",
@@ -211,7 +189,6 @@
   "home.path": "路径",
   "home.block_host_field": "排除主机",
   "home.block_path_field": "排除路径",
-
   "home.mode_quick": "快速",
   "home.mode_quick_copy": "轻量发现。",
   "home.mode_standard": "标准",
@@ -221,13 +198,11 @@
   "home.mode_label": "模式",
   "home.mode_loop": "循环",
   "home.mode_loop_copy": "重复扫描。",
-
   "home.action_recon_copy": "资产发现与公开信息收集。",
   "home.action_scan_copy": "服务与入口识别。",
   "home.action_exploit_copy": "需要明确授权的验证动作。",
   "home.action_persistent_copy": "多轮持续检查。",
   "home.action_post_exploit_copy": "后渗透步骤，通常被禁止。",
-
   "home.running": "运行中",
   "home.current_task": "当前任务",
   "home.target": "目标",
@@ -243,18 +218,15 @@
   "home.hide_raw_events": "隐藏原始事件",
   "home.no_raw_events": "暂无原始任务事件。",
   "home.waiting_events": "等待任务事件...",
-
   "home.scan_complete": "扫描完成",
   "home.scan_error": "扫描因错误停止",
   "home.scan_stopped": "扫描已停止",
   "home.scanning": "正在扫描 {target}",
-
   "home.confirm_deep_title": "启动深度扫描？",
   "home.confirm_scan_label": "开始扫描",
   "home.confirm_lines": "目标: {target}\n模式: {mode}\n范围: {scope}\n{extra}",
   "home.confirm_extra_care": "本次扫描可能需要较长时间。",
   "home.confirm_not_set": "未设置",
-
   "home.inferred": "推测",
   "home.host_scope": "主机 {host}",
   "home.host_scope_inferred": "主机 {host} (推测)",
@@ -265,7 +237,6 @@
   "home.block_host_scope": "排除主机 {host}",
   "home.block_path_scope": "排除路径 {path}",
   "home.continuous_no_path": "持续模式不支持仅限定路径的范围。",
-
   "risk.findings": "发现",
   "risk.waiting": "等待中",
   "risk.target": "目标",
@@ -308,7 +279,6 @@
   "risk.collapse": "折叠",
   "risk.expand": "展开",
   "risk.raw_collapsed": "原始数据已折叠。",
-
   "risk.action_generate_report": "生成报告",
   "risk.action_generate_report_copy": "将当前评估打包为 Markdown 或 HTML。",
   "risk.action_review_scope": "检查范围",
@@ -322,7 +292,6 @@
   "risk.action_review_pending_copy": "在生成最终报告前解决待处理的证据。",
   "risk.action_generate_default": "生成报告",
   "risk.action_generate_default_copy": "尚未选择下一步操作。",
-
   "risk.conclusion_verified": "已验证发现: {count}",
   "risk.conclusion_manual": "需要人工审核: {count}",
   "risk.conclusion_pending": "待处理项: {count}",
@@ -332,7 +301,6 @@
   "risk.impact_needs_review": "影响需要评估。",
   "risk.uncategorized": "未分类",
   "risk.default_finding": "发现 {index}",
-
   "reports.title": "报告",
   "reports.files": "{count} 个文件",
   "reports.selected": "已选择",
@@ -372,7 +340,6 @@
   "reports.markdown_report": "Markdown 报告",
   "reports.report_status": "{kind} - {size} - {date}",
   "reports.generated": "已生成: {path}",
-
   "boundary.title": "边界",
   "boundary.blocked": "{count} 次拦截",
   "boundary.target": "目标",
@@ -421,7 +388,6 @@
   "boundary.readiness_active_need_scope": "添加主机、端口或路径边界以提高精确度。",
   "boundary.unknown": "未知",
   "boundary.unrecorded": "未记录",
-
   "history.title": "历史",
   "history.tasks_count": "{count} 个任务",
   "history.tasks": "任务",
@@ -456,7 +422,6 @@
   "history.confirm_restore_title": "恢复快照",
   "history.confirm_restore_copy": "恢复快照会将当前目标状态回滚到所选时间点。",
   "history.restored": "已将 {target} 恢复到 {snapshot}。",
-
   "settings.preferences": "偏好设置",
   "settings.preferences_copy": "本地 UI 默认值",
   "settings.model": "模型",
@@ -471,7 +436,6 @@
   "settings.scripts_copy": "本地执行",
   "settings.diagnostics": "诊断",
   "settings.diagnostics_copy": "MCP 状态",
-
   "settings.save_preferences": "保存偏好",
   "settings.save_boundary": "保存边界",
   "settings.save_settings": "保存设置",
@@ -483,7 +447,6 @@
   "settings.no_api_key": "未设置 API Key",
   "settings.local_only": "仅本地",
   "settings.local_only_note": "UI 偏好存储在本地浏览器中。运行时设置保存到后端。",
-
   "settings.language": "语言",
   "settings.english": "English",
   "settings.chinese": "中文",
@@ -494,7 +457,6 @@
   "settings.continuous_scan": "持续扫描",
   "settings.default_report_format": "默认报告格式",
   "settings.show_raw_events_default": "默认显示原始事件条目",
-
   "settings.provider": "提供商",
   "settings.provider_hint": "后端提供商 ID，例如 openai。",
   "settings.model_field": "模型",
@@ -510,7 +472,6 @@
   "settings.loading_models": "加载中…",
   "settings.models_loaded": "已加载 {count} 个模型",
   "settings.no_models": "未返回任何模型。请先保存 API 密钥，然后刷新。",
-
   "settings.max_rounds": "最大轮数",
   "settings.rounds_per_cycle": "每周期轮数",
   "settings.max_cycles": "最大周期数",
@@ -529,7 +490,6 @@
   "settings.runnable": "可运行",
   "settings.tools": "工具",
   "settings.runtime_check": "运行时检查",
-
   "settings.default_port_only": "默认限定端口",
   "settings.default_port_hint": "留空表示每次扫描时设置。",
   "settings.default_host_only": "默认限定主机",
@@ -538,11 +498,9 @@
   "settings.default_block_path": "默认排除路径",
   "settings.default_allow_actions": "默认允许动作",
   "settings.default_block_actions": "默认禁止动作",
-
   "settings.output_dir": "输出目录",
   "settings.reports_note": "报告",
   "settings.reports_note_text": "如未覆盖，报告将写入 VulnClaw 会话报告目录。",
-
   "settings.enable_local_script": "启用本地脚本助手",
   "settings.record_script_audit": "记录本地脚本审计",
   "settings.execution_guard": "执行防护",
@@ -553,12 +511,10 @@
   "settings.trusted_mode": "可信本地",
   "settings.trusted_mode_copy": "授权可信机器的完整本地能力。",
   "settings.max_output_lines": "最大输出行数",
-
   "settings.need_raw_inputs": "需要原始任务输入？",
   "settings.need_raw_inputs_text": "打开任务控制台查看 SSE 事件、原始命令参数和边界调试。",
   "settings.open_task_console": "打开任务控制台",
   "settings.no_mcp_diag": "暂无 MCP 诊断数据。",
-
   "console.title": "任务控制台",
   "console.description": "原始命令输入、SSE 事件和高级任务参数。",
   "console.command": "命令",
@@ -599,13 +555,15 @@
   "console.no_block_list": "无明确禁止列表",
   "console.backend_default": "后端默认值",
   "console.continuous_only": "仅持续模式",
-
   "error_boundary.kicker": "UI 防护",
   "error_boundary.title": "VulnClaw UI 遇到渲染错误",
   "error_boundary.copy": "已保存的目标、报告和任务历史未受影响。请重新加载 UI，然后从历史或报告继续操作。",
   "error_boundary.reload": "重新加载 UI",
   "error_boundary.technical": "技术错误",
-
   "report.dialog_title": "报告预览",
-  "report.dialog_kicker": "报告预览"
+  "report.dialog_kicker": "报告预览",
+  "shell.quick_actions": "快捷操作",
+  "home.scan_start_aria": "开始扫描",
+  "home.excluded_hosts": "排除主机",
+  "home.excluded_hosts_help": "跳过的主机或 IP（黑名单/blocklist）。用逗号或换行分隔。"
 }
