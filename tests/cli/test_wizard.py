@@ -112,6 +112,35 @@ class TestJavaHome:
         assert found.endswith("java.exe")
 
 
+class TestJavaVersion:
+    def test_parses_modern_openjdk(self):
+        from vulnclaw.cli.wizard import _parse_java_major
+
+        assert _parse_java_major('openjdk version "17.0.9" 2023-10-17') == 17
+
+    def test_parses_legacy_1_8_scheme(self):
+        from vulnclaw.cli.wizard import _parse_java_major
+
+        assert _parse_java_major('java version "1.8.0_301"') == 8
+
+    def test_unparseable_returns_none(self):
+        from vulnclaw.cli.wizard import _parse_java_major
+
+        assert _parse_java_major("no version here") is None
+
+    def test_meets_minimum_rejects_java_8(self, monkeypatch):
+        from vulnclaw.cli import wizard as wiz
+
+        monkeypatch.setattr(wiz, "_java_major_version", lambda _bin: 8)
+        assert wiz.java_meets_minimum("/usr/bin/java") is False
+
+    def test_meets_minimum_accepts_supported(self, monkeypatch):
+        from vulnclaw.cli import wizard as wiz
+
+        monkeypatch.setattr(wiz, "_java_major_version", lambda _bin: 17)
+        assert wiz.java_meets_minimum("/usr/bin/java") is True
+
+
 class TestPlanFromStatus:
     def test_ready_list(self):
         from vulnclaw.cli.wizard import SetupStatus, plan_from_status
@@ -140,3 +169,37 @@ class TestPlanFromStatus:
         assert "wizard" in REPL_COMMANDS
         entries = list_repl_palette_entries()
         assert any(cmd == "wizard" for cmd, _ in entries)
+
+
+class TestStageLanguage:
+    def _run(self, current: str, reply: str):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from vulnclaw.cli import wizard as wiz
+
+        config = VulnClawConfig()
+        config.session.language = current
+        console = Console(file=StringIO(), force_terminal=False)
+        ui = wiz._WizardUi(console=console)
+        status = wiz.SetupStatus()
+        result = wiz.WizardResult()
+        with patch.object(wiz, "_ask", return_value=reply) as ask, patch.object(
+            wiz, "_pause", lambda *a, **k: None
+        ):
+            cfg, st = wiz._stage_language(ui, config, status, result)
+        return cfg, st, result, ask
+
+    def test_auto_default_is_prompted_not_skipped(self):
+        cfg, st, result, ask = self._run("auto", "en")
+        ask.assert_called_once()
+        assert cfg.session.language == "en"
+        assert st.language == "en"
+        assert not any("language" in s for s in result.skipped)
+
+    def test_explicit_choice_is_skipped(self):
+        cfg, st, result, ask = self._run("zh", "en")
+        ask.assert_not_called()
+        assert st.language == "zh"
+        assert any("language (zh)" == s for s in result.skipped)

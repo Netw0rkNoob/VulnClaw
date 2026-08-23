@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -33,6 +34,7 @@ from vulnclaw.config.settings import (
 )
 from vulnclaw.config.token_provider import has_llm_credentials
 
+MIN_JAVA_MAJOR = 17
 DEFAULT_DEBUG_PORT = 9222
 DEFAULT_BURP_SSE = "http://127.0.0.1:9876"
 BURP_SSE_PORT = 9876
@@ -274,20 +276,79 @@ def java_home_from_binary(java_bin: str) -> Optional[str]:
     return None
 
 
+_JAVA_VERSION_RE = re.compile(r'version "(\d+)(?:\.(\d+))?')
+
+
+def _parse_java_major(version_output: str) -> Optional[int]:
+    """Extract the Java major version from `java -version` text.
+
+    Handles both the modern scheme (``openjdk version "17.0.9"`` -> 17) and the
+    legacy 1.x scheme (``java version "1.8.0_301"`` -> 8).
+    """
+    match = _JAVA_VERSION_RE.search(version_output or "")
+    if not match:
+        return None
+    first = int(match.group(1))
+    if first == 1 and match.group(2):
+        return int(match.group(2))
+    return first
+
+
+def _java_major_version(java_bin: str) -> Optional[int]:
+    """Run ``java -version`` and return its major version, or None on failure."""
+    try:
+        proc = subprocess.run(
+            [java_bin, "-version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # The JVM prints its version banner to stderr.
+    return _parse_java_major(f"{proc.stderr}\n{proc.stdout}")
+
+
+def java_meets_minimum(java_bin: str, minimum: int = MIN_JAVA_MAJOR) -> bool:
+    """True when `java_bin` reports a major version >= `minimum`.
+
+    A binary whose version cannot be determined is rejected: building the Burp
+    extension against an unknown/old JDK fails late and confusingly.
+    """
+    major = _java_major_version(java_bin)
+    return major is not None and major >= minimum
+
+
 def ensure_java(
     console: Console,
     status: SetupStatus,
 ) -> tuple[Optional[str], str]:
-    """Ensure a Java runtime exists, installing Temurin 17 via winget when needed.
+    """Ensure a supported Java runtime exists, installing Temurin 17 via winget.
+
+    A Java that is present but older than ``MIN_JAVA_MAJOR`` (e.g. Java 8) is
+    treated as missing, so the build does not fail late against it.
 
     Returns (java_binary_or_None, error_message).
     """
     java = status.java or detect_java_path()
-    if java:
+    if java and java_meets_minimum(java):
         status.java = java
         return java, ""
 
-    console.print("  Java 11+ is required to build the Burp MCP extension.")
+    if java:
+        detected = _java_major_version(java)
+        version_label = f"Java {detected}" if detected else "an unsupported Java"
+        console.print(
+            f"  Found {version_label} at {java}, but Java {MIN_JAVA_MAJOR}+ is "
+            "required to build the Burp MCP extension."
+        )
+        # Do not treat the too-old binary as usable on any later re-scan.
+        status.java = None
+    else:
+        console.print(
+            f"  Java {MIN_JAVA_MAJOR}+ is required to build the Burp MCP extension."
+        )
     winget = shutil.which("winget")
     if platform.system() == "Windows" and winget:
         if _confirm(
@@ -317,7 +378,7 @@ def ensure_java(
                 console.print(f"  [dim]winget exit {proc.returncode}: {tail}[/]")
             # Rescan common dirs (PATH may not refresh in this process).
             java = detect_java_path()
-            if java:
+            if java and java_meets_minimum(java):
                 status.java = java
                 console.print(f"  ✓ Java found: {java}")
                 return java, ""
@@ -332,7 +393,7 @@ def ensure_java(
             _open_url("https://adoptium.net/temurin/releases/?version=17")
         _pause(console, "Install Java, then press Enter to re-scan")
         java = detect_java_path()
-        if java:
+        if java and java_meets_minimum(java):
             status.java = java
             console.print(f"  ✓ Java found: {java}")
             return java, ""
@@ -342,12 +403,12 @@ def ensure_java(
             _open_url("https://adoptium.net/temurin/releases/?version=17")
         _pause(console, "Install Java, then press Enter to re-scan")
         java = detect_java_path()
-        if java:
+        if java and java_meets_minimum(java):
             status.java = java
             console.print(f"  ✓ Java found: {java}")
             return java, ""
 
-    return None, "java not found (need Java 11+). Install Temurin and re-run /wizard"
+    return None, f"no Java {MIN_JAVA_MAJOR}+ found. Install Temurin {MIN_JAVA_MAJOR} and re-run /wizard"
 
 
 def run_setup_wizard(
@@ -535,14 +596,16 @@ def _stage_language(
     result: WizardResult,
 ) -> tuple[VulnClawConfig, SetupStatus]:
     current = str(getattr(config.session, "language", "") or "").strip().lower()
-    if current in {"en", "zh", "auto"}:
+    # "auto" is the schema default, so it means "never chosen" — not a real
+    # selection. Only an explicit en/zh should skip the prompt on first run.
+    if current in {"en", "zh"}:
         status.language = current
         result.skipped.append(f"language ({current})")
         return config, status
 
     ui.begin("UI language", 1)
     con = ui.console
-    lang = _ask(con, "Language [en/zh/auto]", default="en").strip().lower()
+    lang = _ask(con, "Language [en/zh/auto]", default="auto").strip().lower()
     if lang not in {"en", "zh", "auto"}:
         lang = "en"
     config.session.language = lang
