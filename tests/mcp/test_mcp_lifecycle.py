@@ -15,6 +15,53 @@ def _manager() -> MCPLifecycleManager:
     return MCPLifecycleManager(VulnClawConfig())
 
 
+class TestSessionTimeouts:
+    """MCP session timeouts are enforced locally, not via the SDK's read_timeout_seconds.
+
+    The SDK has typed ``ClientSession.read_timeout_seconds`` as both float-seconds
+    and ``datetime.timedelta`` across releases, so passing either one crashes on
+    the version that expects the other (issue #171). VulnClaw passes neither.
+    """
+
+    def test_no_client_session_passes_read_timeout_seconds(self):
+        from pathlib import Path
+
+        import vulnclaw.mcp as mcp_pkg
+
+        offenders = []
+        for path in Path(mcp_pkg.__file__).parent.glob("*.py"):
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                if "read_timeout_seconds=" in stripped:
+                    offenders.append(f"{path.name}:{lineno}")
+        assert offenders == [], (
+            "ClientSession must not receive read_timeout_seconds; bound the call with "
+            f"asyncio.wait_for instead. Offending sites: {offenders}"
+        )
+
+    def test_attached_server_call_times_out_without_sdk_timeout(self, monkeypatch):
+        cfg = VulnClawConfig()
+        cfg.mcp.servers["slow"] = MCPServerConfig(
+            name="slow",
+            transport={"type": "stdio", "command": "noop", "tool_timeout": 10},
+        )
+        m = MCPLifecycleManager(cfg)
+
+        class _HangingSession:
+            async def call_tool(self, name, arguments=None):
+                await asyncio.sleep(60)
+
+        async def _fake_get_or_create_session(server_name):
+            return _HangingSession()
+
+        monkeypatch.setattr(m, "_get_or_create_session", _fake_get_or_create_session)
+
+        with pytest.raises(asyncio.TimeoutError):
+            asyncio.run(m._call_attached_server("slow", "anything", {}))
+
+
 class _FakeProc:
     """Minimal subprocess.Popen stand-in for liveness/termination tests."""
 

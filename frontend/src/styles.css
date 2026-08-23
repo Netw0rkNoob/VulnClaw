@@ -2146,6 +2146,7 @@ body {
 
 .sidebar-footer button,
 .quick-rail button {
+  position: relative;
   display: grid;
   place-items: center;
   width: 34px;
@@ -2221,6 +2222,67 @@ body {
   display: block;
   font-size: 12px;
   line-height: 1;
+}
+
+.rail-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  pointer-events: none;
+}
+
+.sidebar-footer .rail-icon {
+  filter: brightness(0) invert(1);
+  opacity: 0.9;
+}
+
+.quick-rail .rail-icon {
+  filter: invert(52%) sepia(17%) saturate(696%) hue-rotate(182deg) brightness(92%) contrast(88%);
+}
+
+.quick-rail button:first-child .rail-icon,
+.quick-rail button.active .rail-icon,
+.sidebar-footer button.active .rail-icon {
+  filter: brightness(0) invert(1);
+}
+
+.rail-tooltip {
+  position: absolute;
+  right: calc(100% + 10px);
+  z-index: 300;
+  display: none;
+  min-width: max-content;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(36, 63, 101, 0.95);
+  color: white;
+  box-shadow: var(--shadow-soft);
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.sidebar-footer .rail-tooltip {
+  left: calc(100% + 10px);
+  right: auto;
+}
+
+.quick-rail button:hover .rail-tooltip,
+.quick-rail button:focus-visible .rail-tooltip,
+.sidebar-footer button:hover .rail-tooltip,
+.sidebar-footer button:focus-visible .rail-tooltip {
+  display: block;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted, #64748b);
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 500;
 }
 
 .topbar {

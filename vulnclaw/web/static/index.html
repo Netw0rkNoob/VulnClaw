@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>VulnClaw Web</title>
+  <title>VulnClaw Web — Build frontend</title>
   <style>
     :root {
       --bg: #eef6ff;
@@ -16,7 +16,6 @@
       --cyan: #0891b2;
       --safe: #0f9f6e;
       --warn: #d97706;
-      --danger: #dc2626;
     }
     * { box-sizing: border-box; }
     body {
@@ -59,10 +58,7 @@
     }
     .brand strong { display: block; font-size: 18px; }
     .brand span { color: var(--muted); font-size: 12px; }
-    .nav {
-      display: grid;
-      gap: 10px;
-    }
+    .nav { display: grid; gap: 10px; }
     .nav-item {
       padding: 13px 14px;
       border: 1px solid transparent;
@@ -75,9 +71,7 @@
       border-color: rgba(37, 99, 235, 0.18);
       background: rgba(37, 99, 235, 0.08);
     }
-    main {
-      padding: 32px;
-    }
+    main { padding: 32px; }
     .topbar {
       display: flex;
       justify-content: space-between;
@@ -95,9 +89,9 @@
     }
     h1 {
       margin: 0;
-      font-size: clamp(30px, 5vw, 54px);
-      line-height: 1.02;
-      letter-spacing: -0.05em;
+      font-size: clamp(28px, 4.5vw, 48px);
+      line-height: 1.05;
+      letter-spacing: -0.04em;
     }
     .topbar p, .hero-copy {
       max-width: 760px;
@@ -160,7 +154,7 @@
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
       margin-top: 18px;
     }
@@ -171,6 +165,7 @@
       background: var(--surface);
       box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
     }
+    .card.span-2 { grid-column: 1 / -1; }
     .card small {
       color: var(--primary);
       font-weight: 900;
@@ -206,23 +201,57 @@
       font-weight: 900;
       background: var(--primary);
     }
+    pre.build-block {
+      margin: 12px 0 0;
+      padding: 14px 16px;
+      overflow-x: auto;
+      border-radius: 14px;
+      color: #0f3f74;
+      background: rgba(37, 99, 235, 0.08);
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
     code {
       padding: 3px 7px;
       border-radius: 8px;
       color: #0f3f74;
       background: rgba(37, 99, 235, 0.08);
     }
-    .warning { color: var(--warn); }
+    .lang-switch {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .lang-switch button {
+      min-height: 34px;
+      padding: 6px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-strong);
+      color: var(--muted);
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .lang-switch button.active {
+      color: white;
+      border-color: transparent;
+      background: linear-gradient(135deg, var(--primary), var(--cyan));
+    }
+    [data-lang] { display: none !important; }
+    html[lang="zh-CN"] [data-lang="zh"],
+    html[lang="en"] [data-lang="en"] { display: revert !important; }
+    .warning { color: var(--warn); font-weight: 700; }
     .safe { color: var(--safe); }
     footer {
       margin-top: 18px;
       color: var(--muted);
       font-size: 13px;
+      line-height: 1.6;
     }
     @media (max-width: 860px) {
       .shell { grid-template-columns: 1fr; }
       .sidebar {
-        position: static;
         border-right: 0;
         border-bottom: 1px solid var(--line);
       }
@@ -230,6 +259,7 @@
       main { padding: 22px; }
       .topbar { align-items: flex-start; flex-direction: column; }
       .grid { grid-template-columns: 1fr; }
+      .card.span-2 { grid-column: auto; }
     }
   </style>
 </head>
@@ -240,16 +270,35 @@
         <div class="logo">VC</div>
         <div>
           <strong>VulnClaw</strong>
-          <span>授权安全测试助手</span>
+          <span data-lang="zh">授权安全测试助手</span>
+          <span data-lang="en">Authorized security testing</span>
         </div>
       </div>
       <nav class="nav" aria-label="VulnClaw fallback navigation">
-        <div class="nav-item active">首页 · 开始检查</div>
-        <div class="nav-item">风险结果 · 证据</div>
-        <div class="nav-item">报告 · 导出</div>
-        <div class="nav-item">安全边界 · 拦截</div>
-        <div class="nav-item">历史 · 快照</div>
-        <div class="nav-item">设置 · 模型</div>
+        <div class="nav-item active">
+          <span data-lang="zh">首页 · 开始检查</span>
+          <span data-lang="en">Home · Start check</span>
+        </div>
+        <div class="nav-item">
+          <span data-lang="zh">风险结果 · 证据</span>
+          <span data-lang="en">Findings · Evidence</span>
+        </div>
+        <div class="nav-item">
+          <span data-lang="zh">报告 · 导出</span>
+          <span data-lang="en">Reports · Export</span>
+        </div>
+        <div class="nav-item">
+          <span data-lang="zh">安全边界 · 拦截</span>
+          <span data-lang="en">Scope · Blocks</span>
+        </div>
+        <div class="nav-item">
+          <span data-lang="zh">历史 · 快照</span>
+          <span data-lang="en">History · Snapshots</span>
+        </div>
+        <div class="nav-item">
+          <span data-lang="zh">设置 · 模型</span>
+          <span data-lang="en">Settings · Model</span>
+        </div>
       </nav>
     </aside>
 
@@ -257,62 +306,195 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">Fallback Web Shell</p>
-          <h1>VulnClaw Web 已启动</h1>
-          <p>后端 API 正在运行，但没有检测到已构建的 React 前端。此页面是轻量 ToC fallback，用于确认服务状态并提示如何进入完整图形界面。</p>
+          <div class="lang-switch" role="group" aria-label="Language">
+            <button type="button" class="active" data-set-lang="zh-CN">中文</button>
+            <button type="button" data-set-lang="en">English</button>
+          </div>
+          <h1 data-lang="zh">后端已启动，但未构建 React 前端</h1>
+          <h1 data-lang="en">Backend is running — React UI not built yet</h1>
+          <p data-lang="zh">
+            正在提供内置 fallback 页，因为未找到
+            <code>frontend/dist/index.html</code>。
+            API 可用；完整图形界面需要先构建前端再重启 <code>vulnclaw web</code>。
+          </p>
+          <p data-lang="en">
+            This built-in fallback is shown because
+            <code>frontend/dist/index.html</code> is missing.
+            The API is up; build the React app and restart <code>vulnclaw web</code> for the full UI.
+          </p>
         </div>
-        <span class="status-pill">需要构建完整前端</span>
+        <span class="status-pill">
+          <span data-lang="zh">需要构建 frontend/dist</span>
+          <span data-lang="en">Need frontend/dist build</span>
+        </span>
       </header>
 
       <section class="hero">
-        <p class="eyebrow">授权优先</p>
-        <h1>输入目标，确认边界，再开始安全检查</h1>
-        <p class="hero-copy">
-          完整 ToC Web 界面会提供首页检查向导、风险结果、报告中心、安全边界、历史和设置页。
-          如果你看到这个页面，说明后端回退到了内置静态页，而不是前端构建产物。
+        <p class="eyebrow">
+          <span data-lang="zh">授权优先</span>
+          <span data-lang="en">Authorization first</span>
+        </p>
+        <h1 data-lang="zh">输入目标，确认边界，再开始安全检查</h1>
+        <h1 data-lang="en">Set a target, confirm scope, then start checks</h1>
+        <p class="hero-copy" data-lang="zh">
+          完整 Web 界面提供扫描向导、风险结果、报告、安全边界、历史与设置。
+          若仍看到此页，说明服务回退到了 <code>vulnclaw/web/static</code>，而不是 Vite 构建产物。
+        </p>
+        <p class="hero-copy" data-lang="en">
+          The full UI covers scan launch, findings, reports, scope, history, and settings.
+          Seeing this page means the server is using <code>vulnclaw/web/static</code>, not the Vite build output.
         </p>
         <div class="hero-actions">
-          <a class="btn btn-primary" href="/api/health">检查后端健康状态</a>
-          <a class="btn btn-secondary" href="/api/config">查看公开配置</a>
+          <a class="btn btn-primary" href="/api/health">
+            <span data-lang="zh">检查后端健康状态</span>
+            <span data-lang="en">Check API health</span>
+          </a>
+          <a class="btn btn-secondary" href="/api/config">
+            <span data-lang="zh">查看公开配置</span>
+            <span data-lang="en">View public config</span>
+          </a>
         </div>
       </section>
 
       <section class="grid">
-        <article class="card">
-          <small>如何进入完整界面</small>
-          <h2>构建 React 前端</h2>
-          <p>在项目目录执行:</p>
-          <p><code>cd frontend</code></p>
-          <p><code>npm install</code></p>
-          <p><code>npm run build</code></p>
-          <p>然后重新打开 <code>vulnclaw web</code> 提供的地址。</p>
+        <article class="card span-2">
+          <small data-lang="zh">进入完整界面</small>
+          <small data-lang="en">Get the full UI</small>
+          <h2 data-lang="zh">构建 React 前端（必做）</h2>
+          <h2 data-lang="en">Build the React frontend (required)</h2>
+          <p data-lang="zh">
+            PyPI wheel 不包含 React 源码或构建产物；请先克隆仓库并使用 <code>pip install -e '.[web]'</code> 安装。
+          </p>
+          <p data-lang="en">
+            The PyPI wheel does not include the React source or build. Clone the repository and install with <code>pip install -e '.[web]'</code> first.
+          </p>
+          <p data-lang="zh">
+            需要 <strong>Node.js 18+</strong>（含 npm）。在<strong>仓库根目录</strong>执行：
+          </p>
+          <p data-lang="en">
+            Requires <strong>Node.js 18+</strong> (with npm). From the <strong>repository root</strong>:
+          </p>
+          <pre class="build-block" data-lang="zh"># 0. 获取源码并安装 Web 依赖
+git clone https://github.com/Netw0rkNoob/VulnClaw.git
+cd VulnClaw
+pip install -e '.[web]'
+
+# 1. 安装依赖并构建
+cd frontend
+npm install
+npm run build
+
+# 2. 确认产物
+# 应存在：&lt;repo&gt;/frontend/dist/index.html
+
+# 3. 重启 Web（另开终端，仓库根目录）
+# Ctrl+C 停掉当前 vulnclaw web，然后：
+vulnclaw web
+# 或：python -m vulnclaw.cli.main web
+
+# 4. 用终端打印的地址打开浏览器（含 ?token= 时完整复制）</pre>
+          <pre class="build-block" data-lang="en"># 0. Get the source and install Web dependencies
+git clone https://github.com/Netw0rkNoob/VulnClaw.git
+cd VulnClaw
+pip install -e '.[web]'
+
+# 1. Install deps and build
+cd frontend
+npm install
+npm run build
+
+# 2. Confirm output
+# Expect: &lt;repo&gt;/frontend/dist/index.html
+
+# 3. Restart the web server (repo root, second terminal)
+# Stop the current vulnclaw web process (Ctrl+C), then:
+vulnclaw web
+# or: python -m vulnclaw.cli.main web
+
+# 4. Open the printed URL in your browser (copy full ?token= if shown)</pre>
+          <p class="warning" data-lang="zh">
+            开发热更新可用 <code>cd frontend &amp;&amp; npm run dev</code>（通常 :5173），
+            但生产路径仍是 <code>vulnclaw web</code> 静态托管 <code>frontend/dist</code>。
+          </p>
+          <p class="warning" data-lang="en">
+            For live reload use <code>cd frontend &amp;&amp; npm run dev</code> (usually :5173).
+            The production path remains <code>vulnclaw web</code> serving <code>frontend/dist</code>.
+          </p>
         </article>
 
         <article class="card">
-          <small>ToC 主流程</small>
-          <h2>用户路径</h2>
+          <small data-lang="zh">排查</small>
+          <small data-lang="en">Troubleshooting</small>
+          <h2 data-lang="zh">仍看到 fallback？</h2>
+          <h2 data-lang="en">Still on fallback?</h2>
           <ol class="flow">
-            <li><span class="dot">1</span><span>输入明确授权的 URL、域名或 IP。</span></li>
-            <li><span class="dot">2</span><span>选择快速摸底、标准检查或深度验证。</span></li>
-            <li><span class="dot">3</span><span>确认端口、主机、路径和动作边界。</span></li>
-            <li><span class="dot">4</span><span>查看风险结果，并导出 Markdown / HTML 报告。</span></li>
+            <li>
+              <span class="dot">1</span>
+              <span data-lang="zh">确认 <code>frontend/dist/index.html</code> 在磁盘上存在且非空。</span>
+              <span data-lang="en">Confirm <code>frontend/dist/index.html</code> exists and is non-empty.</span>
+            </li>
+            <li>
+              <span class="dot">2</span>
+              <span data-lang="zh">确认在含 <code>frontend/</code> 的仓库根启动了 <code>vulnclaw web</code>。</span>
+              <span data-lang="en">Start <code>vulnclaw web</code> from the repo that contains <code>frontend/</code>.</span>
+            </li>
+            <li>
+              <span class="dot">3</span>
+              <span data-lang="zh">构建后<strong>完全重启</strong> Web 进程，再硬刷新浏览器（Ctrl+F5）。</span>
+              <span data-lang="en"><strong>Fully restart</strong> the web process after building, then hard-refresh the browser.</span>
+            </li>
+            <li>
+              <span class="dot">4</span>
+              <span data-lang="zh">若 <code>npm run build</code> 失败，先看 Node 版本与终端错误输出。</span>
+              <span data-lang="en">If <code>npm run build</code> fails, check Node version and the terminal error.</span>
+            </li>
           </ol>
         </article>
 
         <article class="card">
-          <small>安全边界</small>
-          <h2>不要越过授权范围</h2>
-          <p>
-            VulnClaw 的完整 Web 界面会把 <code>only_*</code>、<code>blocked_*</code>
-            和动作约束展示成可读边界，并在发生越界尝试时进入安全边界页查看拦截原因。
-          </p>
-          <p class="safe">建议普通自测至少指定主机、端口或路径之一。</p>
+          <small data-lang="zh">ToC 主流程</small>
+          <small data-lang="en">Main flow</small>
+          <h2 data-lang="zh">构建成功后</h2>
+          <h2 data-lang="en">After a successful build</h2>
+          <ol class="flow">
+            <li>
+              <span class="dot">1</span>
+              <span data-lang="zh">输入明确授权的 URL、域名或 IP。</span>
+              <span data-lang="en">Enter an authorized URL, domain, or IP.</span>
+            </li>
+            <li>
+              <span class="dot">2</span>
+              <span data-lang="zh">选择快速 / 标准 / 深度 / 循环模式。</span>
+              <span data-lang="en">Choose Quick / Standard / Deep / Loop mode.</span>
+            </li>
+            <li>
+              <span class="dot">3</span>
+              <span data-lang="zh">确认端口、主机、路径与动作边界。</span>
+              <span data-lang="en">Confirm port, host, path, and action boundaries.</span>
+            </li>
+            <li>
+              <span class="dot">4</span>
+              <span data-lang="zh">查看风险结果并导出报告。</span>
+              <span data-lang="en">Review findings and export reports.</span>
+            </li>
+          </ol>
+          <p class="safe" data-lang="zh">建议自测至少限定主机、端口或路径之一。</p>
+          <p class="safe" data-lang="en">For self-tests, set at least one of host, port, or path scope.</p>
         </article>
       </section>
 
-      <footer>
-        如果你已经构建过前端但仍看到此页，请确认 <code>frontend/dist/index.html</code> 存在，并重启 Web 服务。
+      <footer data-lang="zh">
+        文档：仓库 README「Web UI」小节。内置页位置：
+        <code>vulnclaw/web/static/index.html</code>。
+        构建产物：<code>frontend/dist/index.html</code>。
+      </footer>
+      <footer data-lang="en">
+        Docs: README “Web UI” section. Fallback page:
+        <code>vulnclaw/web/static/index.html</code>.
+        Built UI: <code>frontend/dist/index.html</code>.
       </footer>
     </main>
   </div>
+  <script src="/fallback.js" defer></script>
 </body>
 </html>

@@ -462,6 +462,7 @@ class AgentCore:
         target: Optional[str] = None,
         *,
         stream_sink: Optional["StreamSink"] = None,
+        task_constraints: Optional[TaskConstraints] = None,
     ) -> AgentResult:
         """Process a user message and return agent response (single turn).
 
@@ -470,8 +471,10 @@ class AgentCore:
         """
         result = AgentResult()
 
-        # Chat mode is free-form — don't inherit constraints from previous sessions
-        self.context.state.task_constraints = TaskConstraints()
+        # Chat is free-form by default, but protocol/API callers can provide an
+        # already parsed scope.  This keeps the Python core authoritative instead
+        # of forcing presentation clients to encode constraints back into prose.
+        self.apply_task_constraints(task_constraints or TaskConstraints())
 
         # Detect target and phase from input
         detected_target = target or self._detect_target(user_input)
@@ -524,6 +527,7 @@ class AgentCore:
         *,
         stream_sink: Optional["StreamSink"] = None,
         engine: Optional[str] = None,
+        task_constraints: Optional[TaskConstraints] = None,
     ) -> list[AgentResult]:
         """Autonomous penetration test loop.
 
@@ -542,10 +546,14 @@ class AgentCore:
                 max_steps=getattr(self.config.session, "solve_max_steps", max_rounds),
                 max_tool_rounds=getattr(self.config.session, "solve_max_tool_rounds", 6),
                 stream_sink=stream_sink,
+                task_constraints=task_constraints,
             )
             return []
         if selected_engine == "team":
             from vulnclaw.agent.team import run_team_pentest
+
+            if task_constraints is not None:
+                self.apply_task_constraints(task_constraints)
 
             await run_team_pentest(
                 self,
@@ -559,7 +567,13 @@ class AgentCore:
             )
             return []
         return await run_auto_pentest(
-            self, user_input, target, max_rounds, on_step, stream_sink=stream_sink
+            self,
+            user_input,
+            target,
+            max_rounds,
+            on_step,
+            stream_sink=stream_sink,
+            task_constraints=task_constraints,
         )
 
     def _build_round_context(self, round_num: int, max_rounds: int) -> str:
@@ -578,6 +592,7 @@ class AgentCore:
         max_tool_rounds: int = 6,
         stream_sink: Optional["StreamSink"] = None,
         on_event: Optional[Callable[[str, dict], None]] = None,
+        task_constraints: Optional[TaskConstraints] = None,
     ) -> Any:
         """运行模型主导 solve。"""
         from vulnclaw.agent.solver import solve as run_solve
@@ -586,6 +601,8 @@ class AgentCore:
         if detected_target:
             self.context.state.target = detected_target
         self._reset_runtime_state(user_input=user_input)
+        if task_constraints is not None:
+            self.apply_task_constraints(task_constraints)
         self.context.add_user_message(user_input)
 
         resolved_goal = goal or user_input
@@ -599,6 +616,14 @@ class AgentCore:
             stream_sink=stream_sink,
             on_event=on_event,
         )
+
+    def apply_task_constraints(self, constraints: TaskConstraints) -> None:
+        """Install one authoritative constraint object across the runtime."""
+
+        self.context.state.task_constraints = constraints
+        self.runtime.task_constraints = constraints
+        if self.mcp_manager and hasattr(self.mcp_manager, "set_task_constraints"):
+            self.mcp_manager.set_task_constraints(constraints)
 
     # ── Persistent pentest loop ──────────────────────────────────────
 
@@ -614,6 +639,7 @@ class AgentCore:
         *,
         # stream_sink 由 main.py 传入，逐级透传到 call_llm_auto_stream 实现流式输出
         stream_sink: Optional["StreamSink"] = None,
+        task_constraints: Optional[TaskConstraints] = None,
     ) -> list["PersistentCycleResult"]:
         """Persistent penetration test — runs cycles of auto_pentest until stopped."""
         return await run_persistent_pentest(
@@ -626,6 +652,7 @@ class AgentCore:
             on_cycle_step,
             on_cycle_complete,
             stream_sink=stream_sink,
+            task_constraints=task_constraints,
         )
 
     def _detect_phase_from_output(self, output: str) -> Optional[PentestPhase]:

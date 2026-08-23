@@ -11,6 +11,7 @@
 [![PyPI](https://img.shields.io/badge/PyPI-v0.3.8-blueviolet)](https://pypi.org/project/vulnclaw/)
 [![codecov](https://codecov.io/gh/Netw0rkNoob/VulnClaw/branch/main/graph/badge.svg)](https://codecov.io/gh/Netw0rkNoob/VulnClaw)
 [![Security](https://img.shields.io/badge/Scope-Authorized_Only-red)](#-安全声明)
+[![Discord](https://img.shields.io/badge/Discord-Join_Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/q5nrZpe6S)
 [![AtomGitStars](https://atomgit.com/Unclecheng-li/VulnClaw/star/badge.svg)](https://atomgit.com/Unclecheng-li/VulnClaw)
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/1/2026-06-05/1d8h69mt3v89kkekg24gg">
@@ -23,6 +24,8 @@
 **本项目是可独立运行的 AI 渗透测试 Agent。**
 <br>
 项目官网：https://unclecheng-li.github.io/vulnclaw.com/
+<br>
+💬 **社区**: [加入我们的 Discord](https://discord.gg/q5nrZpe6S)
 <br>
 
 基于 LLM Agent + MCP 工具链 + 可选 Skill 参考资料，
@@ -202,6 +205,7 @@ $ vulnclaw --help
    doctor        🏥  检查运行环境
    tui           🖥️  打开终端图形化工作台
    web           🌐 启动本地 Web UI
+   code          🧬 本地源码安全扫描（无需网络目标）
 ```
 
 | 命令 | 说明 | 示例 |
@@ -221,6 +225,7 @@ $ vulnclaw --help
 | `vulnclaw plugins list` | 列出漏洞检测插件 | `vulnclaw plugins list --stage discovery` |
 | `vulnclaw plugins info <id>` | 查看插件元信息 | `vulnclaw plugins info builtin.web.headers` |
 | `vulnclaw plugins run <id>` | 运行插件（仅分析传入数据） | `vulnclaw plugins run builtin.web.headers --input headers.json` |
+| `vulnclaw code scan <path>` | 本地源码安全扫描（L1 正则 / L2 结构 / L3 LLM 可选） | `vulnclaw code scan ./src --format sarif` |
 
 ---
 
@@ -325,10 +330,24 @@ vulnclaw tui --target 192.168.1.100 --mode continuous
 通过浏览器操作渗透测试全流程。
 
 ```bash
-pip install 'vulnclaw[web]'  # 安装 Web 依赖
+git clone https://github.com/Netw0rkNoob/VulnClaw.git
+cd VulnClaw
+pip install -e '.[web]'       # 从源码检出安装 Web 依赖
+
+# 首次使用：构建 React 前端（需要 Node.js 18+）
+cd frontend
+npm install
+npm run build
+cd ..
+
 vulnclaw web                  # 启动（默认 127.0.0.1:7788）
 vulnclaw web --port 8080      # 自定义端口
 ```
+
+PyPI wheel 不包含 React 构建产物或前端源码；完整 Web UI 需要按上面的源码方式安装。
+若浏览器显示 **Fallback Web Shell**（无完整扫描界面），说明缺少
+`frontend/dist/index.html`。按上式构建后重启 `vulnclaw web` 并强制刷新。
+未构建前端时，`/api/health` 等 API 仍可用。
 
 > ⚠️ 默认仅绑定本地回环地址。如需远程访问须显式指定 `--host 0.0.0.0 --allow-remote`。
 

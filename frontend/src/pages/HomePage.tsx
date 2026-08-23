@@ -255,8 +255,8 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
   return (
     <section className="home-page">
       <div className="goby-home-board">
-        <div className="goby-welcome-panel" aria-hidden="true">
-          <div className="goby-map-illustration">
+        <div className="goby-welcome-panel">
+          <div className="goby-map-illustration" aria-hidden="true">
             <span className="map-node map-node-a">IP</span>
             <span className="map-node map-node-b">WEB</span>
             <span className="map-node map-node-c">APP</span>
@@ -274,6 +274,7 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
             className={`goby-scan-orb ${submitting ? "hero-orb-busy" : ""}`}
             disabled={submitting || !target.trim()}
             onClick={handleStart}
+            aria-label={submitting ? t("home.starting") : t("home.scan_start_aria")}
           >
             {submitting ? t("home.starting") : t("home.scan")}
           </button>
@@ -281,7 +282,7 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
 
         <div className="scan-launch goby-task-panel">
           <div className="goby-task-title">
-            <span className="goby-task-icon">▣</span>
+            <span className="goby-task-icon" aria-hidden="true">▣</span>
             <strong>{t("home.new_scan_task")}</strong>
             <button type="button" className="text-btn inline-text-btn" onClick={() => setTarget("")} aria-label={t("home.clear_target")}>
               ×
@@ -294,35 +295,41 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
                 value={target}
                 onChange={(event) => setTarget(event.target.value)}
                 placeholder={"172.16.20.36\nexample.com\n192.0.2.0/24"}
+                aria-label={t("home.ip_domain")}
               />
             </label>
             <label className="field field-wide">
-              <span>{t("home.black_ip")}</span>
-              <textarea value={blockedHost} onChange={(event) => setBlockedHost(event.target.value)} placeholder="192.0.2.10" />
+              <span>{t("home.excluded_hosts")}</span>
+              <textarea
+                value={blockedHost}
+                onChange={(event) => setBlockedHost(event.target.value)}
+                placeholder="192.0.2.10, staging.example.com"
+                aria-label={t("home.excluded_hosts")}
+                aria-describedby="excluded-hosts-help"
+              />
+              <small id="excluded-hosts-help" className="field-hint">{t("home.excluded_hosts_help")}</small>
             </label>
-            <label className="field">
-              <span>{t("home.port")}</span>
-              <select value={mode} onChange={(event) => setMode(event.target.value as CheckMode)}>
-                {MODES.map((item) => (
-                  <option key={item.key} value={item.key}>
-                    {item.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
+            <label className="field field-wide">
               <span>{t("home.custom_ports")}</span>
-              <input value={onlyPort} onChange={(event) => setOnlyPort(event.target.value)} inputMode="numeric" placeholder="21,22,80,443" />
+              <input
+                value={onlyPort}
+                onChange={(event) => setOnlyPort(event.target.value)}
+                inputMode="numeric"
+                placeholder="21,22,80,443"
+                aria-label={t("home.custom_ports")}
+              />
             </label>
           </div>
 
-          <div className="scan-mode-row" aria-label="Scan mode">
+          <div className="scan-mode-row" role="group" aria-label={t("home.mode_label")}>
             {MODES.map((item) => (
               <button
                 key={item.key}
                 type="button"
                 className={`scan-mode-pill ${mode === item.key ? "selected-item" : ""}`}
                 onClick={() => setMode(item.key)}
+                aria-pressed={mode === item.key}
+                aria-label={`${item.title}. ${item.copy}`}
               >
                 <strong>{item.title}</strong>
                 <span>{item.copy}</span>
@@ -336,7 +343,13 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
               <span>{t("home.resume_previous")}</span>
             </label>
             <span>{scopeCount ? t("home.bounds", { count: String(scopeCount) }) : t("home.auto_scope")}</span>
-            <button type="button" className="text-btn inline-text-btn" onClick={() => setAdvancedOpen((value) => !value)}>
+            <button
+              type="button"
+              className="text-btn inline-text-btn"
+              onClick={() => setAdvancedOpen((value) => !value)}
+              aria-expanded={advancedOpen}
+              aria-label={advancedOpen ? t("home.hide_advanced") : t("home.advanced")}
+            >
               {advancedOpen ? t("home.hide_advanced") : t("home.advanced")}
             </button>
           </div>
@@ -346,6 +359,7 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
             className={`primary-btn scan-start-btn ${submitting ? "hero-orb-busy" : ""}`}
             disabled={submitting || !target.trim()}
             onClick={handleStart}
+            aria-label={submitting ? t("home.starting_btn") : t("home.start")}
           >
             {submitting ? t("home.starting_btn") : t("home.start")}
           </button>
@@ -374,6 +388,7 @@ export function HomePage({ selectedTarget, activeTask, latestEvent, taskEvents, 
             <label className="field">
               <span>{t("home.block_host_field")}</span>
               <input value={blockedHost} onChange={(event) => setBlockedHost(event.target.value)} placeholder="staging.example.com" />
+              <small className="field-hint">{t("home.excluded_hosts_help")}</small>
             </label>
             <label className="field">
               <span>{t("home.block_path_field")}</span>

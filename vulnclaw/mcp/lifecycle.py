@@ -470,11 +470,13 @@ class MCPLifecycleManager(ProbeMixin):
         )
 
         timeout_s = self._tool_timeout_seconds(config)
+        startup_s = self._startup_timeout_seconds(config)
         async with stdio_client(server) as (read_stream, write_stream):
-            async with ClientSession(
-                read_stream, write_stream, read_timeout_seconds=timeout_s
-            ) as session:
-                await session.initialize()
+            # read_timeout_seconds is deliberately unset: the SDK has typed it as
+            # both float-seconds and timedelta across releases, so every await
+            # below carries its own asyncio.wait_for instead.
+            async with ClientSession(read_stream, write_stream) as session:
+                await asyncio.wait_for(session.initialize(), timeout=startup_s)
                 return await asyncio.wait_for(
                     session.call_tool(tool_name, arguments=arguments), timeout=timeout_s
                 )
@@ -510,17 +512,17 @@ class MCPLifecycleManager(ProbeMixin):
             args=transport.args or [],
             env=transport.env,
         )
-        timeout_s = self._tool_timeout_seconds(config)
+        startup_s = self._startup_timeout_seconds(config)
 
         cm = stdio_client(server)
         read_stream, write_stream = await cm.__aenter__()
-        session = ClientSession(
-            read_stream, write_stream, read_timeout_seconds=timeout_s
-        )
+        # read_timeout_seconds is deliberately unset; per-call timeouts are applied
+        # locally via asyncio.wait_for (see _call_attached_server).
+        session = ClientSession(read_stream, write_stream)
         # 进入 ClientSession 上下文以启动 _receive_loop；否则后续调用读不到响应而卡死。
         try:
             await session.__aenter__()
-            await session.initialize()
+            await asyncio.wait_for(session.initialize(), timeout=startup_s)
         except BaseException:
             with _suppress_cleanup_errors():
                 await session.__aexit__(None, None, None)
@@ -599,11 +601,11 @@ class MCPLifecycleManager(ProbeMixin):
                 url, headers=headers, timeout=connect_s, sse_read_timeout=read_s
             )
             read_stream, write_stream, _get_session_id = await cm.__aenter__()
-            session = ClientSession(
-                read_stream, write_stream, read_timeout_seconds=read_s
-            )
+            # read_timeout_seconds is deliberately unset; per-call timeouts are applied
+            # locally via asyncio.wait_for (see _call_attached_server).
+            session = ClientSession(read_stream, write_stream)
             await session.__aenter__()
-            await session.initialize()
+            await asyncio.wait_for(session.initialize(), timeout=connect_s)
         except BaseException as exc:
             # Clean up partial state
             if session is not None:
@@ -624,7 +626,7 @@ class MCPLifecycleManager(ProbeMixin):
 
         # 首次连接时发现真实工具并替换启动时注册的静态占位工具
         try:
-            tools = await session.list_tools()
+            tools = await asyncio.wait_for(session.list_tools(), timeout=read_s)
             tool_defs = self._normalize_mcp_tools(getattr(tools, "tools", []) or [])
             if tool_defs:
                 self._register_runtime_tools(server_name, tool_defs)
@@ -667,17 +669,18 @@ class MCPLifecycleManager(ProbeMixin):
         if not url:
             raise RuntimeError(f"sse transport for {server_name} is missing url")
         read_s = self._tool_timeout_seconds(config)
+        connect_s = self._startup_timeout_seconds(config)
 
         cm = None
         session = None
         try:
             cm = sse_client(url)
             read_stream, write_stream = await cm.__aenter__()
-            session = ClientSession(
-                read_stream, write_stream, read_timeout_seconds=read_s
-            )
+            # read_timeout_seconds is deliberately unset; per-call timeouts are applied
+            # locally via asyncio.wait_for (see _call_attached_server).
+            session = ClientSession(read_stream, write_stream)
             await session.__aenter__()
-            await session.initialize()
+            await asyncio.wait_for(session.initialize(), timeout=connect_s)
         except BaseException as exc:
             if session is not None:
                 with _suppress_cleanup_errors():
@@ -693,7 +696,7 @@ class MCPLifecycleManager(ProbeMixin):
             raise RuntimeError(f"sse session for {server_name} failed: {detail}") from None
 
         try:
-            tools = await session.list_tools()
+            tools = await asyncio.wait_for(session.list_tools(), timeout=read_s)
             tool_defs = self._normalize_mcp_tools(getattr(tools, "tools", []) or [])
             if tool_defs:
                 self._register_runtime_tools(server_name, tool_defs)

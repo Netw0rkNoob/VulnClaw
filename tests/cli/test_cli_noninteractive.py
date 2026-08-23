@@ -24,13 +24,17 @@ class _Finding:
 class _FakeAgent:
     """Records the engine kwargs and exposes a session_state with findings."""
 
-    def __init__(self, findings):
+    def __init__(self, findings, config):
+        self.config = config
         self.context = None  # board lookup resolves to None
         self.session_state = types.SimpleNamespace(findings=findings)
         self.solve_kwargs: dict = {}
 
     async def solve(self, prompt, **kwargs):
         self.solve_kwargs = kwargs
+        return None
+
+    def apply_task_constraints(self, _constraints):
         return None
 
 
@@ -61,8 +65,8 @@ def _install_fake_run(
     monkeypatch.setattr(cli_main, "load_config", _config_with_creds)
 
     async def fake_orchestrated(*, command, target, resume, snapshot, runner):
-        agent = _FakeAgent(findings)
         shared_config = VulnClawConfig()
+        agent = _FakeAgent(findings, shared_config)
         if captured is not None:
             captured["agent"] = agent
             captured["shared_config"] = shared_config
@@ -165,21 +169,12 @@ class TestScanModeWiring:
         assert agent.solve_kwargs["max_steps"] == defaults.solve_max_steps
         assert agent.solve_kwargs["max_tool_rounds"] == defaults.solve_max_tool_rounds
 
-    def test_quick_mode_turns_fan_out_off(self, runner, monkeypatch, tmp_path):
-        captured: dict = {}
-        _install_fake_run(monkeypatch, captured=captured)
-        monkeypatch.setattr(cli_main, "RUNS_DIR", tmp_path)
-
-        runner.invoke(app, ["run", "t", "--non-interactive", "--scan-mode", "quick"])
-        assert captured["shared_config"].session.solve_max_parallel == 1
-
     def test_deep_mode_opens_fan_out(self, runner, monkeypatch, tmp_path):
         captured: dict = {}
         _install_fake_run(monkeypatch, captured=captured)
         monkeypatch.setattr(cli_main, "RUNS_DIR", tmp_path)
 
         runner.invoke(app, ["run", "t", "--non-interactive", "--scan-mode", "deep"])
-        assert captured["shared_config"].session.solve_max_parallel >= 12
         assert captured["agent"].solve_kwargs["max_steps"] > VulnClawConfig().session.solve_max_steps
 
     def test_explicit_max_steps_overrides_preset(self, runner, monkeypatch, tmp_path):

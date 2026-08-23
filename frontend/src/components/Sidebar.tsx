@@ -9,7 +9,7 @@ export interface NavItem<T extends string> {
 
 interface SidebarFooterAction {
   label: string;
-  glyph: string;
+  icon: string;
   onClick: () => void;
   active?: boolean;
   disabled?: boolean;
@@ -70,7 +70,8 @@ export function Sidebar<T extends string>({ activeView, activeNavView = activeVi
             disabled={action.disabled}
             onClick={action.onClick}
           >
-            {action.glyph}
+            <img className="rail-icon" src={action.icon} alt="" aria-hidden="true" />
+            <span className="rail-tooltip" aria-hidden="true">{action.label}</span>
           </button>
         ))}
       </div>

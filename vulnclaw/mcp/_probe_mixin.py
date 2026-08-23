@@ -194,9 +194,10 @@ class ProbeMixin:
             async with streamablehttp_client(
                 url, headers=headers, timeout=connect_s, sse_read_timeout=read_s
             ) as (read_stream, write_stream, _get_session_id):
-                async with ClientSession(
-                    read_stream, write_stream, read_timeout_seconds=read_s
-                ) as session:
+                # read_timeout_seconds is deliberately left unset: the SDK has
+                # typed it as both float-seconds and timedelta across releases,
+                # so the probe is bounded by _run_probe's asyncio.wait_for instead.
+                async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     tools = await session.list_tools()
                     tool_defs = self._normalize_mcp_tools(getattr(tools, "tools", []) or [])
@@ -221,12 +222,10 @@ class ProbeMixin:
         self, config: MCPServerConfig
     ) -> tuple[bool, str, list[dict[str, Any]]]:
         url = config.transport.url or ""
-        read_s = self._tool_timeout_seconds(config)
         try:
             async with sse_client(url) as (read_stream, write_stream):
-                async with ClientSession(
-                    read_stream, write_stream, read_timeout_seconds=read_s
-                ) as session:
+                # Bounded by _run_probe's asyncio.wait_for; see _async_probe_http_server.
+                async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     tools = await session.list_tools()
                     tool_defs = self._normalize_mcp_tools(getattr(tools, "tools", []) or [])

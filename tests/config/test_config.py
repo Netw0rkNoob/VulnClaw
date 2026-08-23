@@ -275,9 +275,22 @@ class TestVulnClawConfig:
             "moonshot",
             "qwen",
             "siliconflow",
+            "openrouter",
         ]
         for provider in expected_providers:
             assert provider in PROVIDER_PRESETS, f"Missing provider: {provider}"
+
+    def test_openrouter_preset_uses_namespaced_default_model(self):
+        """OpenRouter is an aggregator: one OpenAI-compatible endpoint fronting
+        many vendors, so model IDs carry a ``vendor/model`` prefix. No provider
+        specific code path is needed beyond the preset."""
+        from vulnclaw.config.schema import PROVIDER_PRESETS, LLMProvider
+
+        assert LLMProvider("openrouter") is LLMProvider.OPENROUTER
+        preset = PROVIDER_PRESETS[LLMProvider.OPENROUTER]
+        assert preset["base_url"] == "https://openrouter.ai/api/v1"
+        assert preset["default_model"] == "anthropic/claude-sonnet-5"
+        assert preset["label"] == "OpenRouter"
 
     def test_ollama_preset_points_at_local_openai_endpoint(self):
         """Ollama is a first-class preset so it appears in `vulnclaw config`
