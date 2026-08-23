@@ -254,3 +254,47 @@ def test_create_approve_injects_via_agent_core_production_path(tmp_path):
     assert "## Prior Experience / Lessons" in prompt
     assert "Favor parameter-stable probes" in prompt
 
+
+
+def test_target_scoped_lesson_from_another_target_is_not_injected(tmp_path):
+    """A target-scoped lesson must not leak into a different engagement.
+
+    Tag overlap alone used to admit it, so recon detail learned about one
+    target could surface in the prompt for an unrelated one.
+    """
+    store = ExperienceStore(store_dir=tmp_path)
+    foreign = store.add(
+        _lesson(
+            "other-target-only",
+            scope="target",
+            target_key=parse_target("other.example").target_id,
+        )
+    )
+    store.approve(foreign.id)
+
+    context = build_experience_context(_target_context(), store)
+
+    assert "other-target-only" not in context
+
+
+def test_target_scoped_lessons_are_withheld_when_the_live_target_is_unknown(tmp_path):
+    store = ExperienceStore(store_dir=tmp_path)
+    scoped = store.add(
+        _lesson(
+            "scoped-lesson",
+            scope="target",
+            target_key=parse_target("demo.example").target_id,
+        )
+    )
+    store.approve(scoped.id)
+
+    context = build_experience_context(
+        SimpleNamespace(
+            target="",
+            recon_data={"services": ["nginx/1.24"], "technologies": ["php"]},
+            findings=[SimpleNamespace(vuln_type="sqli")],
+        ),
+        store,
+    )
+
+    assert "scoped-lesson" not in context

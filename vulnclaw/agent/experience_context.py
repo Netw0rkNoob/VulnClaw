@@ -113,7 +113,13 @@ def _rank_lessons(
     documents: list[str] = []
     for lesson in lessons:
         lesson_tags = _lesson_tags(lesson)
-        target_match = bool(target_key and _value(lesson, "target_key", "") == target_key)
+        lesson_target = str(_value(lesson, "target_key", "") or "")
+        # A target-scoped lesson belongs to one engagement.  Tag overlap must
+        # never carry it into another target, and it is withheld entirely when
+        # the live target cannot be resolved.
+        if lesson_target and lesson_target != target_key:
+            continue
+        target_match = bool(target_key and lesson_target == target_key)
         if not (lesson_tags & live_tags) and not target_match:
             continue
         candidates.append((lesson, lesson_tags, target_match))
