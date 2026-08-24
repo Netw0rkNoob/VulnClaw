@@ -533,6 +533,19 @@
         }
       ]
     },
+    "approvalClosedEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/taskEventEnvelope" },
+        {
+          "required": ["request_hash", "status"],
+          "properties": {
+            "type": { "const": "approval_closed" },
+            "request_hash": { "type": "string", "minLength": 1 },
+            "status": { "enum": ["approved", "denied", "expired", "cancelled"] }
+          }
+        }
+      ]
+    },
     "approvalRequiredEvent": {
       "allOf": [
         { "$ref": "#/$defs/taskEventEnvelope" },
@@ -546,6 +559,7 @@
             "cwd": { "type": "string" },
             "detail": { "type": "string" },
             "expires_at": { "type": "string" },
+            "expires_in_seconds": { "type": "integer", "minimum": 1 },
             "risk": { "type": "string" }
           }
         }
@@ -641,6 +655,7 @@
         { "$ref": "#/$defs/toolResultEvent" },
         { "$ref": "#/$defs/findingEvent" },
         { "$ref": "#/$defs/approvalRequiredEvent" },
+        { "$ref": "#/$defs/approvalClosedEvent" },
         { "$ref": "#/$defs/taskCompletedEvent" },
         { "$ref": "#/$defs/taskCancelledEvent" },
         { "$ref": "#/$defs/taskFailedEvent" },

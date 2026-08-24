@@ -217,7 +217,14 @@ pub enum BackendEvent {
         #[serde(default)]
         expires_at: String,
         #[serde(default)]
+        expires_in_seconds: u64,
+        #[serde(default)]
         risk: String,
+    },
+    ApprovalClosed {
+        task_id: String,
+        request_hash: String,
+        status: String,
     },
     TaskCompleted {
         request_id: String,

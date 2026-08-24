@@ -40,7 +40,9 @@ class CliTtyApprovalChannel:
         for raw in view.display_escaped.splitlines() or ["(empty)"]:
             lines.append(f"  | {raw}")
         if view.expires_at:
-            lines.append(f"expires: {view.expires_at}")
+            lines.append(
+                f"窗口  {view.expires_in_seconds}s 内未响应将自动拒绝"
+            )
         lines.append(f"risk: {view.risk or 'executes with current user privileges'}")
         lines.append(_hr())
         print("\n".join(lines), file=sys.stdout, flush=True)

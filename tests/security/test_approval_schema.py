@@ -29,11 +29,13 @@ class TestApprovalRequiredSchema:
                 "cwd": "/tmp/target",
                 "detail": "auto-review: 'curl' is not in the trusted command table",
                 "expires_at": "2026-08-23T06:22:42+00:00",
+                "expires_in_seconds": 300,
                 "risk": "Executes with current user privileges; not sandboxed.",
             }
         )
         assert event["type"] == "approval_required"
         assert event["request_hash"] == "a" * 64
+        assert event["expires_in_seconds"] == 300
 
     def test_legacy_minimal_payload_still_passes(self):
         event = _emit({"question": "legacy ask_user question"})
@@ -50,6 +52,7 @@ class TestApprovalRequiredSchema:
             cwd="/home/user/target",
             detail="auto-review: interpreters and shells cannot run in auto-review",
             expires_at="2026-08-23T07:00:00+00:00",
+            expires_in_seconds=300,
             risk="Executes with current user privileges; not sandboxed.",
         )
         event = _emit(view.to_event_payload())

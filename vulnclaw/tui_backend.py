@@ -630,6 +630,12 @@ class TuiApprovalChannel:
         gate = get_execution_gate()
         return await gate.wait_decision(view.request_hash)
 
+    async def notify_closed(self, request_hash: str, status: str) -> None:
+        """Dismiss the client modal when the pending leaves the queue."""
+        self._sink._event(
+            "approval_closed", request_hash=request_hash, status=status
+        )
+
 
 async def _run_task(
     runtime: BackendRuntime, task: PreparedTask, sink: BackendStreamSink

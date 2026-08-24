@@ -100,9 +100,13 @@ fn render_approval_modal(frame: &mut Frame, pending: &crate::app::PendingExecuti
             )));
         }
     }
-    if !pending.expires_at.is_empty() {
+    // Live countdown (no prefix label). Hidden at zero: the gate's
+    // approval_closed event dismisses the modal right after, so a
+    // "即将超时" flash would only add noise.
+    let remaining = pending.remaining_secs();
+    if remaining > 0 {
         lines.push(Line::from(Span::styled(
-            format!("超时  {}", pending.expires_at),
+            format!("将在 {remaining}s 后超时自动拒绝"),
             Style::default().fg(theme::TEXT_HINT),
         )));
     }

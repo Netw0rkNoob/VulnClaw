@@ -97,6 +97,7 @@ class ApprovalView:
     cwd: str
     detail: str
     expires_at: str
+    expires_in_seconds: int
     risk: str = ""
 
     def to_event_payload(self) -> dict[str, Any]:
@@ -107,6 +108,7 @@ class ApprovalView:
             "cwd": self.cwd,
             "detail": self.detail,
             "expires_at": self.expires_at,
+            "expires_in_seconds": self.expires_in_seconds,
             "risk": self.risk,
         }
 
@@ -200,6 +202,20 @@ class ExecutionGate:
             )
         self.mode = normalized
         return self.mode
+
+    async def _notify_closed(self, request_hash: str, status: str) -> None:
+        """Tell the channel the pending left the queue (modal cleanup hook).
+
+        Active channels (CLI y/N) have no use for it; the passive TUI channel
+        uses it to dismiss the blocking modal on expiry/cancellation.
+        """
+        closer = getattr(self.channel, "notify_closed", None)
+        if closer is None:
+            return
+        try:
+            await closer(request_hash=request_hash, status=status)
+        except Exception:
+            return
 
     # ── Resolution from trusted control ops ──────────────────────────────
 
@@ -329,6 +345,7 @@ class ExecutionGate:
                 expires_at=(
                     datetime.now(timezone.utc) + timedelta(seconds=self.timeout_seconds)
                 ).isoformat(timespec="seconds"),
+                expires_in_seconds=self.timeout_seconds,
                 risk="Executes with current user privileges; not sandboxed.",
             )
             pending = _Pending(view)
@@ -344,6 +361,7 @@ class ExecutionGate:
             decision = "expired"
         except asyncio.CancelledError:
             await self._settle(pending, request_hash, "cancelled")
+            await self._notify_closed(request_hash, "cancelled")
             raise
         except Exception as exc:  # channel malfunction must never auto-approve
             await self._settle(pending, request_hash, "cancelled")
@@ -368,6 +386,7 @@ class ExecutionGate:
                 "deny": "denied",
             }.get(str(decision), "expired")
         self.stats[status] = self.stats.get(status, 0) + 1
+        await self._notify_closed(request_hash, status)
         if status != "approved":
             return GateOutcome(False, status)
         return GateOutcome(True, "approved")
@@ -403,6 +422,7 @@ class ExecutionGate:
             cwd=request.cwd,
             detail=visualize_for_display(request.detail),
             expires_at="(sync)",
+            expires_in_seconds=self.timeout_seconds,
             risk="Executes with current user privileges; not sandboxed.",
         )
         try:

@@ -130,6 +130,7 @@ fn approval_event(task_id: &str, command: &str) -> vulnclaw_tui::protocol::AppEv
             cwd: "/tmp/target".to_string(),
             detail: "auto-review: unknown command".to_string(),
             expires_at: "2026-08-23T07:00:00+00:00".to_string(),
+            expires_in_seconds: 300,
             risk: "not sandboxed".to_string(),
         },
     )
@@ -196,6 +197,7 @@ fn legacy_question_only_event_does_not_open_modal() {
             task_id: "task-1".into(),
             question: "old style ask_user".into(),
             request_hash: String::new(),
+            expires_in_seconds: 0,
             kind: String::new(),
             cwd: String::new(),
             detail: String::new(),
@@ -234,7 +236,50 @@ fn pending_execution_struct_roundtrip() {
         cwd: "/".into(),
         detail: String::new(),
         expires_at: String::new(),
+        expires_in_secs: 300,
+        received_at: std::time::Instant::now(),
         risk: String::new(),
     };
     assert_eq!(p.kind, "shell");
+    assert_eq!(p.remaining_secs(), 300);
+}
+
+#[test]
+fn approval_closed_event_clears_modal() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.active_task_id = Some("task-1".into());
+    app.apply_event(approval_event("task-1", "whoami"));
+
+    assert!(app.pending_execution.is_some());
+    app.apply_event(vulnclaw_tui::protocol::AppEvent::backend(
+        vulnclaw_tui::protocol::BackendEvent::ApprovalClosed {
+            task_id: "task-1".into(),
+            request_hash: "a".repeat(64),
+            status: "expired".into(),
+        },
+    ));
+    // 超时关闭:弹窗消失,并留下原因
+    assert!(app.pending_execution.is_none());
+    assert!(app
+        .transcript
+        .iter()
+        .any(|i| i.text.contains("审批超时,已自动拒绝")));
+}
+
+#[test]
+fn approval_closed_ignores_non_matching_hash() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.active_task_id = Some("task-1".into());
+    app.apply_event(approval_event("task-1", "whoami"));
+
+    app.apply_event(vulnclaw_tui::protocol::AppEvent::backend(
+        vulnclaw_tui::protocol::BackendEvent::ApprovalClosed {
+            task_id: "task-1".into(),
+            request_hash: "b".repeat(64),
+            status: "approved".into(),
+        },
+    ));
+    assert!(app.pending_execution.is_some(), "hash 不匹配不得误关");
 }

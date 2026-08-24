@@ -17,3 +17,4 @@
 {"protocol_version":1,"type":"task_failed","request_id":"req-failed","task_id":"task-failed","error":{"code":"task_failed","message":"Example task failure."},"state":{"target":"https://failed.example.test","phase":"failed","task_constraints":{},"task":{"active":false,"task_id":null},"last_run":{"status":"failed","exit_code":1},"findings":[],"evidence":[],"constraint_violations":[]}}
 {"protocol_version":1,"type":"shutdown","request_id":"req-3","payload":{}}
 {"protocol_version":1,"type":"shutdown_complete","request_id":"req-3"}
+{"protocol_version":1,"type":"approval_closed","request_id":"r-approval-closed","task_id":"task-1","request_hash":"3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca4c62af","status":"expired"}

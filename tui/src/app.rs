@@ -180,7 +180,20 @@ pub struct PendingExecution {
     pub cwd: String,
     pub detail: String,
     pub expires_at: String,
+    /// Budget announced by the backend at emit time.
+    pub expires_in_secs: u64,
+    /// Local receive instant — countdown = budget − elapsed, avoiding any
+    /// clock-skew parsing of the ISO stamp.
+    pub received_at: std::time::Instant,
     pub risk: String,
+}
+
+impl PendingExecution {
+    /// Live countdown for the modal, driven by the 75 ms redraw loop.
+    pub fn remaining_secs(&self) -> u64 {
+        self.expires_in_secs
+            .saturating_sub(self.received_at.elapsed().as_secs())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1013,6 +1026,7 @@ impl App {
                     cwd,
                     detail,
                     expires_at,
+                    expires_in_seconds,
                     risk,
                 } => {
                     if !self.is_current_task(&task_id) {
@@ -1028,6 +1042,8 @@ impl App {
                             cwd: cwd.clone(),
                             detail: detail.clone(),
                             expires_at: expires_at.clone(),
+                            expires_in_secs: expires_in_seconds,
+                            received_at: std::time::Instant::now(),
                             risk: risk.clone(),
                         });
                     }
@@ -1048,6 +1064,31 @@ impl App {
                         lines.push("  Y 批准 · N/Esc 拒绝(默认拒绝)".to_string());
                     }
                     self.push(TranscriptKind::Status, lines.join("\n"));
+                }
+                BackendEvent::ApprovalClosed {
+                    task_id,
+                    request_hash,
+                    status,
+                } => {
+                    if !self.is_current_task(&task_id) {
+                        return;
+                    }
+                    let matches = self
+                        .pending_execution
+                        .as_ref()
+                        .map(|p| p.request_hash == request_hash)
+                        .unwrap_or(false);
+                    if matches {
+                        self.pending_execution = None;
+                    }
+                    let text = match status.as_str() {
+                        "expired" => "审批超时,已自动拒绝",
+                        "denied" => "操作者拒绝了该请求",
+                        "approved" => "已批准并执行",
+                        "cancelled" => "审批请求已取消",
+                        other => other,
+                    };
+                    self.push(TranscriptKind::Status, format!("审批关闭: {text}"));
                 }
                 BackendEvent::TaskCompleted {
                     request_id,
