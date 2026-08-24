@@ -22,6 +22,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
                 app.resolve_pending_execution(false)
             }
+            KeyCode::Up => app.scroll_pending_execution(false, false),
+            KeyCode::Down => app.scroll_pending_execution(true, false),
+            KeyCode::PageUp => app.scroll_pending_execution(false, true),
+            KeyCode::PageDown => app.scroll_pending_execution(true, true),
             _ => {}
         }
         return;

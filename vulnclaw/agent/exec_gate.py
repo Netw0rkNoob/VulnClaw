@@ -53,6 +53,11 @@ def visualize_for_display(text: str) -> str:
     return "".join(out)
 
 
+def visualize_single_line_for_display(text: str) -> str:
+    """Escape untrusted text that must not create extra terminal rows."""
+    return visualize_for_display(text).replace("\t", "\\t").replace("\n", "\\n")
+
+
 # ── Request / view ───────────────────────────────────────────────────────
 
 
@@ -167,6 +172,8 @@ class ExecutionGate:
         self.channel: TrustedApprovalChannel | None = None
         self.sync_confirm_hook: SyncConfirmHook | None = None
         self._lock = asyncio.Lock()
+        self._approval_lock = asyncio.Lock()
+        self._inflight_hashes: set[str] = set()
         self._pending_by_hash: dict[str, _Pending] = {}
         self.stats: dict[str, int] = {
             "requested": 0,
@@ -255,16 +262,12 @@ class ExecutionGate:
         and then await here; ``resolve()`` completes the future. Returns
         "deny" if the pending vanished (expired/cancelled first).
         """
-        while True:
-            async with self._lock:
-                pending = self._pending_by_hash.get(request_hash)
-                if pending is None or pending.state != "pending":
-                    return "deny"
-                future = pending.future
-            try:
-                return await asyncio.shield(future)
-            except asyncio.CancelledError:
+        async with self._lock:
+            pending = self._pending_by_hash.get(request_hash)
+            if pending is None or pending.state != "pending":
                 return "deny"
+            future = pending.future
+        return await asyncio.shield(future)
 
     # ── Model-facing entry ───────────────────────────────────────────────
 
@@ -312,7 +315,7 @@ class ExecutionGate:
             )
             # fall through to the interactive flow below
 
-        if not self.has_trusted_channel():
+        if self.channel is None:
             return GateOutcome(
                 False,
                 "no_channel",
@@ -326,8 +329,7 @@ class ExecutionGate:
         request_hash = request.request_hash()
 
         async with self._lock:
-            existing = self._pending_by_hash.get(request_hash)
-            if existing is not None and existing.state == "pending":
+            if request_hash in self._inflight_hashes:
                 return GateOutcome(
                     False,
                     "already_pending",
@@ -336,60 +338,84 @@ class ExecutionGate:
                         f"command: {request.display[:80]}"
                     ),
                 )
-            view = ApprovalView(
-                request_hash=request_hash,
-                kind=request.kind,
-                display_escaped=visualize_for_display(request.display),
-                cwd=request.cwd,
-                detail=visualize_for_display(request.detail),
-                expires_at=(
-                    datetime.now(timezone.utc) + timedelta(seconds=self.timeout_seconds)
-                ).isoformat(timespec="seconds"),
-                expires_in_seconds=self.timeout_seconds,
-                risk="Executes with current user privileges; not sandboxed.",
-            )
-            pending = _Pending(view)
-            self._pending_by_hash[request_hash] = pending
+            self._inflight_hashes.add(request_hash)
 
-        assert self.channel is not None
-        decision: str | None = None
+        pending: _Pending | None = None
         try:
-            decision = await asyncio.wait_for(
-                self.channel.request_approval(view), timeout=self.timeout_seconds
-            )
-        except asyncio.TimeoutError:
-            decision = "expired"
-        except asyncio.CancelledError:
-            await self._settle(pending, request_hash, "cancelled")
-            await self._notify_closed(request_hash, "cancelled")
-            raise
-        except Exception as exc:  # channel malfunction must never auto-approve
-            await self._settle(pending, request_hash, "cancelled")
-            return GateOutcome(
-                False,
-                "channel_error",
-                message=f"approval channel failed: {exc.__class__.__name__}",
-            )
+            async with self._approval_lock:
+                # The channel may have been removed while this request waited
+                # behind another approval. Re-check immediately before exposing
+                # the request and fail closed without starting a stale timeout.
+                channel = self.channel
+                if channel is None:
+                    return GateOutcome(
+                        False,
+                        "no_channel",
+                        message=(
+                            "no trusted approval channel is installed. Run interactively "
+                            "(CLI/TUI) to approve executions, or configure "
+                            "safety.permission_mode explicitly."
+                        ),
+                    )
+
+                view = ApprovalView(
+                    request_hash=request_hash,
+                    kind=request.kind,
+                    display_escaped=visualize_for_display(request.display),
+                    cwd=visualize_single_line_for_display(request.cwd),
+                    detail=visualize_for_display(request.detail),
+                    expires_at=(
+                        datetime.now(timezone.utc) + timedelta(seconds=self.timeout_seconds)
+                    ).isoformat(timespec="seconds"),
+                    expires_in_seconds=self.timeout_seconds,
+                    risk="Executes with current user privileges; not sandboxed.",
+                )
+                pending = _Pending(view)
+                async with self._lock:
+                    self._pending_by_hash[request_hash] = pending
+
+                decision: str | None = None
+                try:
+                    decision = await asyncio.wait_for(
+                        channel.request_approval(view), timeout=self.timeout_seconds
+                    )
+                except asyncio.TimeoutError:
+                    decision = "expired"
+                except asyncio.CancelledError:
+                    await self._settle(pending, request_hash, "cancelled")
+                    self.stats["cancelled"] += 1
+                    await self._notify_closed(request_hash, "cancelled")
+                    raise
+                except Exception as exc:  # channel malfunction must never auto-approve
+                    await self._settle(pending, request_hash, "cancelled")
+                    self.stats["cancelled"] += 1
+                    await self._notify_closed(request_hash, "cancelled")
+                    return GateOutcome(
+                        False,
+                        "channel_error",
+                        message=f"approval channel failed: {exc.__class__.__name__}",
+                    )
+
+                # A resolution applied through gate.resolve() is authoritative
+                # for passive channels. Active channels settle from their return
+                # value. Either path updates the same pending before cleanup.
+                async with self._lock:
+                    if pending.state == "pending":
+                        pending.state = {
+                            "approve": "approved",
+                            "deny": "denied",
+                        }.get(str(decision), "expired")
+                    status = pending.state
+                self.stats[status] = self.stats.get(status, 0) + 1
+                await self._notify_closed(request_hash, status)
+                if status != "approved":
+                    return GateOutcome(False, status)
+                return GateOutcome(True, "approved")
         finally:
             async with self._lock:
-                self._pending_by_hash.pop(request_hash, None)
-
-        # A resolution applied through gate.resolve() is authoritative even
-        # when the channel itself returns nothing (passive TUI channel).
-        async with self._lock:
-            resolved_state = pending.state
-        if resolved_state in ("approved", "denied", "expired", "cancelled"):
-            status = resolved_state
-        else:
-            status = {
-                "approve": "approved",
-                "deny": "denied",
-            }.get(str(decision), "expired")
-        self.stats[status] = self.stats.get(status, 0) + 1
-        await self._notify_closed(request_hash, status)
-        if status != "approved":
-            return GateOutcome(False, status)
-        return GateOutcome(True, "approved")
+                if pending is not None and self._pending_by_hash.get(request_hash) is pending:
+                    self._pending_by_hash.pop(request_hash, None)
+                self._inflight_hashes.discard(request_hash)
 
     async def _settle(self, pending: _Pending, request_hash: str, state: str) -> None:
         async with self._lock:
@@ -403,9 +429,12 @@ class ExecutionGate:
     def confirm_sync(self, request: GateRequest) -> bool:
         """Synchronous confirmation for callers that cannot await.
 
-        Uses the sync confirm hook when installed; otherwise refuses.
-        Never runs inside a running event loop (would deadlock).
+        Full-access mode returns immediately. Other modes use the sync confirm
+        hook when installed and refuse inside a running loop rather than
+        blocking it.
         """
+        if self.mode == "full_access":
+            return True
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -419,7 +448,7 @@ class ExecutionGate:
             request_hash=request.request_hash(),
             kind=request.kind,
             display_escaped=visualize_for_display(request.display),
-            cwd=request.cwd,
+            cwd=visualize_single_line_for_display(request.cwd),
             detail=visualize_for_display(request.detail),
             expires_at="(sync)",
             expires_in_seconds=self.timeout_seconds,

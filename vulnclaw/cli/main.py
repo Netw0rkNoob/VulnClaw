@@ -1118,8 +1118,6 @@ def run(
     Rust ratatui TUI (``vulnclaw tui``).
     """
     config = load_config()
-    from vulnclaw.cli.approval_channel import install_cli_approval_channel
-    install_cli_approval_channel(config)
 
     # A bad target / scan-mode / fail-on / scope-mode is a misconfiguration:
     # exit 1 (never a silent green run).
@@ -1351,8 +1349,6 @@ def solve(
 ) -> None:
     """Model-led solve loop; runs until goal, user input, no path, or safety cap."""
     config = load_config()
-    from vulnclaw.cli.approval_channel import install_cli_approval_channel
-    install_cli_approval_channel(config)
     if not has_llm_credentials(config.llm):
         err_console.print("[!] Configure LLM credentials first (api_key or auth_mode).")
         raise typer.Exit(1)
@@ -1511,8 +1507,6 @@ def persistent(
     from vulnclaw.agent.core import PersistentCycleResult
 
     config = load_config()
-    from vulnclaw.cli.approval_channel import install_cli_approval_channel
-    install_cli_approval_channel(config)
     if not has_llm_credentials(config.llm):
         err_console.print("[!] Configure LLM credentials first (api_key or auth_mode).")
         raise typer.Exit(1)

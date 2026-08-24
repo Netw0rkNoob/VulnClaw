@@ -154,6 +154,31 @@ fn structured_approval_opens_modal_and_swallows_typing() {
 }
 
 #[test]
+fn approval_modal_supports_line_and_page_scrolling() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.terminal_size = ratatui::layout::Rect::new(0, 0, 60, 18);
+    app.active_task_id = Some("task-1".into());
+    let command = (0..30)
+        .map(|index| format!("line-{index:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.apply_event(approval_event("task-1", &command));
+
+    handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.pending_execution.as_ref().unwrap().scroll_offset, 1);
+    handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(app.pending_execution.as_ref().unwrap().scroll_offset, 0);
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+    );
+    assert!(app.pending_execution.as_ref().unwrap().scroll_offset > 1);
+    handle_key(&mut app, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+    assert_eq!(app.pending_execution.as_ref().unwrap().scroll_offset, 0);
+}
+
+#[test]
 fn y_approves_and_clears_modal() {
     let (sender, _) = mpsc::channel();
     let mut app = App::new_disconnected(sender);
@@ -239,6 +264,7 @@ fn pending_execution_struct_roundtrip() {
         expires_in_secs: 300,
         received_at: std::time::Instant::now(),
         risk: String::new(),
+        scroll_offset: 0,
     };
     assert_eq!(p.kind, "shell");
     assert_eq!(p.remaining_secs(), 300);

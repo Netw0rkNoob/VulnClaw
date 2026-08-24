@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 import sys
 import time
 
@@ -16,6 +18,7 @@ from vulnclaw.agent.builtin_tools import (
 )
 
 posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows Job Objects")
 
 
 class TestSanitizedExecEnv:
@@ -116,6 +119,19 @@ class TestTreeKill:
             time.sleep(0.2)
         assert survivors == 0, "sleep 41 grandchild survived the tree kill"
 
+    def test_exited_group_leader_does_not_bypass_tree_kill(self):
+        # The shell exits immediately while the background child retains the
+        # captured pipes. The timeout must still target the saved process group.
+        started = time.monotonic()
+        rc, out, err, timed_out = _spawn_captured(
+            ["/bin/sh", "-c", "sleep 47 &"], cwd="/tmp", timeout_s=0.2
+        )
+        elapsed = time.monotonic() - started
+        assert timed_out is True
+        assert elapsed < 1.5
+        survivors = os.popen("pgrep -f '^sleep 47' || true").read().strip()
+        assert not survivors, "background child survived after its group leader exited"
+
     def test_normal_exit_still_reports_output(self):
         rc, out, err, timed_out = _spawn_captured(
             [sys.executable, "-c", "print('fine')"], cwd="/tmp", timeout_s=10
@@ -127,3 +143,70 @@ class TestTreeKill:
         proc = __import__("subprocess").Popen(["/bin/sh", "-c", "exit 0"])
         proc.wait()
         _kill_process_tree(proc)  # must not raise
+
+
+@windows_only
+class TestWindowsTreeKill:
+    @staticmethod
+    def _spawn_parent_and_child() -> tuple[int | None, str, str, bool]:
+        script = (
+            "import subprocess,sys,time; "
+            "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+            "print(child.pid,flush=True); time.sleep(30)"
+        )
+        return _spawn_captured(
+            [sys.executable, "-c", script], cwd=os.getcwd(), timeout_s=0.5
+        )
+
+    @staticmethod
+    def _child_pid(output: str) -> int:
+        match = re.search(r"(?m)^\s*(\d+)\s*$", output)
+        assert match is not None, f"child pid missing from output: {output!r}"
+        return int(match.group(1))
+
+    @staticmethod
+    def _pid_exists(pid: int, run=subprocess.run) -> bool:
+        result = run(
+            ["tasklist", "/FI", f"PID eq {pid}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return re.search(rf"\b{pid}\b", result.stdout) is not None
+
+    def test_job_object_kills_descendants_without_taskkill(self, monkeypatch):
+        import vulnclaw.agent.builtin_tools as builtin_tools
+
+        original_run = subprocess.run
+
+        def no_taskkill(*args, **kwargs):
+            raise AssertionError("Job Object path must not call taskkill")
+
+        monkeypatch.setattr(builtin_tools.subprocess, "run", no_taskkill)
+        _, output, _, timed_out = self._spawn_parent_and_child()
+        child_pid = self._child_pid(output)
+        try:
+            assert timed_out is True
+            assert not self._pid_exists(child_pid, original_run)
+        finally:
+            original_run(
+                ["taskkill", "/PID", str(child_pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+            )
+
+    def test_taskkill_fallback_when_job_creation_fails(self, monkeypatch):
+        import vulnclaw.agent.builtin_tools as builtin_tools
+
+        monkeypatch.setattr(builtin_tools, "_create_windows_kill_job", lambda proc: None)
+        _, output, _, timed_out = self._spawn_parent_and_child()
+        child_pid = self._child_pid(output)
+        try:
+            assert timed_out is True
+            assert not self._pid_exists(child_pid)
+        finally:
+            subprocess.run(
+                ["taskkill", "/PID", str(child_pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+            )

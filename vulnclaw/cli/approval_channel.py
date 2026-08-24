@@ -24,6 +24,7 @@ class CliTtyApprovalChannel:
 
     def __init__(self) -> None:
         self._input_lock = asyncio.Lock()
+        self._prompt_session: Any = None
 
     async def request_approval(self, view: ApprovalView) -> str:
         lines = [
@@ -49,8 +50,15 @@ class CliTtyApprovalChannel:
 
         async with self._input_lock:
             try:
-                answer = await asyncio.to_thread(
-                    input, "Approve this execution? [y/N] "
+                # prompt_async is cancellable: when ExecutionGate expires the
+                # request, no background input() thread remains attached to
+                # stdin to consume a later REPL command or approval response.
+                if self._prompt_session is None:
+                    from prompt_toolkit import PromptSession
+
+                    self._prompt_session = PromptSession()
+                answer = await self._prompt_session.prompt_async(
+                    "Approve this execution? [y/N] "
                 )
             except (EOFError, KeyboardInterrupt):
                 answer = ""
@@ -79,10 +87,19 @@ def install_cli_approval_channel(config: Any = None) -> bool:
         if not tty_available():
             return False
         channel = CliTtyApprovalChannel()
-        decision = asyncio.new_event_loop().run_until_complete(
-            channel.request_approval(view)
-        )
-        return decision == "approve"
+        loop = asyncio.new_event_loop()
+        try:
+            decision = loop.run_until_complete(
+                asyncio.wait_for(
+                    channel.request_approval(view),
+                    timeout=max(1, int(view.expires_in_seconds)),
+                )
+            )
+            return decision == "approve"
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            loop.close()
 
     gate.install_sync_confirm_hook(_sync_confirm)
     return True

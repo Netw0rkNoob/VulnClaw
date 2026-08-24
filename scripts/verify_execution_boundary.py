@@ -69,32 +69,44 @@ _SPAWN_CALLS = {
     "pty.fork",
 }
 
-# Reviewed baseline. Every entry needs an owner decision recorded here.
+# Reviewed baseline, keyed by exact ``file:line:call`` so adding another spawn
+# to an already-reviewed file still fails CI and requires an owner decision.
 # "model-reachable" sites are exactly those the ExecutionGate must gate;
 # "operator control plane" sites run fixed commands chosen by the local
-# operator (doctor probes, MCP stdio lifecycle, TUI launcher).
+# operator (doctor probes, TUI launcher).
 ALLOWED_SPAWN_SITES: dict[str, str] = {
-    "vulnclaw/agent/builtin_tools.py": (
-        "model-reachable: shell_command / python_execute / PHP diff probe; "
-        "every site must route through ExecutionGate"
+    "vulnclaw/agent/builtin_tools.py:437:subprocess.Popen": (
+        "shared gated process runner for shell/python/PHP execution"
     ),
-    "vulnclaw/report/verifier.py": (
-        "model-reachable: generated-PoC verification; "
-        "must route through ExecutionGate"
+    "vulnclaw/agent/builtin_tools.py:622:subprocess.run": (
+        "fixed Windows taskkill fallback for the gated process runner"
     ),
-    "vulnclaw/mcp/lifecycle.py": (
-        "operator control plane: MCP stdio server lifecycle "
-        "(spawn/terminate operator-configured servers)"
+    "vulnclaw/agent/builtin_tools.py:1618:subprocess.run": (
+        "fixed Windows nmap path lookup"
     ),
-    "vulnclaw/cli/tui.py": (
-        "operator control plane: native TUI binary launcher and doctor probes"
+    "vulnclaw/agent/builtin_tools.py:1697:subprocess.run": (
+        "structured argv nmap execution constrained by the nmap tool schema"
     ),
-    "vulnclaw/cli/main.py": (
-        "operator control plane: doctor diagnostics"
+    "vulnclaw/agent/builtin_tools.py:1705:subprocess.run": (
+        "structured argv non-privileged nmap retry"
     ),
-    "vulnclaw/agent/network_scan.py": (
-        "fixed local interface diagnostics ('iw dev', 'ip addr'); "
-        "no model-controlled argv"
+    "vulnclaw/report/verifier.py:487:subprocess.run": (
+        "generated-PoC verification after synchronous ExecutionGate approval"
+    ),
+    "vulnclaw/cli/tui.py:490:subprocess.call": (
+        "operator control plane: native TUI binary launcher"
+    ),
+    "vulnclaw/cli/tui.py:1707:subprocess.run": (
+        "operator control plane: fixed version diagnostic"
+    ),
+    "vulnclaw/cli/main.py:2541:subprocess.run": (
+        "operator control plane: fixed Node.js version diagnostic"
+    ),
+    "vulnclaw/agent/network_scan.py:452:subprocess.run": (
+        "fixed local wireless-interface diagnostic"
+    ),
+    "vulnclaw/agent/network_scan.py:493:subprocess.run": (
+        "fixed local IPv4-interface diagnostic"
     ),
 }
 
@@ -104,6 +116,9 @@ class SpawnSite:
     file: str
     line: int
     call: str
+
+    def key(self) -> str:
+        return f"{self.file}:{self.line}:{self.call}"
 
     def as_dict(self) -> dict[str, object]:
         return {"file": self.file, "line": self.line, "call": self.call}
@@ -135,10 +150,10 @@ def _call_target(call: ast.Call) -> str | None:
 
 
 def scan_file(path: Path) -> list[SpawnSite]:
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except (SyntaxError, UnicodeDecodeError):
-        return []
+    # utf-8-sig accepts the BOM present in a few legacy modules. Real parse or
+    # decode errors must fail CI rather than silently hiding every spawn in the
+    # affected file.
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     rel = path.relative_to(REPO_ROOT).as_posix()
     sites: list[SpawnSite] = []
     for node in ast.walk(tree):
@@ -164,7 +179,7 @@ def main() -> int:
     args = parser.parse_args()
 
     sites = scan_tree()
-    violations = [s for s in sites if s.file not in ALLOWED_SPAWN_SITES]
+    violations = [s for s in sites if s.key() not in ALLOWED_SPAWN_SITES]
 
     if args.json:
         print(
@@ -172,9 +187,9 @@ def main() -> int:
                 {
                     "ok": not violations,
                     "reviewed_sites": [
-                        {**s.as_dict(), "purpose": ALLOWED_SPAWN_SITES[s.file]}
+                        {**s.as_dict(), "purpose": ALLOWED_SPAWN_SITES[s.key()]}
                         for s in sites
-                        if s.file in ALLOWED_SPAWN_SITES
+                        if s.key() in ALLOWED_SPAWN_SITES
                     ],
                     "violations": [s.as_dict() for s in violations],
                     "allowlist": ALLOWED_SPAWN_SITES,

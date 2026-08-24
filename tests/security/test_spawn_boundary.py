@@ -25,18 +25,22 @@ class TestMechanicalBoundary:
         )
         assert result.returncode == 0, result.stdout + result.stderr
 
-    def test_model_reachable_files_are_explicitly_allowlisted(self):
-        """Removing a gated file from the allowlist must break this test loudly."""
-        from scripts.verify_execution_boundary import ALLOWED_SPAWN_SITES
+    def test_model_reachable_sites_are_explicitly_allowlisted(self):
+        """Every current spawn site needs its own reviewed baseline entry."""
+        from scripts.verify_execution_boundary import ALLOWED_SPAWN_SITES, scan_tree
 
-        for required in (
-            "vulnclaw/agent/builtin_tools.py",
-            "vulnclaw/report/verifier.py",
-        ):
-            assert required in ALLOWED_SPAWN_SITES, (
-                f"{required} contains model-reachable spawn sites and must stay "
-                "on the reviewed allowlist with an ExecutionGate note"
-            )
+        missing = [site.key() for site in scan_tree() if site.key() not in ALLOWED_SPAWN_SITES]
+        assert missing == []
+
+    def test_new_site_in_reviewed_file_is_not_implicitly_allowed(self):
+        from scripts.verify_execution_boundary import ALLOWED_SPAWN_SITES, SpawnSite
+
+        probe = SpawnSite(
+            file="vulnclaw/agent/builtin_tools.py",
+            line=999999,
+            call="subprocess.run",
+        )
+        assert probe.key() not in ALLOWED_SPAWN_SITES
 
     def test_json_report_lists_reviewed_sites(self):
         result = subprocess.run(
@@ -48,8 +52,8 @@ class TestMechanicalBoundary:
         assert result.returncode == 0
         report = __import__("json").loads(result.stdout)
         assert report["ok"] is True
-        reviewed = {s["file"] for s in report["reviewed_sites"]}
-        assert "vulnclaw/agent/builtin_tools.py" in reviewed
+        reviewed = {(s["file"], s["line"], s["call"]) for s in report["reviewed_sites"]}
+        assert ("vulnclaw/agent/builtin_tools.py", 437, "subprocess.Popen") in reviewed
 
 
 class TestSubagentDangerousToolRefusal:

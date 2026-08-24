@@ -23,7 +23,7 @@ fn session_round_trip_preserves_composer_history_and_posture() {
     // Source started in Agent, cycled once to Plan — the round trip must
     // restore that exact posture.
     assert_eq!(target.mode, ExecutionMode::Plan);
-    assert_eq!(target.permission, PermissionMode::FullAccess);
+    assert_eq!(target.permission, PermissionMode::Ask);
     assert!(target.input.is_empty());
     assert!(
         !target.transcript.iter().any(|item| item.text == "> /help"),
@@ -52,4 +52,24 @@ fn serialized_session_excludes_authoritative_business_state() {
     assert!(value.get("transcript").is_none());
     assert!(value.get("messages").is_none());
     assert!(value.get("findings").is_none());
+    assert!(value.get("permission").is_none());
+}
+
+#[test]
+fn legacy_permission_is_read_but_never_applied() {
+    let state: SessionState = serde_json::from_value(serde_json::json!({
+        "mode": "Plan",
+        "permission": "Full access",
+        "history": ["/help"]
+    }))
+    .unwrap();
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.permission = PermissionMode::AutoReview;
+
+    state.apply(&mut app);
+
+    assert_eq!(app.permission, PermissionMode::AutoReview);
+    assert_eq!(app.mode, ExecutionMode::Plan);
+    assert_eq!(app.command_history, vec!["/help"]);
 }

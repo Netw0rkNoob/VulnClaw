@@ -476,6 +476,47 @@ async def test_permission_set_updates_gate_policy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_permission_set_allows_all_transitions_while_task_active() -> None:
+    from vulnclaw.agent.exec_gate import get_execution_gate, reset_execution_gate
+
+    reset_execution_gate()
+    stream = io.StringIO()
+    session = BackendSession(JsonlWriter(stream), runtime_factory=FakeRuntime)
+    await session.handle(request("initialize", "r-init"))
+    blocker = asyncio.Event()
+    session.active_task = asyncio.create_task(blocker.wait())
+    session.active_task_id = "task-active"
+
+    try:
+        # Covers ask→full, full→auto, auto→ask, ask→auto,
+        # auto→full, and full→ask while the same task remains active.
+        modes = ["full_access", "auto_review", "ask", "auto_review", "full_access", "ask"]
+        for index, mode in enumerate(modes):
+            await session.handle(
+                request(
+                    "control",
+                    f"r-active-{index}",
+                    payload={
+                        "operation": "session.permission.set",
+                        "arguments": {"mode": mode},
+                    },
+                )
+            )
+            result = events(stream)[-1]
+            assert result["type"] == "control_result"
+            assert result["result"]["mode"] == mode
+            assert get_execution_gate().mode == mode
+            assert session.active_task.done() is False
+    finally:
+        session.active_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await session.active_task
+        session.active_task = None
+        session.active_task_id = None
+        reset_execution_gate()
+
+
+@pytest.mark.asyncio
 async def test_permission_set_rejects_unknown_mode() -> None:
     session = BackendSession(JsonlWriter(io.StringIO()), runtime_factory=FakeRuntime)
     await session.handle(request("initialize", "r-init"))

@@ -435,17 +435,52 @@ def _spawn_captured(
         popen_kwargs["start_new_session"] = True
 
     proc = subprocess.Popen(argv, **popen_kwargs)
+    process_group_id = proc.pid if new_session else None
+    windows_job = _create_windows_kill_job(proc)
     timed_out = False
     try:
         out, err = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired:
         timed_out = True
-        _kill_process_tree(proc)
-        out, err = proc.communicate()
+        _kill_process_tree(
+            proc,
+            process_group_id=process_group_id,
+            windows_job=windows_job,
+        )
+        cleanup_deadline = time.monotonic() + 1.0
+        try:
+            out, err = proc.communicate(timeout=1.0)
+        except subprocess.TimeoutExpired as exc:
+            # A descendant may still hold inherited pipe handles after the
+            # process tree has been terminated. Never turn the cleanup drain
+            # into another unbounded wait.
+            out = exc.output or b""
+            err = exc.stderr or b""
+            for stream in (proc.stdout, proc.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+            remaining = max(0.0, cleanup_deadline - time.monotonic())
+            if remaining > 0:
+                try:
+                    proc.wait(timeout=remaining)
+                except subprocess.TimeoutExpired:
+                    pass
     except BaseException:
-        _kill_process_tree(proc)
-        proc.wait()
+        _kill_process_tree(
+            proc,
+            process_group_id=process_group_id,
+            windows_job=windows_job,
+        )
+        try:
+            proc.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            pass
         raise
+    finally:
+        _close_windows_job(windows_job)
     return (
         proc.returncode,
         (out or b"").decode("utf-8", errors="replace"),
@@ -454,28 +489,148 @@ def _spawn_captured(
     )
 
 
-def _kill_process_tree(proc: subprocess.Popen) -> None:
-    if proc.poll() is not None:
+def _create_windows_kill_job(proc: subprocess.Popen) -> Any | None:
+    """Bind *proc* to a kill-on-close Windows Job Object when available."""
+
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+        configured = kernel32.SetInformationJobObject(
+            job,
+            9,  # JobObjectExtendedLimitInformation
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        assigned = configured and kernel32.AssignProcessToJobObject(
+            job, wintypes.HANDLE(int(proc._handle))  # type: ignore[attr-defined]
+        )
+        if not assigned:
+            kernel32.CloseHandle(job)
+            return None
+        return job
+    except Exception:
+        return None
+
+
+def _terminate_windows_job(job: Any) -> bool:
+    if os.name != "nt" or job is None:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.TerminateJobObject.restype = wintypes.BOOL
+        return bool(kernel32.TerminateJobObject(job, 1))
+    except Exception:
+        return False
+
+
+def _close_windows_job(job: Any) -> None:
+    if os.name != "nt" or job is None:
         return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle(job)
+    except Exception:
+        pass
+
+
+def _kill_process_tree(
+    proc: subprocess.Popen,
+    *,
+    process_group_id: int | None = None,
+    windows_job: Any = None,
+) -> None:
     if os.name != "nt":
         import signal
 
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            return
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
+        if process_group_id is not None:
+            try:
+                # With start_new_session=True the child's pid is also its pgid.
+                # The group can remain alive after its leader has already exited.
+                os.killpg(process_group_id, signal.SIGKILL)
+                return
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
     else:
+        if _terminate_windows_job(windows_job):
+            return
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                 capture_output=True,
                 timeout=10,
                 check=False,
             )
-            return
+            if result.returncode == 0:
+                return
         except Exception:
             pass
+    if proc.poll() is not None:
+        return
     try:
         proc.kill()
     except OSError:
@@ -509,7 +664,6 @@ async def execute_shell_command(agent: AgentContext, args: dict[str, Any]) -> st
     shell_name = str(args.get("shell") or "")
     argv = _shell_argv(command, shell_name)
     env = sanitized_exec_env()
-    started = time.perf_counter()
 
     # ── ExecutionGate: per-request operator approval ─────────────────────
     from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate
@@ -533,6 +687,7 @@ async def execute_shell_command(agent: AgentContext, args: dict[str, Any]) -> st
     if not outcome.approved:
         return outcome.refusal_text("shell_command")
 
+    started = time.perf_counter()
     try:
         loop = asyncio.get_running_loop()
         returncode, stdout, stderr, timed_out = await loop.run_in_executor(
@@ -2172,7 +2327,7 @@ async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
         # ── ExecutionGate: per-request operator approval ─────────────────
         from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate
 
-        gate = get_execution_gate(safety)
+        gate = get_execution_gate(getattr(agent, "config", None))
         outcome = await gate.authorize(
             GateRequest(
                 kind="python",

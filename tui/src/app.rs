@@ -186,6 +186,8 @@ pub struct PendingExecution {
     /// clock-skew parsing of the ISO stamp.
     pub received_at: std::time::Instant,
     pub risk: String,
+    /// Wrapped-row offset within the approval modal body.
+    pub scroll_offset: u16,
 }
 
 impl PendingExecution {
@@ -509,14 +511,38 @@ impl App {
         };
         // The backend owns the authoritative policy; the local label only
         // updates when the control call succeeds.
-        if self.request_control(
-            "session.permission.set",
-            serde_json::json!({ "mode": mode_value }),
-        ) {
+        let arguments = serde_json::json!({ "mode": mode_value });
+        let sent = if self.worker_active {
+            self.send_control_during_task("session.permission.set", arguments)
+        } else {
+            self.request_control("session.permission.set", arguments)
+        };
+        if sent {
             self.status(format!(
                 "Permission mode change to {} requested.",
                 next.label()
             ));
+        }
+    }
+
+    pub fn scroll_pending_execution(&mut self, down: bool, page: bool) {
+        let Some(pending) = self.pending_execution.as_ref() else {
+            return;
+        };
+        let max = crate::ui::layout::approval_max_scroll(pending, self.terminal_size);
+        let step = if page {
+            usize::from(crate::ui::layout::approval_body_height(self.terminal_size).max(1))
+        } else {
+            1
+        };
+        let current = usize::from(pending.scroll_offset).min(max);
+        let next = if down {
+            current.saturating_add(step).min(max)
+        } else {
+            current.saturating_sub(step)
+        };
+        if let Some(pending) = self.pending_execution.as_mut() {
+            pending.scroll_offset = u16::try_from(next).unwrap_or(u16::MAX);
         }
     }
 
@@ -1045,6 +1071,7 @@ impl App {
                             expires_in_secs: expires_in_seconds,
                             received_at: std::time::Instant::now(),
                             risk: risk.clone(),
+                            scroll_offset: 0,
                         });
                     }
                     let mut lines = vec![format!("Approval required [{kind}]: {question}")];

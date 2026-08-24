@@ -34,9 +34,8 @@ from vulnclaw.tui_protocol import (
 
 # Concrete management operations are capability-gated feature extensions. The
 # base backend owns mutable session scope defaults; client posture remains local.
-# ``execution.approval.resolve`` is deliberately usable *while a task is
-# active*: it is the trusted channel that resolves a pending ExecutionGate
-# request raised by that very task.
+# Execution decisions and operator-initiated permission changes are usable
+# while a task is active. Scope mutation remains idle-only.
 SUPPORTED_CONTROL_OPERATIONS = frozenset(
     {
         "session.scope.reset",
@@ -45,7 +44,9 @@ SUPPORTED_CONTROL_OPERATIONS = frozenset(
         "session.permission.set",
     }
 )
-TASK_ACTIVE_CONTROL_OPERATIONS = frozenset({"execution.approval.resolve"})
+TASK_ACTIVE_CONTROL_OPERATIONS = frozenset(
+    {"execution.approval.resolve", "session.permission.set"}
+)
 RUNTIME_STATE_FIELDS = frozenset(
     {"target", "phase", "task_constraints", "findings", "evidence", "constraint_violations"}
 )
@@ -412,19 +413,8 @@ class BackendSession:
 
             mode = str(arguments.get("mode") or "").strip().lower()
             gate = get_execution_gate()
-            # Escalation while a task runs would let injected content benefit
-            # from a mid-task loosening; de-escalation stays allowed.
-            rank = {"ask": 0, "auto_review": 1, "full_access": 2}
-            if mode not in rank:
+            if mode not in {"ask", "auto_review", "full_access"}:
                 raise ValueError("mode must be one of: ask, auto_review, full_access")
-            if (
-                self.active_task is not None
-                and not self.active_task.done()
-                and rank[mode] > rank[gate.mode]
-            ):
-                raise ValueError(
-                    "permission escalation is not allowed while a task is active"
-                )
             new_mode = gate.set_mode(mode, source="tui")
             return {
                 "message": f"Permission mode set to {new_mode}.",

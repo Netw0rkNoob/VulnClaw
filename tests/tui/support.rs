@@ -36,7 +36,7 @@ for line in sys.stdin:
             "backend": {"pid": os.getpid(), "version": "test", "protocol_version": 1},
             "capabilities": {
                 "commands": ["scan", "run", "recon"],
-                "control_operations": ["example.inspect", "session.scope.reset", "session.scope.update"],
+                "control_operations": ["example.inspect", "session.permission.set", "session.scope.reset", "session.scope.update"],
                 "cancellation": True,
                 "authoritative_state": True,
             },
@@ -78,14 +78,24 @@ for line in sys.stdin:
                 "state": state(False, None, "failed"),
             }), flush=True)
     elif msg["type"] == "control":
+        operation = msg["payload"]["operation"]
+        is_permission = operation == "session.permission.set"
+        result = (
+            {"message": "permission updated", "mode": msg["payload"]["arguments"]["mode"]}
+            if is_permission else {"message": "scope updated"}
+        )
+        control_state = (
+            state(current_task is not None, current_task, "running")
+            if is_permission else state(False, None, "idle", target="scope.test") | {
+                "task_constraints": {"allowed_ports": [443]}
+            }
+        )
         print(json.dumps(base | {
             "type": "control_result",
             "request_id": msg["request_id"],
-            "operation": msg["payload"]["operation"],
-            "result": {"message": "scope updated"},
-            "state": state(False, None, "idle", target="scope.test") | {
-                "task_constraints": {"allowed_ports": [443]}
-            },
+            "operation": operation,
+            "result": result,
+            "state": control_state,
         }), flush=True)
     elif msg["type"] == "cancel_task":
         if current_target == "cancel-reject.test":

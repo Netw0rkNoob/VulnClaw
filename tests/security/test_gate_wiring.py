@@ -80,6 +80,23 @@ class TestPythonExecuteGateWiring:
         result = await execute_python(_agent(), {"code": "print('gate-py-ok')"})
         assert "gate-py-ok" in result
 
+    async def test_python_first_call_uses_complete_agent_config(self):
+        from vulnclaw.agent.builtin_tools import execute_python
+
+        reset_execution_gate()
+        agent = _agent()
+        agent.config.safety.permission_mode = "full_access"
+        agent.config.safety.approval_timeout_seconds = 17
+        agent.config.safety.trusted_commands = ["nmap -sV"]
+
+        result = await execute_python(agent, {"code": "print('configured-gate')"})
+        gate = get_execution_gate()
+        assert "configured-gate" in result
+        assert gate.mode == "full_access"
+        assert gate.timeout_seconds == 17
+        assert gate.trusted_commands == (("nmap", "-sV"),)
+        reset_execution_gate()
+
 
 class TestVerifierBridge:
     def test_execute_poc_refuses_without_sync_hook(self, fresh_gate):

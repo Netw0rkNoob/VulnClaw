@@ -65,6 +65,66 @@ def _install_auto_approve():
     return gate, channel
 
 
+class TestExecutionDiagnostics:
+    async def test_shell_wall_time_excludes_approval_wait(self, monkeypatch):
+        import vulnclaw.agent.builtin_tools as builtin_tools
+        from vulnclaw.agent.exec_gate import get_execution_gate, reset_execution_gate
+
+        clock = {"now": 0.0}
+
+        class DelayedApproval:
+            async def request_approval(self, view):
+                clock["now"] = 10.0
+                return "approve"
+
+        reset_execution_gate()
+        get_execution_gate().install_channel(DelayedApproval())
+        monkeypatch.setattr(builtin_tools.time, "perf_counter", lambda: clock["now"])
+
+        def fake_spawn(*args, **kwargs):
+            clock["now"] += 0.005
+            return 0, "ok", "", False
+
+        monkeypatch.setattr(builtin_tools, "_spawn_captured", fake_spawn)
+        result = await builtin_tools.execute_shell_command(
+            DummyAgent(), {"command": "printf ok"}
+        )
+        assert "Wall time: 5ms" in result
+
+    async def test_timeout_messages_discard_partial_output(self, monkeypatch):
+        import vulnclaw.agent.builtin_tools as builtin_tools
+
+        _install_auto_approve()
+        monkeypatch.setattr(
+            builtin_tools,
+            "_spawn_captured",
+            lambda *args, **kwargs: (-9, "CAPTURED_ONLY", "CAPTURED_ERROR", True),
+        )
+
+        shell = await builtin_tools.execute_shell_command(
+            DummyAgent(), {"command": "printf PARTIAL_STDOUT; sleep 10"}
+        )
+        python_agent = DummyAgent()
+        python_agent.config.safety.python_execute_audit_enabled = False
+        python = await builtin_tools.execute_python(
+            python_agent, {"code": "print('PARTIAL_STDOUT')"}
+        )
+        monkeypatch.setattr(builtin_tools.shutil, "which", lambda name: "/usr/bin/php")
+        php = await builtin_tools.execute_runtime_diff_probe(
+            DummyAgent(),
+            {
+                "mode": "php_serialize",
+                "payload": 's:1:"x";',
+                "filter_regex": "/x/",
+            },
+        )
+
+        for result in (shell, python, php):
+            assert "timed out" in result
+            assert "CAPTURED_ONLY" not in result
+            assert "CAPTURED_ERROR" not in result
+
+
 class TestColdMemoryTool:
     async def test_memory_search_retrieves_archived_turn_on_demand(self, tmp_path):
         from vulnclaw.agent.builtin_tools import execute_mcp_tool
