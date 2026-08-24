@@ -64,6 +64,11 @@ class GateRequest:
     display: str  # raw command or source code
     cwd: str = ""
     detail: str = ""  # extra context shown under the command
+    # Model self-assessment (codex on-request style). One-way escalation
+    # only: "review" forces the human path even for allowlisted commands;
+    # it can never downgrade a prompt-class command.
+    model_risk: str = ""  # "" | "safe" | "review"
+    model_reason: str = ""
 
     def request_hash(self) -> str:
         payload = json.dumps(
@@ -72,6 +77,8 @@ class GateRequest:
                 "display": self.display,
                 "cwd": self.cwd,
                 "detail": self.detail,
+                "model_risk": self.model_risk,
+                "model_reason": self.model_reason,
             },
             sort_keys=True,
             ensure_ascii=False,
@@ -258,21 +265,35 @@ class ExecutionGate:
         # per-request approval flow (interactive channel or stable refusal).
         # Non-shell kinds (python/php/poc) are interpreters by definition and
         # always take the approval path in this mode.
-        if self.mode == "auto_review" and request.kind == "shell":
+        #
+        # Model self-assessment rides on top, one-way only: a "review" tag
+        # forces the human path even for allowlisted commands. A "safe" tag
+        # is ignored — the local classifier remains the sole authority for
+        # running without approval.
+        flagged_review = request.model_risk == "review"
+        classifier_reason = ""
+        if self.mode == "auto_review" and request.kind == "shell" and not flagged_review:
             from vulnclaw.agent.command_classifier import classify_shell_command
 
             verdict = classify_shell_command(request.display, self.trusted_commands)
             if verdict.decision == "allow":
                 return GateOutcome(True, "approved")
-            if request.detail:
-                request = replace(
-                    request,
-                    detail=f"{request.detail} | auto-review: {verdict.reason}",
-                )
-            else:
-                request = replace(
-                    request, detail=f"auto-review: {verdict.reason}"
-                )
+            classifier_reason = verdict.reason
+
+        notes: list[str] = []
+        if flagged_review:
+            notes.append(
+                "model self-assessment: needs review"
+                + (f"\n{request.model_reason}" if request.model_reason else "")
+            )
+        if classifier_reason:
+            notes.append(classifier_reason)
+        if notes and self.mode != "full_access":
+            extra = " | ".join(notes)
+            request = replace(
+                request,
+                detail=f"{request.detail} | {extra}" if request.detail else extra,
+            )
             # fall through to the interactive flow below
 
         if not self.has_trusted_channel():

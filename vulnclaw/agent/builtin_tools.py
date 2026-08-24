@@ -514,9 +514,20 @@ async def execute_shell_command(agent: AgentContext, args: dict[str, Any]) -> st
     # ── ExecutionGate: per-request operator approval ─────────────────────
     from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate
 
+    model_risk = str(args.get("risk_self_assessment") or "").strip().lower()
+    if model_risk not in ("safe", "review"):
+        model_risk = ""  # omitted/unknown: local classifier stays the authority
+    model_reason = str(args.get("assessment_reason") or "").strip()[:300]
+
     gate = get_execution_gate(getattr(agent, "config", None))
     outcome = await gate.authorize(
-        GateRequest(kind="shell", display=command, cwd=str(workdir)),
+        GateRequest(
+            kind="shell",
+            display=command,
+            cwd=str(workdir),
+            model_risk=model_risk,
+            model_reason=model_reason,
+        ),
         run_id=str(getattr(getattr(agent, "runtime", None), "run_id", "") or ""),
     )
     if not outcome.approved:
@@ -2152,6 +2163,10 @@ async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
         return f"[!] Sandbox bypass detected: {ast_bypass}"
 
     max_output_chars = getattr(safety, "python_execute_max_output_chars", 0)
+    model_risk = str(args.get("risk_self_assessment") or "").strip().lower()
+    if model_risk not in ("safe", "review"):
+        model_risk = ""
+    model_reason = str(args.get("assessment_reason") or "").strip()[:300]
     tmp_path = ""
     try:
         # ── ExecutionGate: per-request operator approval ─────────────────
@@ -2164,6 +2179,8 @@ async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
                 display=code,
                 cwd="",
                 detail=f"purpose={purpose or '(none)'} mode={mode}",
+                model_risk=model_risk,
+                model_reason=model_reason,
             ),
             run_id=str(getattr(getattr(agent, "runtime", None), "run_id", "") or ""),
         )

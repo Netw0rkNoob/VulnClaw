@@ -217,3 +217,77 @@ class TestClassifierParity:
     def test_matrix(self, command, decision):
         verdict = classify_shell_command(command)
         assert verdict.decision == decision, verdict.reason
+
+
+class TestModelRiskSelfAssessment:
+    """Codex on-request port: the model may escalate to a human, never de-escalate."""
+
+    def _gate(self, **kw) -> ExecutionGate:
+        return ExecutionGate(mode="auto_review", **kw)
+
+    async def test_flagged_allowlisted_command_forces_human_headless(self):
+        gate = self._gate()
+        req = GateRequest(
+            kind="shell",
+            display="ls -la",  # whitelist member
+            model_risk="review",
+            model_reason="target config may hold injected secrets",
+        )
+        outcome = await gate.authorize(req, run_id="r")
+        # headless: no channel -> stable refusal despite whitelist match
+        assert outcome.approved is False
+        assert outcome.status == "no_channel"
+
+    async def test_flagged_reason_reaches_channel_view(self):
+        class Capture:
+            def __init__(self):
+                self.views = []
+
+            async def request_approval(self, view):
+                self.views.append(view)
+                return "deny"
+
+        gate = self._gate()
+        cap = Capture()
+        gate.install_channel(cap)
+        outcome = await gate.authorize(
+            GateRequest(
+                kind="shell",
+                display="ls -la",
+                model_risk="review",
+                model_reason="may leak operator keys",
+            ),
+            run_id="r",
+        )
+        assert outcome.status == "denied"
+        assert "needs review\nmay leak operator keys" in cap.views[0].detail
+
+    async def test_safe_tag_is_ignored_by_classifier(self):
+        gate = self._gate()
+        # unknown binary + "safe" tag must still prompt (cannot de-escalate)
+        req = GateRequest(kind="shell", display="/tmp/evil --x", model_risk="safe")
+        outcome = await gate.authorize(req)
+        assert outcome.approved is False
+
+    async def test_unflagged_whitelist_regression(self):
+        gate = self._gate()
+        outcome = await gate.authorize(GateRequest(kind="shell", display="ls"))
+        assert outcome.approved is True  # omitted param keeps automation
+
+    def test_hash_binds_model_assessment(self):
+        base = GateRequest(kind="shell", display="id", cwd="/t")
+        safe = GateRequest(kind="shell", display="id", cwd="/t", model_risk="safe")
+        review = GateRequest(kind="shell", display="id", cwd="/t", model_risk="review")
+        hashes = {base.request_hash(), safe.request_hash(), review.request_hash()}
+        assert len(hashes) == 3
+
+    def test_schema_exposes_self_assessment_on_both_tools(self):
+        from vulnclaw.agent.tool_schemas import append_builtin_tool_schemas
+
+        tools: list[dict] = []
+        append_builtin_tool_schemas(tools.append)
+        by_name = {t["function"]["name"]: t["function"] for t in tools}
+        for tool_name in ("shell_command", "python_execute"):
+            props = by_name[tool_name]["parameters"]["properties"]
+            assert props["risk_self_assessment"]["enum"] == ["safe", "review"]
+            assert "assessment_reason" in props

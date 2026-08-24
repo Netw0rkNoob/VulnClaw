@@ -88,3 +88,47 @@ class TestVerifierBridge:
         rc, output = VerifierExecutor.execute_poc("print('poc')")
         assert rc == -4
         assert "[REFUSED]" in output
+
+
+class TestModelRiskWiring:
+    """args.risk_self_assessment flows from tool call to gate decision."""
+
+    async def test_flagged_ls_headless_refused(self, fresh_gate):
+        from vulnclaw.agent.builtin_tools import execute_shell_command
+
+        result = await execute_shell_command(
+            _agent(),
+            {"command": "ls", "risk_self_assessment": "review",
+             "assessment_reason": "dir may contain operator notes"},
+        )
+        assert "refused" in result and "no trusted approval channel" in result
+
+    async def test_unflagged_ls_headless_still_runs(self, fresh_gate):
+        from vulnclaw.agent.builtin_tools import execute_shell_command
+
+        fresh_gate.mode = "auto_review"
+
+        result = await execute_shell_command(_agent(), {"command": "echo WIRE_OK"})
+        assert "WIRE_OK" in result
+
+    async def test_python_flagged_reason_reaches_view(self, fresh_gate):
+        from vulnclaw.agent.builtin_tools import execute_python
+
+        class Capture:
+            def __init__(self):
+                self.views = []
+
+            async def request_approval(self, view):
+                self.views.append(view)
+                return "deny"
+
+        cap = Capture()
+        fresh_gate.install_channel(cap)
+        result = await execute_python(
+            _agent(),
+            {"code": "print(1)", "risk_self_assessment": "review",
+             "assessment_reason": "touches env"},
+        )
+        assert "denied" in result
+        assert any("needs review" in v.detail and "touches env" in v.detail
+                   for v in cap.views)
