@@ -201,9 +201,9 @@ class TestClassifierParity:
         [
             ("ls -la", "allow"),
             ("cat /etc/hostname", "allow"),
-            ("git status", "allow"),
+            ("git status", "prompt"),
             ("cd /tmp && ls", "allow"),
-            ("FOO=1 ls", "allow"),
+            ("FOO=1 ls", "prompt"),  # assignment prefix: PATH/LD_PRELOAD hijack class
             ("git push origin main", "prompt"),
             ("find . -delete", "prompt"),
             ("find . -exec rm {} \\;", "prompt"),

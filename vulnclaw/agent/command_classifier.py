@@ -7,21 +7,21 @@ A faithful lightweight port of Codex CLI's exec-policy layer
 - every segment is matched against a three-way decision:
   * **allow**    — a curated read-only table (with per-tool argument rules),
                    or an operator-configured trusted prefix;
-  * **prompt**   — everything else, including interpreters and dangerous
-                   patterns (degraded to the interactive approval flow);
+  * **prompt**   — everything else, including interpreters, dangerous
+                   patterns and leading environment assignments (degraded to
+                   the interactive approval flow);
   * reasons are surfaced to the approval UI.
 
 Honest boundary: without an OS sandbox this classifier *is* the router that
 decides what runs unattended. It trusts command names plus explicit argument
-rules — exactly the pattern that earned Codex a high-severity CVE when
-``git show`` was trusted by name (fixed by enumerating read-only
-subcommands). The tables below therefore stay conservative: interpreters are
-never auto-approved, ``find``/``git`` carry argument rules, and operator
+rules, so the tables below stay conservative: interpreters and Git are never
+built-in auto-approved, ``find`` carries argument rules, and operator
 extensions are validated against the banned-name list at load time.
 """
 
 from __future__ import annotations
 
+import re
 import shlex
 from dataclasses import dataclass
 from typing import Callable
@@ -65,25 +65,17 @@ def _find_args_rule(tokens: list[str]) -> str | None:
     return None
 
 
-def _git_subcommand_rule(tokens: list[str]) -> str | None:
-    """Only enumerated read-only subcommands (the codex git-show CVE lesson)."""
-    if len(tokens) < 2:
-        return None
-    sub = tokens[1].lower()
-    readonly = {
-        "status", "log", "diff", "show", "branch", "tag", "remote",
-        "rev-parse", "ls-files", "shortlog", "describe", "reflog",
-        "blame", "cat-file", "config",  # config read is common; see note
-    }
-    if sub.startswith("-"):  # global flags before subcommand
-        return None
-    if sub not in readonly:
-        return f"git {sub!r} is not a read-only subcommand"
+def _grep_args_rule(tokens: list[str]) -> str | None:
+    # grep itself is read-only; nothing to forbid today.
     return None
 
 
-def _grep_args_rule(tokens: list[str]) -> str | None:
-    # grep itself is read-only; nothing to forbid today.
+def _diff_args_rule(tokens: list[str]) -> str | None:
+    """diff is read-only unless its output-file option is used."""
+    for tok in tokens[1:]:
+        lowered = tok.lower()
+        if lowered == "--output" or lowered.startswith("--output="):
+            return f"diff flag {tok} writes to a file"
     return None
 
 
@@ -95,13 +87,12 @@ SAFE_COMMANDS: dict[str, Callable[[list[str]], str | None] | None] = {
     "file": None, "stat": None, "du": None, "df": None,
     "which": None, "type": None,
     "id": None, "whoami": None, "uname": None, "date": None,
-    "diff": None, "cmp": None, "sort": None, "uniq": None,
+    "diff": _diff_args_rule, "cmp": None,
     "cut": None, "tr": None, "tac": None, "rev": None,
     "basename": None, "dirname": None, "readlink": None,
     "md5sum": None, "sha1sum": None, "sha256sum": None, "sha512sum": None,
     "jq": None, "tree": None, "who": None, "w": None,
     "uptime": None, "free": None, "lscpu": None, "ss": None,
-    "git": _git_subcommand_rule,
 }
 
 # Basenames that must never be auto-approved, mirroring Codex's
@@ -147,6 +138,11 @@ def _scan_unsupported(text: str) -> str | None:
             escaped = True
             continue
         if quote:
+            # POSIX shells still expand variables and execute command
+            # substitutions inside double quotes. Treat every unescaped '$'
+            # or backtick there as unsupported; single quotes remain literal.
+            if quote == '"' and ch in {"$", "`"}:
+                return f"unsupported shell construct {ch!r} (quoted substitution)"
             if ch == quote:
                 quote = None
             continue
@@ -193,20 +189,29 @@ def _split_segments(text: str) -> list[str]:
     return [seg.strip() for seg in segments if seg.strip()]
 
 
-def _strip_env_assignments(tokens: list[str]) -> list[str]:
-    """Drop leading FOO=bar assignments (codex treats these as plain words)."""
-    i = 0
-    while i < len(tokens) - 1 and "=" in tokens[i] and not tokens[i].startswith("="):
-        name = tokens[i].split("=", 1)[0]
-        if name.isidentifier():
-            i += 1
-        else:
-            break
-    return tokens[i:]
+_ENV_ASSIGN_PREFIX_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _starts_with_env_assignment(tokens: list[str]) -> bool:
+    """True when the segment opens with FOO=bar assignment prefixes.
+
+    ``sh -c`` applies these to the command's environment *before* lookup:
+    a leading ``PATH=`` redirects the binary search and ``LD_PRELOAD`` /
+    ``DYLD_*`` / ``GIT_EXEC_PATH`` inject code into whatever runs. Stripping
+    the prefix and matching the remainder against the allow table (the
+    previous behavior) therefore let ``PATH=/tmp/evil ls`` auto-approve.
+    Assignments are always routed to interactive approval; operators who
+    need them should wrap the invocation in their own trusted script.
+    """
+    return bool(tokens) and _ENV_ASSIGN_PREFIX_RE.match(tokens[0]) is not None
 
 
 def classify_segment(tokens: list[str], trusted: tuple[tuple[str, ...], ...]) -> Classification:
-    tokens = _strip_env_assignments(tokens)
+    if _starts_with_env_assignment(tokens):
+        return _prompt(
+            "leading environment assignment cannot be verified safely "
+            "(can hijack PATH lookup or inject LD_PRELOAD/GIT_EXEC_PATH)"
+        )
     if not tokens:
         return _allow()
     name = _basename(tokens[0])
@@ -219,18 +224,18 @@ def classify_segment(tokens: list[str], trusted: tuple[tuple[str, ...], ...]) ->
             "ruby", "perl", "lua", "julia", "rscript", "php",
         } else f"{name!r} is never auto-approved")
 
+    for entry in trusted:
+        if len(tokens) >= len(entry) and tokens[0].lower() == entry[0] and all(
+            tokens[i] == entry[i] for i in range(1, len(entry))
+        ):
+            return _allow()
+
     if name in SAFE_COMMANDS:
         rule = SAFE_COMMANDS[name]
         violation = rule(tokens) if rule is not None else None
         if violation:
             return _prompt(f"{name}: {violation}")
         return _allow()
-
-    for entry in trusted:
-        if len(tokens) >= len(entry) and tokens[0].lower() == entry[0] and all(
-            tokens[i] == entry[i] for i in range(1, len(entry))
-        ):
-            return _allow()
 
     return _prompt(f"'{tokens[0]}' is not in the trusted command table")
 
@@ -262,7 +267,7 @@ def parse_trusted_commands(
                 "list and cannot be auto-approved"
             )
             continue
-        prefixes.append(tuple(tokens))
+        prefixes.append((tokens[0].lower(), *tokens[1:]))
     return tuple(prefixes), warnings
 
 
