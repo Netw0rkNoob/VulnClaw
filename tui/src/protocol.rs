@@ -203,6 +203,18 @@ pub enum BackendEvent {
     ApprovalRequired {
         task_id: String,
         question: String,
+        #[serde(default)]
+        request_hash: String,
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        cwd: String,
+        #[serde(default)]
+        detail: String,
+        #[serde(default)]
+        expires_at: String,
+        #[serde(default)]
+        risk: String,
     },
     TaskCompleted {
         request_id: String,

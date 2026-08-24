@@ -442,6 +442,11 @@ class VerifierExecutor:
     def execute_poc(cls, poc_code: str, timeout: int = 30) -> tuple[int, str]:
         """执行 PoC 代码.
 
+        The generated PoC is arbitrary code: it only runs when a local
+        synchronous approval hook has been installed on the ExecutionGate
+        (interactive CLI) or when the operator explicitly opts in. Silent
+        auto-execution is refused.
+
         Args:
             poc_code: PoC Python 代码
             timeout: 超时秒数
@@ -449,6 +454,24 @@ class VerifierExecutor:
         Returns:
             (返回码, 输出内容)
         """
+        # ── ExecutionGate: generated PoC needs explicit local consent ────
+        from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate
+
+        gate = get_execution_gate()
+        if not gate.confirm_sync(
+            GateRequest(
+                kind="poc",
+                display=poc_code,
+                detail="generated PoC verification",
+            )
+        ):
+            return (
+                -4,
+                "[REFUSED] generated PoC execution requires per-request "
+                "operator approval; no trusted confirmation channel is "
+                "installed.",
+            )
+
         # 写入临时文件
         with tempfile.NamedTemporaryFile(
             mode="w",

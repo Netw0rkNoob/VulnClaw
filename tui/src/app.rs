@@ -959,14 +959,34 @@ impl App {
                         format!("→ result: {}", truncate_text(&result, 240)),
                     );
                 }
-                BackendEvent::ApprovalRequired { task_id, question } => {
+                BackendEvent::ApprovalRequired {
+                    task_id,
+                    question,
+                    request_hash,
+                    kind,
+                    cwd,
+                    detail,
+                    expires_at,
+                    risk,
+                } => {
+                    let _ = request_hash;
                     if !self.is_current_task(&task_id) {
                         return;
                     }
-                    self.push(
-                        TranscriptKind::Status,
-                        format!("Approval required: {question}"),
-                    );
+                    let mut lines = vec![format!("Approval required [{kind}]: {question}")];
+                    if !cwd.is_empty() {
+                        lines.push(format!("  cwd: {cwd}"));
+                    }
+                    if !detail.is_empty() {
+                        lines.push(format!("  detail: {detail}"));
+                    }
+                    if !expires_at.is_empty() {
+                        lines.push(format!("  expires: {expires_at}"));
+                    }
+                    if !risk.is_empty() {
+                        lines.push(format!("  risk: {risk}"));
+                    }
+                    self.push(TranscriptKind::Status, lines.join("\n"));
                 }
                 BackendEvent::TaskCompleted {
                     request_id,
@@ -1255,6 +1275,39 @@ impl App {
         self.status(format!(
             "/{command} armed for {target}. Press Y to run, or Esc to cancel."
         ));
+    }
+
+    fn send_control_during_task(&mut self, operation: &str, arguments: serde_json::Value) -> bool {
+        if !self.backend_ready {
+            self.error("The Python backend is not ready.");
+            return false;
+        }
+        if !self
+            .backend_control_operations
+            .iter()
+            .any(|candidate| candidate == operation)
+        {
+            self.error(format!(
+                "The connected backend does not support control operation {operation}."
+            ));
+            return false;
+        }
+        let request_id = self.next_request_id();
+        let request = ClientRequest::control(request_id.clone(), operation, arguments);
+        let send_result = self
+            .backend
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("backend disconnected"))
+            .and_then(|backend| backend.send(&request));
+        if let Err(error) = send_result {
+            self.error(format!(
+                "Could not send {operation} to Python backend: {error}"
+            ));
+            return false;
+        }
+        self.pending_requests
+            .insert(request_id, PendingRequest::Control(operation.to_owned()));
+        true
     }
 
     fn request_control(&mut self, operation: &str, arguments: serde_json::Value) -> bool {

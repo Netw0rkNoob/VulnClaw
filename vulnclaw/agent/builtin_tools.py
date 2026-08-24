@@ -69,6 +69,44 @@ def role_allows_tool(role: str | None, tool_name: str) -> bool:
     """Return whether the active team role may see or call a tool."""
     return tool_allowed_for_role(tool_name, role)
 
+
+# Tools whose invocation executes arbitrary code on the host. These are the
+# C-1/C-2 surface: they stay registered (the agent's core capability) but are
+# subject to ExecutionGate approval and are never available to leaf agents.
+DANGEROUS_TOOLS = frozenset({"shell_command", "python_execute"})
+
+
+def is_subagent(agent: AgentContext | None) -> bool:
+    """Whether *agent* is a spawned child agent rather than the main agent.
+
+    ``SubagentContext.depth == 0`` marks the main agent; every child built
+    through ``_child_factory`` runs with ``depth > 0``.
+    """
+    if agent is None:
+        return False
+    ctx = getattr(agent, "_subagent_ctx", None)
+    if ctx is None:
+        return False
+    return getattr(ctx, "depth", 0) > 0
+
+
+def dangerous_tool_refusal(tool_name: str, agent: AgentContext | None = None) -> str | None:
+    """Fail-closed check for dangerous tools.
+
+    Leaf agents can never reach host execution regardless of role globs or
+    hand-crafted tool calls; the main agent passes through to the caller's
+    approval flow.
+    """
+    if tool_name not in DANGEROUS_TOOLS:
+        return None
+    if is_subagent(agent):
+        return (
+            f"[!] {tool_name} is not available to subagents. Arbitrary "
+            "execution requests must be issued by the main agent and "
+            "approved by the local operator."
+        )
+    return None
+
 BLOCKED_PATTERNS: list[str] = [
     r"os\.\s*system\s*\(",
     r"subprocess\.\s*Popen\s*\(",
@@ -316,18 +354,140 @@ def _validate_command_url_scope(agent: AgentContext, command: str) -> str | None
     return None
 
 
-def _shell_argv(command: str, shell_name: str) -> list[str] | str:
+def _shell_argv(command: str, shell_name: str) -> list[str]:
+    """Build a fully-specified argv for one shell invocation.
+
+    Hardening (C-1): never trust %ComSpec%/PATH lookups for system shells,
+    never relax PowerShell execution policy, and disable CMD AutoRun.
+    """
     normalized = (shell_name or "").strip().lower()
     if os.name == "nt":
+        system_dir = _windows_system_dir()
         if normalized in {"cmd", "cmd.exe"}:
-            return ["cmd.exe", "/c", command]
-        executable = "pwsh.exe" if normalized in {"pwsh", "pwsh.exe"} else "powershell.exe"
-        return [executable, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]
-    return command
+            return [str(system_dir / "cmd.exe"), "/D", "/S", "/C", command]
+        if normalized in {"pwsh", "pwsh.exe"}:
+            # pwsh is operator-installed: PATH lookup is acceptable here, the
+            # binary location is an operator decision, not attacker-controlled.
+            return ["pwsh.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+        powershell = system_dir / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        exe = str(powershell) if powershell.is_file() else "powershell.exe"
+        return [exe, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+    return ["/bin/sh", "-c", command]
+
+
+def _windows_system_dir() -> Path:
+    """Trusted system directory (never %ComSpec% or other env values)."""
+    root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+    return Path(root) / "System32"
+
+
+# Environment variables that must never reach a child spawned from
+# model-influenced input: they hijack interpreters (BASH_ENV/NODE_OPTIONS/
+# PYTHONSTARTUP), steal credentials (SSH_AUTH_SOCK/GIT_ASKPASS) or inject
+# code into loaders (LD_*/DYLD_*). Matching is case-insensitive; DYLD_ is
+# matched as a prefix because macOS exposes several variants.
+_EXEC_ENV_BLOCKED_EXACT = frozenset({
+    "BASH_ENV", "ENV", "CDPATH", "PYTHONPATH", "PYTHONSTARTUP",
+    "PYTHONHOME", "NODE_OPTIONS", "GIT_ASKPASS", "SSH_AUTH_SOCK",
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
+})
+_EXEC_ENV_BLOCKED_PREFIXES = ("DYLD_",)
+
+
+def sanitized_exec_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Child-process environment: inherited minus interpreter-hijack vectors."""
+    source = os.environ if base is None else base
+    env: dict[str, str] = {}
+    for key, value in source.items():
+        upper = key.upper()
+        if upper in _EXEC_ENV_BLOCKED_EXACT:
+            continue
+        if any(upper.startswith(prefix) for prefix in _EXEC_ENV_BLOCKED_PREFIXES):
+            continue
+        env[key] = value
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def _spawn_captured(
+    argv: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str] | None = None,
+    timeout_s: float,
+):
+    """Run argv capturing output; on timeout kill the whole process tree.
+
+    POSIX starts the child in its own session so ``killpg`` reaches every
+    descendant; Windows falls back to ``taskkill /T /F``. Returns
+    ``(returncode, stdout, stderr, timed_out)``.
+    """
+    popen_kwargs: dict[str, Any] = {
+        "cwd": cwd,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "stdin": subprocess.DEVNULL,
+    }
+    if env is not None:
+        popen_kwargs["env"] = env
+    new_session = os.name != "nt"
+    if new_session:
+        popen_kwargs["start_new_session"] = True
+
+    proc = subprocess.Popen(argv, **popen_kwargs)
+    timed_out = False
+    try:
+        out, err = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _kill_process_tree(proc)
+        out, err = proc.communicate()
+    except BaseException:
+        _kill_process_tree(proc)
+        proc.wait()
+        raise
+    return (
+        proc.returncode,
+        (out or b"").decode("utf-8", errors="replace"),
+        (err or b"").decode("utf-8", errors="replace"),
+        timed_out,
+    )
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name != "nt":
+        import signal
+
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    else:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            return
+        except Exception:
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
 
 
 async def execute_shell_command(agent: AgentContext, args: dict[str, Any]) -> str:
     """Run a local shell command and return command output as model-visible evidence."""
+
+    refused = dangerous_tool_refusal("shell_command", agent)
+    if refused:
+        return refused
 
     command = str(args.get("command") or args.get("cmd") or "").strip()
     if not command:
@@ -348,52 +508,59 @@ async def execute_shell_command(agent: AgentContext, args: dict[str, Any]) -> st
     max_output_chars = int(args.get("max_output_chars") or 0)
     shell_name = str(args.get("shell") or "")
     argv = _shell_argv(command, shell_name)
-    use_shell = os.name != "nt"
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    env = sanitized_exec_env()
     started = time.perf_counter()
+
+    # ── ExecutionGate: per-request operator approval ─────────────────────
+    from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate
+
+    gate = get_execution_gate(getattr(agent, "config", None))
+    outcome = await gate.authorize(
+        GateRequest(kind="shell", display=command, cwd=str(workdir)),
+        run_id=str(getattr(getattr(agent, "runtime", None), "run_id", "") or ""),
+    )
+    if not outcome.approved:
+        return outcome.refusal_text("shell_command")
 
     try:
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
+        returncode, stdout, stderr, timed_out = await loop.run_in_executor(
             None,
-            lambda: subprocess.run(
+            lambda: _spawn_captured(
                 argv,
                 cwd=str(workdir),
-                shell=use_shell,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_ms / 1000,
                 env=env,
+                timeout_s=timeout_ms / 1000,
             ),
-        )
-    except subprocess.TimeoutExpired as exc:
-        output = "\n".join(part for part in (exc.stdout or "", exc.stderr or "") if part)
-        return (
-            f"[!] shell_command timed out after {timeout_ms}ms\n"
-            f"Command: {command}\n"
-            f"Workdir: {workdir}\n"
-            f"Output:\n{output}"
         )
     except FileNotFoundError as exc:
         return f"[!] shell_command failed: shell executable not found ({exc})"
     except Exception as exc:
         return f"[!] shell_command failed: {exc.__class__.__name__}: {exc}"
 
+    if timed_out:
+        return (
+            f"[!] shell_command timed out after {timeout_ms}ms\n"
+            f"Command: {command}\n"
+            f"Workdir: {workdir}\n"
+            "Output:\n(process tree terminated)"
+        )
+
+    result_returncode = returncode
+    result_stdout, result_stderr = stdout, stderr
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     parts = [
         f"Command: {command}",
         f"Workdir: {workdir}",
-        f"Exit code: {result.returncode}",
+        f"Exit code: {result_returncode}",
         f"Wall time: {elapsed_ms}ms",
         "Output:",
     ]
     output = ""
-    if result.stdout:
-        output += result.stdout
-    if result.stderr:
-        output += ("\n" if output else "") + "[stderr]\n" + result.stderr
+    if result_stdout:
+        output += result_stdout
+    if result_stderr:
+        output += ("\n" if output else "") + "[stderr]\n" + result_stderr
     if not output:
         output = "(no output)"
     raw_output = "\n".join(parts + [output])
@@ -735,23 +902,14 @@ async def _execute_php_serialize_diff_probe(
     started = time.perf_counter()
     try:
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
+        returncode, proc_stdout, proc_stderr, proc_timed_out = await loop.run_in_executor(
             None,
-            lambda: subprocess.run(
+            lambda: _spawn_captured(
                 [php, str(script_path)],
                 cwd=str(tmp_dir),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_ms / 1000,
+                env=sanitized_exec_env(),
+                timeout_s=timeout_ms / 1000,
             ),
-        )
-    except subprocess.TimeoutExpired as exc:
-        output = "\n".join(part for part in (exc.stdout or "", exc.stderr or "") if part)
-        return (
-            f"[!] runtime_diff_probe timed out after {timeout_ms}ms\n"
-            f"Output:\n{output}"
         )
     finally:
         try:
@@ -760,16 +918,22 @@ async def _execute_php_serialize_diff_probe(
         except Exception:
             pass
 
+    if proc_timed_out:
+        return (
+            f"[!] runtime_diff_probe timed out after {timeout_ms}ms\n"
+            "Output:\n(process tree terminated)"
+        )
+
     elapsed_ms = int((time.perf_counter() - started) * 1000)
-    output = result.stdout or ""
-    if result.stderr:
-        output += ("\n" if output else "") + "[stderr]\n" + result.stderr
+    output = proc_stdout or ""
+    if proc_stderr:
+        output += ("\n" if output else "") + "[stderr]\n" + proc_stderr
     if not output:
         output = "(no output)"
     raw = "\n".join(
         [
             f"Command: {php} {script_path.name}",
-            f"Exit code: {result.returncode}",
+            f"Exit code: {returncode}",
             f"Wall time: {elapsed_ms}ms",
             "Output:",
             output,
@@ -823,6 +987,28 @@ async def execute_runtime_diff_probe(agent: AgentContext, args: dict[str, Any]) 
     if mode in {"regex", "generic", "filter"}:
         return _execute_regex_diff_probe(args)
     if mode in {"php_serialize", "php_unserialize", "php-serialize", "php"}:
+        # The PHP runtime probe is an equivalent-arbitrary-execution primitive
+        # (model-supplied class_defs are interpreted by php): it goes through
+        # the same per-request approval gate as shell/python.
+        from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate
+
+        class_defs = str(args.get("class_defs") or "")
+        gate = get_execution_gate(getattr(agent, "config", None))
+        outcome = await gate.authorize(
+            GateRequest(
+                kind="php_diff",
+                display=class_defs or "(no class_defs; runtime diff only)",
+                cwd="",
+                detail=(
+                    f"php runtime probe · filter={str(args.get('filter_regex') or '')[:120]}"
+                    + (f" · target_runtime={_detect_target_runtime(agent, args)}"
+                       if _detect_target_runtime(agent, args) else "")
+                ),
+            ),
+            run_id=str(getattr(getattr(agent, "runtime", None), "run_id", "") or ""),
+        )
+        if not outcome.approved:
+            return outcome.refusal_text("runtime_diff_probe(php)")
         return await _execute_php_serialize_diff_probe(
             args,
             target_runtime=_detect_target_runtime(agent, args),
@@ -839,6 +1025,12 @@ async def execute_mcp_tool(agent: AgentContext, tool_name: str, args: dict[str, 
     )
     if violation is not None:
         return violation
+
+    # Fail-closed at dispatch too: even a hand-crafted tool call for a
+    # dangerous tool cannot reach execution from a leaf agent.
+    dangerous_refusal = dangerous_tool_refusal(tool_name, agent)
+    if dangerous_refusal is not None:
+        return dangerous_refusal
 
     session = getattr(agent, "session_state", None)
     constraints = getattr(session, "task_constraints", None)
@@ -1864,6 +2056,10 @@ def _write_python_audit(
 
 
 async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
+    refused = dangerous_tool_refusal("python_execute", agent)
+    if refused:
+        return refused
+
     code = args.get("code", "")
     purpose = args.get("purpose", "")
     if not code.strip():
@@ -1958,6 +2154,30 @@ async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
     max_output_chars = getattr(safety, "python_execute_max_output_chars", 0)
     tmp_path = ""
     try:
+        # ── ExecutionGate: per-request operator approval ─────────────────
+        from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate
+
+        gate = get_execution_gate(safety)
+        outcome = await gate.authorize(
+            GateRequest(
+                kind="python",
+                display=code,
+                cwd="",
+                detail=f"purpose={purpose or '(none)'} mode={mode}",
+            ),
+            run_id=str(getattr(getattr(agent, "runtime", None), "run_id", "") or ""),
+        )
+        if not outcome.approved:
+            _write_python_audit(
+                agent,
+                purpose=purpose,
+                code=code,
+                mode=mode,
+                outcome="blocked",
+                blocked_reason=f"approval:{outcome.status}",
+            )
+            return outcome.refusal_text("python_execute")
+
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".py", delete=False, encoding="utf-8"
         ) as f:
@@ -1972,20 +2192,21 @@ async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
             tmp_path = f.name
 
         base_env = {"PYTHONIOENCODING": "utf-8"}
-        env = {**{k: v for k, v in os.environ.items() if not k.startswith("VULNCLAW_")}, **base_env} if mode == "trusted-local" else base_env
+        if mode == "trusted-local":
+            env = sanitized_exec_env(
+                {k: v for k, v in os.environ.items() if not k.startswith("VULNCLAW_")}
+            )
+        else:
+            env = sanitized_exec_env(base_env)
 
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
+        returncode, proc_stdout, proc_stderr, proc_timed_out = await loop.run_in_executor(
             None,
-            lambda: subprocess.run(
+            lambda: _spawn_captured(
                 [sys.executable, tmp_path],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_seconds,
                 cwd=tempfile.gettempdir(),
                 env=env,
+                timeout_s=timeout_seconds,
             ),
         )
 
@@ -1995,16 +2216,27 @@ async def execute_python(agent: AgentContext, args: dict[str, Any]) -> str:
             pass
 
         output_parts: list[str] = []
-        if result.stdout:
-            output_parts.append(result.stdout)
-        if result.stderr:
+        if proc_stdout:
+            output_parts.append(proc_stdout)
+        if proc_stderr:
             stderr_lines = [
                 line
-                for line in result.stderr.splitlines()
+                for line in proc_stderr.splitlines()
                 if "ImportError" not in line and "No module named" not in line
             ]
             if stderr_lines:
                 output_parts.append("[stderr]\n" + "\n".join(stderr_lines))
+
+        if proc_timed_out:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            agent.runtime.python_timeout_rounds += 1
+            _write_python_audit(
+                agent, purpose=purpose, code=code, mode=mode, outcome="timeout"
+            )
+            return f"[!] Python execution timed out after {timeout_seconds} seconds (process tree terminated)"
 
         if not output_parts:
             _write_python_audit(agent, purpose=purpose, code=code, mode=mode, outcome="success")

@@ -539,7 +539,13 @@
           "required": ["question"],
           "properties": {
             "type": { "const": "approval_required" },
-            "question": { "type": "string" }
+            "question": { "type": "string" },
+            "request_hash": { "type": "string" },
+            "kind": { "type": "string" },
+            "cwd": { "type": "string" },
+            "detail": { "type": "string" },
+            "expires_at": { "type": "string" },
+            "risk": { "type": "string" }
           }
         }
       ]

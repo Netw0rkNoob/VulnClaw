@@ -131,6 +131,7 @@ async def test_initialize_and_two_tasks_share_one_session_backend_pid() -> None:
     completed = [event for event in emitted if event["type"] == "task_completed"]
     assert ready["backend"]["pid"] == os.getpid()
     assert ready["capabilities"]["control_operations"] == [
+        "execution.approval.resolve",
         "session.scope.reset",
         "session.scope.update",
     ]
