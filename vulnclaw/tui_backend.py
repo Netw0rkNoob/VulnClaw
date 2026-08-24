@@ -38,7 +38,12 @@ from vulnclaw.tui_protocol import (
 # active*: it is the trusted channel that resolves a pending ExecutionGate
 # request raised by that very task.
 SUPPORTED_CONTROL_OPERATIONS = frozenset(
-    {"session.scope.reset", "session.scope.update", "execution.approval.resolve"}
+    {
+        "session.scope.reset",
+        "session.scope.update",
+        "execution.approval.resolve",
+        "session.permission.set",
+    }
 )
 TASK_ACTIVE_CONTROL_OPERATIONS = frozenset({"execution.approval.resolve"})
 RUNTIME_STATE_FIELDS = frozenset(
@@ -393,6 +398,30 @@ class BackendSession:
         self, operation: str, arguments: dict[str, Any]
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Extension point for feature-owned management operations."""
+
+        if operation == "session.permission.set":
+            from vulnclaw.agent.exec_gate import get_execution_gate
+
+            mode = str(arguments.get("mode") or "").strip().lower()
+            gate = get_execution_gate()
+            # Escalation while a task runs would let injected content benefit
+            # from a mid-task loosening; de-escalation stays allowed.
+            rank = {"ask": 0, "auto_review": 1, "full_access": 2}
+            if mode not in rank:
+                raise ValueError("mode must be one of: ask, auto_review, full_access")
+            if (
+                self.active_task is not None
+                and not self.active_task.done()
+                and rank[mode] > rank[gate.mode]
+            ):
+                raise ValueError(
+                    "permission escalation is not allowed while a task is active"
+                )
+            new_mode = gate.set_mode(mode, source="tui")
+            return {
+                "message": f"Permission mode set to {new_mode}.",
+                "mode": new_mode,
+            }, None
 
         if operation == "execution.approval.resolve":
             from vulnclaw.agent.exec_gate import get_execution_gate

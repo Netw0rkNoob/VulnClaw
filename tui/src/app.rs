@@ -460,11 +460,23 @@ impl App {
     }
 
     pub fn cycle_permission(&mut self) {
-        self.permission = self.permission.next();
-        self.status(format!(
-            "Permission posture switched to {}. Explicit confirmation still required before a task starts.",
-            self.permission.label()
-        ));
+        let next = self.permission.next();
+        let mode_value = match next {
+            PermissionMode::Ask => "ask",
+            PermissionMode::AutoReview => "auto_review",
+            PermissionMode::FullAccess => "full_access",
+        };
+        // The backend owns the authoritative policy; the local label only
+        // updates when the control call succeeds.
+        if self.request_control(
+            "session.permission.set",
+            serde_json::json!({ "mode": mode_value }),
+        ) {
+            self.status(format!(
+                "Permission mode change to {} requested.",
+                next.label()
+            ));
+        }
     }
 
     pub fn cycle_active_pane(&mut self, backwards: bool) {
@@ -1067,6 +1079,18 @@ impl App {
                     }
                     if let Some(state) = state {
                         self.apply_backend_state(state);
+                    }
+                    if operation == "session.permission.set" {
+                        if let Some(mode_str) =
+                            result.get("mode").and_then(serde_json::Value::as_str)
+                        {
+                            self.permission = match mode_str {
+                                "ask" => PermissionMode::Ask,
+                                "auto_review" => PermissionMode::AutoReview,
+                                "full_access" => PermissionMode::FullAccess,
+                                _ => self.permission,
+                            };
+                        }
                     }
                     self.status(
                         result

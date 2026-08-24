@@ -317,9 +317,10 @@ fn mode_and_permission_cycles_are_independent() {
     app.cycle_permission();
 
     // Default posture is Agent; one Tab cycles to the read-only Plan.
+    // Permission now requires a connected backend (the server owns the
+    // authoritative policy), so offline cycling must keep the posture.
     assert_eq!(app.mode, ExecutionMode::Plan);
-    assert_eq!(app.permission, PermissionMode::FullAccess);
-    assert!(app.pending_task.is_none());
+    assert_eq!(app.permission, PermissionMode::AutoReview);
 }
 
 #[test]

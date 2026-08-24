@@ -19,8 +19,9 @@ fn tab_cycles_execution_mode_and_shift_tab_cycles_permission() {
     );
 
     // Default posture is Agent; one Tab cycles to the read-only Plan.
+    // Offline permission cycling is rejected (backend-owned policy).
     assert_eq!(app.mode, ExecutionMode::Plan);
-    assert_eq!(app.permission, PermissionMode::FullAccess);
+    assert_eq!(app.permission, PermissionMode::AutoReview);
 }
 
 #[test]

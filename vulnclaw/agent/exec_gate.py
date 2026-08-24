@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
@@ -141,8 +141,20 @@ class _Pending:
 
 
 class ExecutionGate:
-    def __init__(self, timeout_seconds: int = 300) -> None:
+    VALID_MODES = ("ask", "auto_review", "full_access")
+
+    def __init__(
+        self,
+        timeout_seconds: int = 300,
+        *,
+        mode: str = "ask",
+        trusted_commands: tuple[tuple[str, ...], ...] = (),
+    ) -> None:
         self.timeout_seconds = max(1, int(timeout_seconds))
+        if mode not in self.VALID_MODES:
+            raise ValueError(f"invalid permission mode: {mode!r}")
+        self.mode: str = mode
+        self.trusted_commands = tuple(trusted_commands)
         self.channel: TrustedApprovalChannel | None = None
         self.sync_confirm_hook: SyncConfirmHook | None = None
         self._lock = asyncio.Lock()
@@ -169,6 +181,18 @@ class ExecutionGate:
 
     def install_sync_confirm_hook(self, hook: SyncConfirmHook) -> None:
         self.sync_confirm_hook = hook
+
+    # ── Mode management ──────────────────────────────────────────────────
+
+    def set_mode(self, mode: str, *, source: str = "local") -> str:
+        """Switch the active policy. Validation only — nothing is recorded."""
+        normalized = str(mode or "").strip().lower()
+        if normalized not in self.VALID_MODES:
+            raise ValueError(
+                f"invalid permission mode {mode!r}; expected one of {', '.join(self.VALID_MODES)}"
+            )
+        self.mode = normalized
+        return self.mode
 
     # ── Resolution from trusted control ops ──────────────────────────────
 
@@ -223,6 +247,34 @@ class ExecutionGate:
 
     async def authorize(self, request: GateRequest, *, run_id: str = "") -> GateOutcome:
         self.stats["requested"] += 1
+
+        # ── full_access: everything runs unattended ──────────────────────
+        if self.mode == "full_access":
+            return GateOutcome(True, "approved")
+
+        # ── auto_review: Codex-style command classification ───────────────
+        # Shell commands matching the read-only table or operator trusted
+        # prefixes run unattended; everything else degrades to the normal
+        # per-request approval flow (interactive channel or stable refusal).
+        # Non-shell kinds (python/php/poc) are interpreters by definition and
+        # always take the approval path in this mode.
+        if self.mode == "auto_review" and request.kind == "shell":
+            from vulnclaw.agent.command_classifier import classify_shell_command
+
+            verdict = classify_shell_command(request.display, self.trusted_commands)
+            if verdict.decision == "allow":
+                return GateOutcome(True, "approved")
+            if request.detail:
+                request = replace(
+                    request,
+                    detail=f"{request.detail} | auto-review: {verdict.reason}",
+                )
+            else:
+                request = replace(
+                    request, detail=f"auto-review: {verdict.reason}"
+                )
+            # fall through to the interactive flow below
+
         if not self.has_trusted_channel():
             return GateOutcome(
                 False,
@@ -349,16 +401,31 @@ def get_execution_gate(config: Any = None) -> ExecutionGate:
     if _default_gate is None:
         timeout = 300
         mode = "ask"
+        trusted: tuple[tuple[str, ...], ...] = ()
+        warnings: list[str] = []
         safety = getattr(config, "safety", None)
         if safety is not None:
             timeout = int(getattr(safety, "approval_timeout_seconds", 300) or 300)
             mode = str(getattr(safety, "permission_mode", "ask") or "ask").strip().lower()
-        gate = ExecutionGate(timeout_seconds=timeout)
-        if mode in ("auto_review", "full_access"):
-            # Non-ask modes are honored by PR-L4's policy layer; unknown
-            # values silently stay at the safe "ask" default.
-            gate.mode = mode
-        _default_gate = gate
+            from vulnclaw.agent.command_classifier import parse_trusted_commands
+
+            trusted, warnings = parse_trusted_commands(
+                list(getattr(safety, "trusted_commands", []) or [])
+            )
+        try:
+            _default_gate = ExecutionGate(
+                timeout_seconds=timeout,
+                mode=mode,
+                trusted_commands=trusted,
+            )
+        except ValueError:
+            # Unknown persisted value: fail safe to per-request approval.
+            _default_gate = ExecutionGate(timeout_seconds=timeout)
+        if warnings:
+            import sys
+
+            for warning in warnings:
+                print(f"[!] {warning}", file=sys.stderr)
     return _default_gate
 
 

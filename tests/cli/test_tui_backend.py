@@ -132,6 +132,7 @@ async def test_initialize_and_two_tasks_share_one_session_backend_pid() -> None:
     assert ready["backend"]["pid"] == os.getpid()
     assert ready["capabilities"]["control_operations"] == [
         "execution.approval.resolve",
+        "session.permission.set",
         "session.scope.reset",
         "session.scope.update",
     ]
@@ -434,3 +435,56 @@ def test_python_rejects_command_outside_allowed_actions() -> None:
                 options=TaskOptions(allow_actions=["recon", "scan"]),
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_permission_set_updates_gate_policy() -> None:
+    from vulnclaw.agent.exec_gate import get_execution_gate, reset_execution_gate
+
+    reset_execution_gate()
+    stream = io.StringIO()
+    session = BackendSession(JsonlWriter(stream), runtime_factory=FakeRuntime)
+    await session.handle(request("initialize", "r-init"))
+
+    await session.handle(
+        request(
+            "control",
+            "r-perm",
+            payload={
+                "operation": "session.permission.set",
+                "arguments": {"mode": "auto_review"},
+            },
+        )
+    )
+    result = events(stream)[-1]
+    assert result["result"]["mode"] == "auto_review"
+    assert get_execution_gate().mode == "auto_review"
+
+    # De-escalation back to ask works while idle too.
+    await session.handle(
+        request(
+            "control",
+            "r-perm2",
+            payload={"operation": "session.permission.set", "arguments": {"mode": "ask"}},
+        )
+    )
+    reset_execution_gate()
+
+
+@pytest.mark.asyncio
+async def test_permission_set_rejects_unknown_mode() -> None:
+    session = BackendSession(JsonlWriter(io.StringIO()), runtime_factory=FakeRuntime)
+    await session.handle(request("initialize", "r-init"))
+
+    with pytest.raises(ProtocolError) as caught:
+        await session.handle(
+            request(
+                "control",
+                "r-perm-bad",
+                payload={
+                    "operation": "session.permission.set",
+                    "arguments": {"mode": "yolo"},
+                },
+            )
+        )
+    assert caught.value.code == "invalid_control"

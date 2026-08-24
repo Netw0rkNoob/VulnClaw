@@ -333,6 +333,14 @@ class SafetyConfig(BaseModel):
         default=300,
         description="How long an un-answered execution approval waits before expiring",
     )
+    trusted_commands: list[str] = Field(
+        default_factory=list,
+        description=(
+            "auto_review mode: shell commands whose first tokens match one of "
+            "these prefixes run without per-request approval (e.g. 'nmap', "
+            "'git diff'). Entries starting with a banned name are refused."
+        ),
+    )
 
     @model_validator(mode="after")
     def _warn_deprecated_python_sandbox_fields(self) -> "SafetyConfig":

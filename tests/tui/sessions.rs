@@ -12,7 +12,7 @@ fn session_round_trip_preserves_composer_history_and_posture() {
     source.insert_text("/help");
     source.submit();
     source.cycle_mode();
-    source.cycle_permission();
+    source.permission = PermissionMode::FullAccess;
     let state = SessionState::from_app(&source);
 
     let (target_sender, _) = mpsc::channel();
