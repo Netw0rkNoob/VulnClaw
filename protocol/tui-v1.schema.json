@@ -370,7 +370,8 @@
           "uniqueItems": true
         },
         "cancellation": { "type": "boolean" },
-        "authoritative_state": { "type": "boolean" }
+        "authoritative_state": { "type": "boolean" },
+        "permission_mode": { "enum": ["ask", "auto_review", "full_access"] }
       }
     },
     "runtimeInfo": {

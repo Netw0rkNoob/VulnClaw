@@ -78,6 +78,9 @@ def protocol_validator() -> Draft202012Validator:
 
 @pytest.mark.asyncio
 async def test_initialize_and_two_tasks_share_one_session_backend_pid() -> None:
+    from vulnclaw.agent.exec_gate import reset_execution_gate
+
+    reset_execution_gate()
     stream = io.StringIO()
     runtime = FakeRuntime()
 
@@ -130,6 +133,7 @@ async def test_initialize_and_two_tasks_share_one_session_backend_pid() -> None:
     ready = next(event for event in emitted if event["type"] == "ready")
     completed = [event for event in emitted if event["type"] == "task_completed"]
     assert ready["backend"]["pid"] == os.getpid()
+    assert ready["capabilities"]["permission_mode"] == "ask"
     assert ready["capabilities"]["control_operations"] == [
         "execution.approval.resolve",
         "session.permission.set",

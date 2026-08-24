@@ -320,7 +320,7 @@ fn mode_and_permission_cycles_are_independent() {
     // Permission now requires a connected backend (the server owns the
     // authoritative policy), so offline cycling must keep the posture.
     assert_eq!(app.mode, ExecutionMode::Plan);
-    assert_eq!(app.permission, PermissionMode::AutoReview);
+    assert_eq!(app.permission, PermissionMode::Ask);
 }
 
 #[test]

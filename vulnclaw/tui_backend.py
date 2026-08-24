@@ -206,6 +206,11 @@ class BackendSession:
             if callable(apply_constraints):
                 apply_constraints(initial_constraints)
         self.initialized = True
+        from vulnclaw.agent.exec_gate import get_execution_gate
+
+        permission_mode = get_execution_gate(
+            getattr(self.runtime, "config", None)
+        ).mode
         self.writer.event(
             "ready",
             request_id=message.request_id,
@@ -219,6 +224,9 @@ class BackendSession:
                 "control_operations": sorted(SUPPORTED_CONTROL_OPERATIONS),
                 "cancellation": True,
                 "authoritative_state": True,
+                # Authoritative policy: the client label must sync to this on
+                # startup instead of trusting its own persisted posture.
+                "permission_mode": permission_mode,
             },
             runtime=_runtime_metadata(self.runtime),
             state=self.state_snapshot(),

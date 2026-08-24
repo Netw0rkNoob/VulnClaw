@@ -21,7 +21,7 @@ fn tab_cycles_execution_mode_and_shift_tab_cycles_permission() {
     // Default posture is Agent; one Tab cycles to the read-only Plan.
     // Offline permission cycling is rejected (backend-owned policy).
     assert_eq!(app.mode, ExecutionMode::Plan);
-    assert_eq!(app.permission, PermissionMode::AutoReview);
+    assert_eq!(app.permission, PermissionMode::Ask);
 }
 
 #[test]
@@ -114,4 +114,127 @@ fn ctrl_c_quits_when_no_worker_is_running() {
     );
 
     assert!(!app.running);
+}
+
+// ── Execution approval modal (C-1/C-2) ─────────────────────────────────
+
+use vulnclaw_tui::app::PendingExecution;
+
+fn approval_event(task_id: &str, command: &str) -> vulnclaw_tui::protocol::AppEvent {
+    vulnclaw_tui::protocol::AppEvent::backend(
+        vulnclaw_tui::protocol::BackendEvent::ApprovalRequired {
+            task_id: task_id.to_string(),
+            question: command.to_string(),
+            request_hash: "a".repeat(64),
+            kind: "shell".to_string(),
+            cwd: "/tmp/target".to_string(),
+            detail: "auto-review: unknown command".to_string(),
+            expires_at: "2026-08-23T07:00:00+00:00".to_string(),
+            risk: "not sandboxed".to_string(),
+        },
+    )
+}
+
+#[test]
+fn structured_approval_opens_modal_and_swallows_typing() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.active_task_id = Some("task-1".into());
+    app.apply_event(approval_event("task-1", "whoami"));
+
+    assert!(app.pending_execution.is_some(), "modal must open");
+
+    // While the modal is open, ordinary typing must NOT reach the composer.
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+    );
+    assert_eq!(app.input, "");
+}
+
+#[test]
+fn y_approves_and_clears_modal() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.active_task_id = Some("task-1".into());
+    app.apply_event(approval_event("task-1", "id"));
+
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+    );
+
+    assert!(app.pending_execution.is_none());
+    assert!(
+        app.transcript.iter().any(|i| i.text.contains("已提交批准")),
+        "approval submission must be visible"
+    );
+}
+
+#[test]
+fn esc_denies_by_default() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.active_task_id = Some("task-1".into());
+    app.apply_event(approval_event("task-1", "sudo rm -rf /"));
+
+    handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.pending_execution.is_none());
+    assert!(
+        app.transcript.iter().any(|i| i.text.contains("已提交拒绝")),
+        "deny must be the default decision"
+    );
+}
+
+#[test]
+fn legacy_question_only_event_does_not_open_modal() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.active_task_id = Some("task-1".into());
+    app.apply_event(vulnclaw_tui::protocol::AppEvent::backend(
+        vulnclaw_tui::protocol::BackendEvent::ApprovalRequired {
+            task_id: "task-1".into(),
+            question: "old style ask_user".into(),
+            request_hash: String::new(),
+            kind: String::new(),
+            cwd: String::new(),
+            detail: String::new(),
+            expires_at: String::new(),
+            risk: String::new(),
+        },
+    ));
+    assert!(app.pending_execution.is_none());
+
+    // Typing still reaches the composer for legacy questions.
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+    );
+    assert_eq!(app.input, "x");
+}
+
+#[test]
+fn task_completion_clears_pending_modal() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.active_task_id = Some("task-1".into());
+    app.apply_event(approval_event("task-1", "id"));
+    assert!(app.pending_execution.is_some());
+
+    app.clear_task_requests("task-1");
+    assert!(app.pending_execution.is_none());
+}
+
+#[test]
+fn pending_execution_struct_roundtrip() {
+    let p = PendingExecution {
+        request_hash: "h".into(),
+        kind: "shell".into(),
+        command: "ls".into(),
+        cwd: "/".into(),
+        detail: String::new(),
+        expires_at: String::new(),
+        risk: String::new(),
+    };
+    assert_eq!(p.kind, "shell");
 }

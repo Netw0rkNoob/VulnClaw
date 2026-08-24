@@ -45,7 +45,7 @@ impl SessionState {
         app.permission = match self.permission.as_str() {
             "Ask" => PermissionMode::Ask,
             "Full access" => PermissionMode::FullAccess,
-            _ => PermissionMode::AutoReview,
+            _ => PermissionMode::Ask,
         };
         // Python is the only business-state source. Legacy transcript/findings
         // are intentionally ignored; a backend state event hydrates them.

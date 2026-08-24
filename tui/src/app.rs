@@ -158,6 +158,29 @@ impl PermissionMode {
             Self::FullAccess => "Full access",
         }
     }
+
+    /// Parse the backend's authoritative policy string; unknown values stay
+    /// at the safe Ask default.
+    pub fn from_policy(value: &str) -> Self {
+        match value {
+            "auto_review" => Self::AutoReview,
+            "full_access" => Self::FullAccess,
+            _ => Self::Ask,
+        }
+    }
+}
+
+/// One pending ExecutionGate request awaiting an operator decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingExecution {
+    pub request_hash: String,
+    pub kind: String,
+    /// Visualized (control-char-escaped) command or source.
+    pub command: String,
+    pub cwd: String,
+    pub detail: String,
+    pub expires_at: String,
+    pub risk: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -242,6 +265,10 @@ pub struct App {
     pub active_pane: ActivePane,
     pub input: String,
     pub input_cursor: usize,
+    /// Outstanding ExecutionGate request rendered as a blocking modal.
+    /// Set by the structured `approval_required` event; resolved with
+    /// Y/N/Esc only.
+    pub pending_execution: Option<PendingExecution>,
     pub command_history: Vec<String>,
     history_index: Option<usize>,
     history_draft: String,
@@ -311,10 +338,11 @@ impl App {
     pub fn new_disconnected(sender: Sender<AppEvent>) -> Self {
         Self {
             mode: ExecutionMode::Agent,
-            permission: PermissionMode::AutoReview,
+            permission: PermissionMode::Ask,
             active_pane: ActivePane::Transcript,
             input: String::new(),
             input_cursor: 0,
+            pending_execution: None,
             command_history: Vec::new(),
             history_index: None,
             history_draft: String::new(),
@@ -845,6 +873,12 @@ impl App {
                     self.backend_control_operations.sort();
                     self.backend_control_operations.dedup();
                     self.backend_supports_cancellation = capabilities.cancellation;
+                    // Sync the client label to the backend's authoritative
+                    // policy so the status bar is correct from startup.
+                    if !capabilities.permission_mode.is_empty() {
+                        self.permission =
+                            PermissionMode::from_policy(&capabilities.permission_mode);
+                    }
                     if !capabilities.authoritative_state {
                         self.error(
                             "Backend does not advertise authoritative state; refusing task commands.",
@@ -981,9 +1015,21 @@ impl App {
                     expires_at,
                     risk,
                 } => {
-                    let _ = request_hash;
                     if !self.is_current_task(&task_id) {
                         return;
+                    }
+                    let structured = !request_hash.is_empty();
+                    if structured {
+                        // Blocking modal: the operator answers with Y/N/Esc.
+                        self.pending_execution = Some(PendingExecution {
+                            request_hash: request_hash.clone(),
+                            kind: kind.clone(),
+                            command: question.clone(),
+                            cwd: cwd.clone(),
+                            detail: detail.clone(),
+                            expires_at: expires_at.clone(),
+                            risk: risk.clone(),
+                        });
                     }
                     let mut lines = vec![format!("Approval required [{kind}]: {question}")];
                     if !cwd.is_empty() {
@@ -997,6 +1043,9 @@ impl App {
                     }
                     if !risk.is_empty() {
                         lines.push(format!("  risk: {risk}"));
+                    }
+                    if structured {
+                        lines.push("  Y 批准 · N/Esc 拒绝(默认拒绝)".to_string());
                     }
                     self.push(TranscriptKind::Status, lines.join("\n"));
                 }
@@ -1205,7 +1254,10 @@ impl App {
         matches
     }
 
-    fn clear_task_requests(&mut self, task_id: &str) {
+    pub fn clear_task_requests(&mut self, task_id: &str) {
+        // The task ended: any outstanding approval modal is moot (the gate
+        // expires its pending server-side, default deny).
+        self.pending_execution = None;
         self.pending_requests.retain(|_, pending| {
             !matches!(
                 pending,
@@ -1299,6 +1351,35 @@ impl App {
         self.status(format!(
             "/{command} armed for {target}. Press Y to run, or Esc to cancel."
         ));
+    }
+
+    /// Submit an operator decision for the outstanding ExecutionGate request.
+    ///
+    /// The modal clears immediately after the control request is sent
+    /// (fire-and-forget): a transport failure surfaces as an error and the
+    /// pending request expires server-side (default deny), which keeps the
+    /// UI unblocked either way.
+    pub fn resolve_pending_execution(&mut self, approve: bool) {
+        let Some(pending) = self.pending_execution.clone() else {
+            return;
+        };
+        let decision = if approve { "approve" } else { "deny" };
+        let verb = if approve { "批准" } else { "拒绝" };
+        // Record the operator decision first, then attempt delivery: even
+        // when the backend is unreachable the request expires server-side
+        // (default deny), so the UI must never sit blocked on the modal.
+        self.push(TranscriptKind::Status, format!("已提交{}", verb));
+        self.pending_execution = None;
+        let sent = self.send_control_during_task(
+            "execution.approval.resolve",
+            serde_json::json!({
+                "request_hash": pending.request_hash,
+                "decision": decision,
+            }),
+        );
+        if sent {
+            self.status("等待后端确认。");
+        }
     }
 
     fn send_control_during_task(&mut self, operation: &str, arguments: serde_json::Value) -> bool {

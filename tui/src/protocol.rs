@@ -125,6 +125,9 @@ pub struct BackendCapabilities {
     pub control_operations: Vec<String>,
     pub cancellation: bool,
     pub authoritative_state: bool,
+    /// Authoritative permission policy from the backend (empty on old backends).
+    #[serde(default)]
+    pub permission_mode: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
@@ -40,6 +40,105 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_workbench(frame, app, rows[2]);
     render_composer(frame, app, rows[3]);
     render_hotbar(frame, app, rows[4]);
+
+    if let Some(pending) = &app.pending_execution {
+        render_approval_modal(frame, pending, frame.area());
+    }
+}
+
+/// Blocking execution-approval modal. Mirrors the pending_task confirm
+/// pattern: Y approves, N/Esc denies (default deny), other keys swallowed.
+fn render_approval_modal(frame: &mut Frame, pending: &crate::app::PendingExecution, area: Rect) {
+    use crate::theme;
+
+    let width = area.width.clamp(46, 78);
+    let height = area.height.clamp(12, 18);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    frame.render_widget(ratatui::widgets::Clear, modal_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(" {} 执行审批 ", pending.kind),
+        Style::default()
+            .fg(Color::Rgb(10, 6, 2))
+            .bg(theme::ACTION)
+            .add_modifier(Modifier::BOLD),
+    )));
+
+    if !pending.cwd.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("cwd   {}", pending.cwd),
+            Style::default().fg(theme::TEXT_SOFT),
+        )));
+    }
+    lines.push(Line::from(Span::styled(
+        "命令/代码:",
+        Style::default().fg(theme::TEXT_MUTED),
+    )));
+    for raw in pending.command.lines().take(8) {
+        lines.push(Line::from(Span::styled(
+            format!("  │ {raw}"),
+            Style::default().fg(theme::TEXT_BODY),
+        )));
+    }
+    if !pending.detail.is_empty() {
+        // Detail may carry embedded newlines (e.g. multi-line model
+        // self-assessment); render each row so breaks are visible.
+        for (idx, raw) in pending.detail.split('\n').enumerate() {
+            let prefix = if idx == 0 { "原因  " } else { "      " };
+            lines.push(Line::from(Span::styled(
+                format!("{prefix}{raw}"),
+                Style::default().fg(theme::GOLD),
+            )));
+        }
+    }
+    if !pending.expires_at.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("超时  {}", pending.expires_at),
+            Style::default().fg(theme::TEXT_HINT),
+        )));
+    }
+
+    while lines.len() < height as usize - 4 {
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(Span::styled(
+        pending.risk.clone(),
+        Style::default().fg(theme::GOLD),
+    )));
+    lines.push(Line::from(vec![
+        Span::styled(
+            " [Y] ",
+            Style::default()
+                .fg(theme::SEAFOAM)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("批准   ", Style::default().fg(theme::TEXT_SOFT)),
+        Span::styled(
+            "[N/Esc] ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("拒绝(默认)", Style::default().fg(theme::TEXT_SOFT)),
+    ]));
+
+    let paragraph = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+                .style(Style::default().bg(theme::PANEL)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, modal_area);
 }
 
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
