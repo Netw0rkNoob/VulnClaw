@@ -154,31 +154,85 @@ class TestWebServices:
         assert resp.models == []
         assert "key" in resp.detail.lower()
 
-    def test_web_provider_service_fetch_models_honors_request_base_url(self, monkeypatch):
+    def test_web_provider_service_fetch_models_rejects_cross_provider_saved_key(self, monkeypatch):
         import vulnclaw.web.services.provider_service as provider_service
         from vulnclaw.config.schema import VulnClawConfig
         from vulnclaw.web.schemas import ProviderModelsRequest
 
         config = VulnClawConfig()
-        config.llm.api_key = "sk-test"
-        config.llm.base_url = "https://config-default.example/v1"
+        config.llm.provider = "deepseek"
+        config.llm.api_key = "sk-deepseek"
+        config.llm.base_url = "https://api.deepseek.com/v1"
+        monkeypatch.setattr(provider_service, "load_config", lambda: config)
+
+        def must_not_call(*args, **kwargs):
+            raise AssertionError("a saved key must not cross provider boundaries")
+
+        monkeypatch.setattr(provider_service, "fetch_provider_models", must_not_call)
+
+        resp = provider_service.fetch_models(
+            ProviderModelsRequest(provider="openai", base_url="https://api.openai.com/v1")
+        )
+        assert resp.base_url == "https://api.openai.com/v1"
+        assert resp.models == []
+        assert resp.has_api_key is True
+        assert "saved provider" in resp.detail.lower()
+
+    def test_web_provider_service_fetch_models_rejects_saved_key_for_different_base_url(
+        self, monkeypatch
+    ):
+        import vulnclaw.web.services.provider_service as provider_service
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.web.schemas import ProviderModelsRequest
+
+        config = VulnClawConfig()
+        config.llm.provider = "openai"
+        config.llm.api_key = "sk-openai"
+        config.llm.base_url = "https://api.openai.com/v1"
+        monkeypatch.setattr(provider_service, "load_config", lambda: config)
+
+        def must_not_call(*args, **kwargs):
+            raise AssertionError("a saved key must not cross base URL boundaries")
+
+        monkeypatch.setattr(provider_service, "fetch_provider_models", must_not_call)
+
+        resp = provider_service.fetch_models(
+            ProviderModelsRequest(provider="openai", base_url="https://api.orcarouter.ai/v1")
+        )
+        assert resp.models == []
+        assert resp.has_api_key is True
+        assert "base url" in resp.detail.lower()
+
+    @pytest.mark.parametrize("saved_provider", ["custom", "openai"])
+    def test_web_provider_service_fetch_models_uses_saved_key_for_matching_custom_base_url(
+        self, monkeypatch, saved_provider
+    ):
+        import vulnclaw.web.services.provider_service as provider_service
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.web.schemas import ProviderModelsRequest
+
+        config = VulnClawConfig()
+        config.llm.provider = saved_provider
+        config.llm.api_key = "sk-custom"
+        config.llm.base_url = "https://llm.example.com/v1/"
         monkeypatch.setattr(provider_service, "load_config", lambda: config)
 
         captured = {}
 
         def fake_fetch(base_url, api_key, timeout=10.0):
-            captured["base_url"] = base_url
-            return ["m"]
+            captured.update(base_url=base_url, api_key=api_key)
+            return ["custom-model"]
 
         monkeypatch.setattr(provider_service, "fetch_provider_models", fake_fetch)
 
-        # A known provider preset base_url is trusted and gets the saved key.
         resp = provider_service.fetch_models(
-            ProviderModelsRequest(base_url="https://api.openai.com/v1")
+            ProviderModelsRequest(provider=saved_provider, base_url="https://llm.example.com/v1")
         )
-        assert captured["base_url"] == "https://api.openai.com/v1"
-        assert resp.base_url == "https://api.openai.com/v1"
-        assert resp.models == ["m"]
+        assert resp.models == ["custom-model"]
+        assert captured == {
+            "base_url": "https://llm.example.com/v1",
+            "api_key": "sk-custom",
+        }
 
     def test_web_provider_service_fetch_models_rejects_untrusted_base_url(self, monkeypatch):
         """An arbitrary client-supplied base_url must never receive the saved API key."""

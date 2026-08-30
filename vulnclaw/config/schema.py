@@ -27,6 +27,7 @@ class LLMProvider(str, Enum):
     STEPFUN = "stepfun"
     SENSETIME = "sensetime"
     YI = "yi"
+    ORCAROUTER = "orcarouter"
     OLLAMA = "ollama"
     CUSTOM = "custom"
 
@@ -98,6 +99,15 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
         "default_model": "yi-lightning",
         "label": "零一万物 (Yi)",
     },
+    # Aggregator fronting many vendors behind one OpenAI-compatible endpoint.
+    # Model IDs are namespaced by vendor (anthropic/..., openai/..., ...), so the
+    # default carries its vendor prefix. Pick a tool-capable model — VulnClaw
+    # drives everything through function calls.
+    LLMProvider.ORCAROUTER: {
+        "base_url": "https://api.orcarouter.ai/v1",
+        "default_model": "orcarouter/auto",
+        "label": "OrcaRouter",
+    },
     # Local models via Ollama's OpenAI-compatible endpoint. No API key is
     # required (the client sends a placeholder). The default model must support
     # tool calling — VulnClaw drives everything through function calls — so pick
@@ -121,7 +131,7 @@ class LLMConfig(BaseModel):
 
     provider: str = Field(
         default="openai",
-        description="LLM provider name (openai/anthropic/minimax/deepseek/zhipu/moonshot/qwen/siliconflow/doubao/baichuan/stepfun/sensetime/yi/ollama/custom)",
+        description="LLM provider name (openai/anthropic/minimax/deepseek/zhipu/moonshot/qwen/siliconflow/doubao/baichuan/stepfun/sensetime/yi/orcarouter/ollama/custom)",
     )
     api_key: str = Field(default="", description="Static API key for the chosen provider (auth_mode=static)")
     api_keys: list[str] = Field(

@@ -50,34 +50,30 @@ def _normalize_base_url(value: str) -> str:
     return value.strip().rstrip("/").lower()
 
 
-def _is_trusted_base_url(base_url: str, config_base_url: str) -> bool:
-    """Only send the saved API key to a base_url we already trust.
-
-    The saved key must never be sent to an arbitrary client-supplied host: that
-    would let a malicious page (CSRF against this local API) exfiltrate the key
-    by pointing base_url at a server it controls. Restrict to the currently
-    saved base_url or one of the built-in provider presets.
-    """
-    normalized = _normalize_base_url(base_url)
-    if not normalized:
-        return False
-    if normalized == _normalize_base_url(config_base_url):
-        return True
-    trusted_urls = {
-        _normalize_base_url(str(preset.get("base_url", "")))
-        for preset in PROVIDER_PRESETS.values()
-        if preset.get("base_url")
-    }
-    return normalized in trusted_urls
+def _matches_saved_credential_scope(
+    request: ProviderModelsRequest,
+    base_url: str,
+    saved_provider: str,
+    saved_base_url: str,
+) -> bool:
+    """Return whether the request targets the saved credential's provider and URL."""
+    requested_provider = (request.provider or saved_provider).strip().lower()
+    requested_base_url = _normalize_base_url(base_url)
+    return (
+        bool(requested_provider)
+        and requested_provider == saved_provider.strip().lower()
+        and bool(requested_base_url)
+        and requested_base_url == _normalize_base_url(saved_base_url)
+    )
 
 
 def fetch_models(request: ProviderModelsRequest) -> ProviderModelsResponse:
     """List models for a provider/base URL using the saved API key.
 
     The key is read from the saved config (never accepted from the browser),
-    and is only ever sent to the saved base_url or a known provider preset —
-    never to an arbitrary client-supplied host — to avoid SSRF-style key
-    exfiltration via a spoofed base_url.
+    and is only sent when both the requested provider and base URL match the
+    saved configuration. This prevents cross-provider credential disclosure
+    and SSRF-style exfiltration through a spoofed base URL.
     Returns an empty list with a hint when no key is configured.
     """
     config = load_config()
@@ -92,14 +88,20 @@ def fetch_models(request: ProviderModelsRequest) -> ProviderModelsResponse:
             detail="No API key configured. Save your API key first, then refresh.",
         )
 
-    if not _is_trusted_base_url(base_url, config.llm.base_url):
+    if not _matches_saved_credential_scope(
+        request,
+        base_url,
+        config.llm.provider,
+        config.llm.base_url,
+    ):
         return ProviderModelsResponse(
             base_url=base_url,
             models=[],
             has_api_key=True,
             detail=(
-                "This base URL isn't saved or a known provider preset, so the saved "
-                "API key won't be sent to it. Save it first, then refresh."
+                "The requested provider and base URL don't match the saved provider "
+                "configuration, so the saved API key won't be sent. Save it first, "
+                "then refresh."
             ),
         )
 

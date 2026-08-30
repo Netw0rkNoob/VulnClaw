@@ -293,6 +293,19 @@ class TestVulnClawConfig:
         assert preset["default_model"] == "llama3.1"
         assert preset["label"]
 
+    def test_orcarouter_preset_uses_routed_default_model(self):
+        """OrcaRouter is an aggregator: one OpenAI-compatible endpoint fronting
+        many vendors with adaptive routing, so model IDs carry a ``vendor/model``
+        prefix and the default is the routing entry point. No provider-specific
+        code path is needed beyond the preset."""
+        from vulnclaw.config.schema import PROVIDER_PRESETS, LLMProvider
+
+        assert LLMProvider("orcarouter") is LLMProvider.ORCAROUTER
+        preset = PROVIDER_PRESETS[LLMProvider.ORCAROUTER]
+        assert preset["base_url"] == "https://api.orcarouter.ai/v1"
+        assert preset["default_model"] == "orcarouter/auto"
+        assert preset["label"] == "OrcaRouter"
+
     def test_llm_provider_enum(self):
         from vulnclaw.config.schema import LLMProvider
 
