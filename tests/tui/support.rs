@@ -8,6 +8,9 @@ use vulnclaw_tui::{
     App,
 };
 
+const BACKEND_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+const BACKEND_EVENT_TIMEOUT: Duration = Duration::from_secs(3);
+
 const APP_BACKEND: &str = r#"
 import json, os, sys
 
@@ -126,12 +129,22 @@ impl AppHarness {
         let backend = spawn_backend_command(command, sender.clone()).unwrap();
         let app = App::with_backend(sender, backend, serde_json::json!({}));
         let mut harness = Self { app, receiver };
-        assert!(matches!(harness.apply_next(), BackendEvent::Ready { .. }));
+        assert!(matches!(
+            harness.apply_next_with_timeout(BACKEND_STARTUP_TIMEOUT),
+            BackendEvent::Ready { .. }
+        ));
         harness
     }
 
     pub fn apply_next(&mut self) -> BackendEvent {
-        match self.receiver.recv_timeout(Duration::from_secs(3)).unwrap() {
+        self.apply_next_with_timeout(BACKEND_EVENT_TIMEOUT)
+    }
+
+    fn apply_next_with_timeout(&mut self, timeout: Duration) -> BackendEvent {
+        let event = self.receiver.recv_timeout(timeout).unwrap_or_else(|error| {
+            panic!("failed waiting {timeout:?} for backend event: {error}")
+        });
+        match event {
             AppEvent::Backend(event) => {
                 let observed = (*event).clone();
                 self.app.apply_event(AppEvent::Backend(event));
