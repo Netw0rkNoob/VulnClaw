@@ -598,7 +598,21 @@ def _run_repl() -> None:
                 console.print(_("cli.auto_mode_exited"))
                 is_auto_mode = False
             elif auto_mode_active:
-                is_auto_mode = True
+                from vulnclaw.cli.user_intent import (
+                    continue_task_prompt,
+                    is_affirmative_continue,
+                    is_conversational_checkin,
+                )
+
+                # Sticky auto mode must not swallow readiness check-ins
+                # ("ready to begin?") — answer first via single-turn chat.
+                if is_conversational_checkin(user_input):
+                    is_auto_mode = False
+                elif is_affirmative_continue(user_input):
+                    is_auto_mode = True
+                    user_input = continue_task_prompt(last_auto_input, current_target)
+                else:
+                    is_auto_mode = True
             else:
                 # Route to agent and detect whether this should be an autonomous loop
                 is_auto_mode = _should_auto_pentest(user_input, current_target)
@@ -3231,6 +3245,13 @@ def _should_auto_pentest(user_input: str, current_target: Optional[str]) -> bool
     - User asks for information gathering / recon / OSINT with a target
     - A target is present + multi-step task indicators
     """
+    from vulnclaw.cli.user_intent import is_conversational_checkin
+
+    # Readiness / meta questions (e.g. "ready to begin bug hunting?") get a
+    # spoken answer first — never jump straight into the solve tool loop.
+    if is_conversational_checkin(user_input):
+        return False
+
     input_lower = user_input.lower()
 
     # Explicit auto-mode triggers
