@@ -1466,7 +1466,7 @@ class TestClassicReplSlashPalette:
 
         assert len(completions) == len(list_repl_palette_entries())
         # Built-in commands come first, ahead of the skills.
-        assert [c.text for c in completions[:2]] == ["config", "language"]
+        assert [c.text for c in completions[:3]] == ["config", "language", "wizard"]
 
     def test_completion_style_keeps_terminal_background(self):
         from vulnclaw.cli.tui import build_repl_slash_style
