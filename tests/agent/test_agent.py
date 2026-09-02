@@ -1073,7 +1073,10 @@ class TestAgentCore:
             user_input="Use VulnClaw skill secknowledge-skill. test this target"
         )
         assert context is not None
-        assert "optional reference material" in context
+        # Explicit invocation injects the skill body as the active workflow,
+        # not the optional reference index used for keyword/fallback routing.
+        assert "Active skill (explicit invocation)" in context
+        assert "optional reference material only" not in context.lower()
         assert "secknowledge-skill" in context
 
     def test_build_openai_tools_includes_skill_ref(self):

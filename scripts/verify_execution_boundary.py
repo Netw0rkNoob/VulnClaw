@@ -93,14 +93,52 @@ ALLOWED_SPAWN_SITES: dict[str, str] = {
     "vulnclaw/report/verifier.py:487:subprocess.run": (
         "generated-PoC verification after synchronous ExecutionGate approval"
     ),
-    "vulnclaw/cli/tui.py:490:subprocess.call": (
+    "vulnclaw/cli/tui.py:499:subprocess.call": (
         "operator control plane: native TUI binary launcher"
     ),
-    "vulnclaw/cli/tui.py:1707:subprocess.run": (
+    "vulnclaw/cli/tui.py:1734:subprocess.run": (
         "operator control plane: fixed version diagnostic"
     ),
-    "vulnclaw/cli/main.py:2541:subprocess.run": (
+    "vulnclaw/cli/main.py:2581:subprocess.run": (
         "operator control plane: fixed Node.js version diagnostic"
+    ),
+    # First-run setup wizard (merged from dev): operator-driven fixed argv
+    # probes/installers; never model-reachable.
+    "vulnclaw/cli/wizard.py:100:os.system": (
+        "operator control plane: Windows terminal clear (cls)"
+    ),
+    "vulnclaw/cli/wizard.py:102:os.system": (
+        "operator control plane: POSIX terminal clear (clear)"
+    ),
+    "vulnclaw/cli/wizard.py:300:subprocess.run": (
+        "fixed java -version probe during wizard Java detection"
+    ),
+    "vulnclaw/cli/wizard.py:360:subprocess.run": (
+        "fixed winget install of Temurin JDK 17 package on user confirm"
+    ),
+    "vulnclaw/cli/wizard.py:877:subprocess.run": (
+        "git clone of the constant PortSwigger mcp-server repo"
+    ),
+    "vulnclaw/cli/wizard.py:912:subprocess.run": (
+        "gradlew embedProxyJar in the cloned constant repo (Windows shell)"
+    ),
+    "vulnclaw/cli/wizard.py:922:subprocess.run": (
+        "gradlew embedProxyJar in the cloned constant repo (POSIX argv)"
+    ),
+    "vulnclaw/cli/wizard.py:1085:subprocess.Popen": (
+        "launch local Chrome with fixed argv for remote debugging"
+    ),
+    "vulnclaw/cli/wizard.py:1104:subprocess.Popen": (
+        "macOS open-URL launcher with fixed argv"
+    ),
+    "vulnclaw/cli/wizard.py:1106:subprocess.Popen": (
+        "Linux xdg-open URL launcher with fixed argv"
+    ),
+    "vulnclaw/cli/wizard.py:1116:subprocess.Popen": (
+        "macOS open-path launcher with fixed argv"
+    ),
+    "vulnclaw/cli/wizard.py:1118:subprocess.Popen": (
+        "Linux xdg-open path launcher with fixed argv"
     ),
     "vulnclaw/agent/network_scan.py:452:subprocess.run": (
         "fixed local wireless-interface diagnostic"
