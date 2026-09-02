@@ -703,9 +703,12 @@ def _run_repl() -> None:
                                     current_target = result.target
                                 if result.phase:
                                     current_phase = result.phase
-                                # 注释掉: 流式输出已通过 TerminalStreamSink 实时显示，无需重复打印
-                                # if result.output:
-                                #     _print_agent_output(result.output, config)
+                                # 流式输出已通过 TerminalStreamSink 实时显示，无需重复打印；
+                                # 但 agent.chat() 在 LLM 调用异常时不会流式输出任何 token，
+                                # 错误信息只落在 result.output 里，这里必须打印出来，
+                                # 否则用户只会看到 "Thinking..." 后静默回到提示符。
+                                if result.output and result.output.startswith("[!]"):
+                                    _print_agent_output(result.output, config)
 
                         await _run_repl_agent_call(agent, call=call, after_result=after_result)
 
