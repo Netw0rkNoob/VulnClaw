@@ -81,6 +81,15 @@ class TestKeywordRetriever:
         assert results, "expected at least one keyword match"
         assert results[0]["id"] == "sqli-bypass"
 
+    def test_retrieve_chinese_query_finds_chinese_entry(self, tmp_path):
+        store = _seed_store(tmp_path)
+        kw = KeywordRetriever(store)
+
+        # The old [a-z0-9]+ tokenizer dropped CJK entirely, so this returned [].
+        results = kw.retrieve("注入绕过", top_k=3)
+        assert results, "expected Chinese query to match Chinese KB entries"
+        assert results[0]["id"] == "sqli-bypass"
+
     def test_retrieve_matches_cve_by_service(self, tmp_path):
         store = _seed_store(tmp_path)
         kw = KeywordRetriever(store)
