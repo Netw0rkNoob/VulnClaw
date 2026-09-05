@@ -62,6 +62,10 @@ web = [
 kb = [
     "chromadb>=0.4.0",
 ]
+rerank = [
+    # Optional: cross-encoder precision stage for the keyword KB backend.
+    "sentence-transformers>=2.2.0",
+]
 pdf = [
     # Optional: render reports to PDF via report.pdf_exporter.
     "reportlab>=4.0",

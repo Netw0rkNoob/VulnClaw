@@ -5,8 +5,9 @@ Retrieval degrades gracefully across three backends:
 - ``chromadb_active``   : semantic vector search (requires the optional
                           ``chromadb`` dependency, installed via
                           ``pip install vulnclaw[kb]``).
-- ``keyword_fallback``  : pure-Python keyword + TF-IDF scoring over the KB
-                          JSON corpus. No external dependency.
+- ``keyword_fallback``  : pure-Python Chinese-aware BM25 scoring over the KB
+                          JSON corpus, optionally reranked by a cross-encoder.
+                          No external dependency required.
 - ``disabled``          : no KB data is available at all.
 
 The public method surface (``get_cve``, ``search_by_service``,
@@ -17,12 +18,10 @@ active, so callers never need to branch on the backend.
 from __future__ import annotations
 
 import logging
-import math
-import re
-from collections import Counter
 from enum import Enum
 from typing import Any, Optional
 
+from vulnclaw.kb.ranking import BM25, CrossEncoderReranker
 from vulnclaw.kb.store import KnowledgeStore
 
 logger = logging.getLogger(__name__)
@@ -48,14 +47,6 @@ class RetrieverStatus(str, Enum):
     DISABLED = "disabled"
 
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-
-
-def _tokenize(text: str) -> list[str]:
-    """Split text into lowercase alphanumeric tokens."""
-    return _TOKEN_RE.findall(text.lower())
-
-
 def _entry_text(entry: dict[str, Any]) -> str:
     """Flatten the searchable text of a KB entry into a single string."""
     parts: list[str] = []
@@ -78,33 +69,16 @@ def _entry_text(entry: dict[str, Any]) -> str:
 class KeywordRetriever:
     """Pure-Python keyword retriever used when ChromaDB is unavailable.
 
-    Loads every KB entry into memory once, builds a small TF-IDF index, and
-    ranks documents against a query using cosine-like overlap scoring. No
-    vector database or external dependency is required.
+    Loads every KB entry into memory once and ranks documents against a query
+    with Okapi BM25 over Chinese-aware character-bigram tokens, so the
+    predominantly-Chinese KB corpus is searchable without a segmentation
+    dictionary or any external dependency.
     """
 
     def __init__(self, store: KnowledgeStore) -> None:
         self.store = store
-        self._docs: list[dict[str, Any]] = []
-        self._doc_tokens: list[Counter[str]] = []
-        self._idf: dict[str, float] = {}
-        self._build()
-
-    def _build(self) -> None:
-        """Load entries and compute IDF weights."""
-        self._docs = self.store.iter_all_entries()
-        self._doc_tokens = []
-        df: Counter[str] = Counter()
-        for entry in self._docs:
-            tokens = Counter(_tokenize(_entry_text(entry)))
-            self._doc_tokens.append(tokens)
-            for token in tokens:
-                df[token] += 1
-
-        n = max(len(self._docs), 1)
-        self._idf = {
-            token: math.log((n + 1) / (count + 1)) + 1.0 for token, count in df.items()
-        }
+        self._docs: list[dict[str, Any]] = self.store.iter_all_entries()
+        self._bm25: BM25 = BM25([_entry_text(entry) for entry in self._docs])
 
     def has_data(self) -> bool:
         """Return True when at least one document is indexed."""
@@ -112,24 +86,34 @@ class KeywordRetriever:
 
     def retrieve(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         """Return the top-k entries most relevant to the query."""
-        query_tokens = _tokenize(query)
-        if not query_tokens or not self._docs:
-            return []
+        return [self._docs[index] for index, _score in self._bm25.search(query, top_k)]
 
-        q_counts = Counter(query_tokens)
-        scored: list[tuple[float, dict[str, Any]]] = []
-        for entry, tokens in zip(self._docs, self._doc_tokens):
-            score = 0.0
-            for token, q_tf in q_counts.items():
-                d_tf = tokens.get(token, 0)
-                if d_tf:
-                    weight = self._idf.get(token, 1.0)
-                    score += q_tf * d_tf * weight * weight
-            if score > 0:
-                scored.append((score, entry))
 
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [entry for _, entry in scored[:top_k]]
+class RerankedRetriever:
+    """Two-stage retriever: broad recall, then precise cross-encoder reranking.
+
+    Wraps a base retriever (e.g. :class:`KeywordRetriever`) that recalls more
+    candidates than needed, then reorders the top candidates with a
+    cross-encoder for finer ranking. When the reranker is unavailable or there
+    are too few candidates to reorder, the base ranking is returned unchanged.
+    """
+
+    def __init__(self, base: Any, reranker: CrossEncoderReranker, *, recall_k: int = 20) -> None:
+        self._base = base
+        self._reranker = reranker
+        self._recall_k = recall_k
+
+    def has_data(self) -> bool:
+        return self._base.has_data()
+
+    def retrieve(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+        """Recall broadly, rerank, and return the top-k entries."""
+        candidates = self._base.retrieve(query, top_k=max(self._recall_k, top_k))
+        if len(candidates) <= top_k or not self._reranker.available:
+            return candidates[:top_k]
+        texts = [_entry_text(entry) for entry in candidates]
+        order = self._reranker.rerank(query, texts, top_k)
+        return [candidates[index] for index in order]
 
 
 class _ChromaRetriever:
@@ -190,8 +174,9 @@ class KnowledgeRetriever:
     its choice via :meth:`get_status`.
     """
 
-    def __init__(self, store: Optional[KnowledgeStore] = None) -> None:
+    def __init__(self, store: Optional[KnowledgeStore] = None, *, rerank: bool = False) -> None:
         self.store = store or KnowledgeStore()
+        self._rerank_enabled = rerank
         self._status: RetrieverStatus = RetrieverStatus.DISABLED
         self._status_detail: str = ""
         self._backend: Any = None
@@ -226,6 +211,8 @@ class KnowledgeRetriever:
             return
 
         self._backend = keyword
+        if self._rerank_enabled:
+            self._backend = self._wrap_reranker(keyword)
         if keyword.has_data():
             self._status = RetrieverStatus.KEYWORD_FALLBACK
             if not CHROMADB_AVAILABLE:
@@ -238,6 +225,20 @@ class KnowledgeRetriever:
         else:
             self._status = RetrieverStatus.DISABLED
             self._status_detail = _("kb.status.empty")
+
+    def _wrap_reranker(self, base: Any) -> Any:
+        """Wrap ``base`` with a cross-encoder reranking stage when possible.
+
+        The cross-encoder is loaded lazily and only when reranking was
+        explicitly enabled; if the dependency or model is missing, ``base`` is
+        returned unchanged so the retriever degrades to base ranking instead of
+        failing.
+        """
+        reranker = CrossEncoderReranker()
+        if not reranker.available:
+            logger.info("Cross-encoder reranker unavailable; keeping base ranking")
+            return base
+        return RerankedRetriever(base, reranker)
 
     # ── Status reporting ─────────────────────────────────────────────
 
