@@ -42,6 +42,89 @@ class DummyAgent:
         self.mcp_manager = None
 
 
+
+class AutoApproveChannel:
+    """Test double: trusted channel that approves everything (gate bypass)."""
+
+    def __init__(self):
+        self.views = []
+
+    async def request_approval(self, view):
+        self.views.append(view)
+        return "approve"
+
+
+def _install_auto_approve():
+    """Install a fresh auto-approving channel on the process gate."""
+    from vulnclaw.agent.exec_gate import get_execution_gate, reset_execution_gate
+
+    reset_execution_gate()
+    gate = get_execution_gate()
+    channel = AutoApproveChannel()
+    gate.install_channel(channel)
+    return gate, channel
+
+
+class TestExecutionDiagnostics:
+    async def test_shell_wall_time_excludes_approval_wait(self, monkeypatch):
+        import vulnclaw.agent.builtin_tools as builtin_tools
+        from vulnclaw.agent.exec_gate import get_execution_gate, reset_execution_gate
+
+        clock = {"now": 0.0}
+
+        class DelayedApproval:
+            async def request_approval(self, view):
+                clock["now"] = 10.0
+                return "approve"
+
+        reset_execution_gate()
+        get_execution_gate().install_channel(DelayedApproval())
+        monkeypatch.setattr(builtin_tools.time, "perf_counter", lambda: clock["now"])
+
+        def fake_spawn(*args, **kwargs):
+            clock["now"] += 0.005
+            return 0, "ok", "", False
+
+        monkeypatch.setattr(builtin_tools, "_spawn_captured", fake_spawn)
+        result = await builtin_tools.execute_shell_command(
+            DummyAgent(), {"command": "printf ok"}
+        )
+        assert "Wall time: 5ms" in result
+
+    async def test_timeout_messages_discard_partial_output(self, monkeypatch):
+        import vulnclaw.agent.builtin_tools as builtin_tools
+
+        _install_auto_approve()
+        monkeypatch.setattr(
+            builtin_tools,
+            "_spawn_captured",
+            lambda *args, **kwargs: (-9, "CAPTURED_ONLY", "CAPTURED_ERROR", True),
+        )
+
+        shell = await builtin_tools.execute_shell_command(
+            DummyAgent(), {"command": "printf PARTIAL_STDOUT; sleep 10"}
+        )
+        python_agent = DummyAgent()
+        python_agent.config.safety.python_execute_audit_enabled = False
+        python = await builtin_tools.execute_python(
+            python_agent, {"code": "print('PARTIAL_STDOUT')"}
+        )
+        monkeypatch.setattr(builtin_tools.shutil, "which", lambda name: "/usr/bin/php")
+        php = await builtin_tools.execute_runtime_diff_probe(
+            DummyAgent(),
+            {
+                "mode": "php_serialize",
+                "payload": 's:1:"x";',
+                "filter_regex": "/x/",
+            },
+        )
+
+        for result in (shell, python, php):
+            assert "timed out" in result
+            assert "CAPTURED_ONLY" not in result
+            assert "CAPTURED_ERROR" not in result
+
+
 class TestColdMemoryTool:
     async def test_memory_search_retrieves_archived_turn_on_demand(self, tmp_path):
         from vulnclaw.agent.builtin_tools import execute_mcp_tool
@@ -117,6 +200,7 @@ class TestBuiltinPythonExecute:
         assert "lab mode blocked operation" in result
 
     async def test_trusted_local_allows_basic_code(self, monkeypatch):
+        _install_auto_approve()
         import vulnclaw.agent.builtin_tools as builtin_tools
 
         agent = DummyAgent()
@@ -130,6 +214,7 @@ class TestBuiltinPythonExecute:
         assert "ok" in result
 
     async def test_python_execute_keeps_raw_and_returns_small_output_to_model(self, monkeypatch):
+        _install_auto_approve()
         import vulnclaw.agent.builtin_tools as builtin_tools
         from vulnclaw.agent.tool_call_manager import handle_tool_calls_with_results
 
@@ -463,10 +548,19 @@ class TestBuiltinPythonExecute:
         assert 'action="api.php"' in result
 
     async def test_shell_command_runs_local_verification_and_returns_full_output(self):
+        _install_auto_approve()
+        import sys
+
         import vulnclaw.agent.builtin_tools as builtin_tools
 
         agent = DummyAgent()
-        command = 'python -c "print(\'SHELL_OK\')"'
+        # Use the running interpreter instead of a bare ``python``, which is not
+        # on PATH where the interpreter is installed only as ``python3`` (macOS
+        # default, minimal Linux/Docker). The path is left unquoted so the shell
+        # token is a bare executable, exactly like the previous ``python`` — this
+        # keeps the Windows ``cmd`` command line unchanged in shape (POSIX single
+        # quotes from ``shlex.quote`` break ``cmd``; hosted CI paths have no spaces).
+        command = f"{sys.executable} -c \"print('SHELL_OK')\""
 
         result = await builtin_tools.execute_mcp_tool(
             agent,
@@ -506,6 +600,7 @@ class TestBuiltinPythonExecute:
         assert "filter_hit=false" in result
 
     async def test_runtime_diff_probe_warns_on_target_php_version_mismatch(self, monkeypatch):
+        _install_auto_approve()
         import vulnclaw.agent.builtin_tools as builtin_tools
 
         agent = DummyAgent()
@@ -517,10 +612,10 @@ class TestBuiltinPythonExecute:
         )
         monkeypatch.setattr(builtin_tools.shutil, "which", lambda name: "php" if name == "php" else None)
 
-        def fake_run(*args, **kwargs):
-            return SimpleNamespace(
-                returncode=0,
-                stdout=(
+        def fake_spawn(argv, *, cwd, env=None, timeout_s):
+            return (
+                0,
+                (
                     "# runtime_diff_probe - php_serialize\n"
                     "local_php_version=7.3.4\n"
                     "filter_regex=/[oc]:\\d+:/i\n"
@@ -529,10 +624,11 @@ class TestBuiltinPythonExecute:
                     "filter_hit=0\n"
                     "unserialize_ok=false\n"
                 ),
-                stderr="",
+                "",
+                False,
             )
 
-        monkeypatch.setattr(builtin_tools.subprocess, "run", fake_run)
+        monkeypatch.setattr(builtin_tools, "_spawn_captured", fake_spawn)
 
         result = await builtin_tools.execute_mcp_tool(
             agent,
@@ -552,6 +648,7 @@ class TestBuiltinPythonExecute:
     async def test_runtime_diff_probe_emits_php5_remote_candidate_from_probe_headers(
         self, monkeypatch
     ):
+        _install_auto_approve()
         import vulnclaw.agent.builtin_tools as builtin_tools
 
         agent = DummyAgent()
@@ -563,10 +660,10 @@ class TestBuiltinPythonExecute:
         )
         monkeypatch.setattr(builtin_tools.shutil, "which", lambda name: "php" if name == "php" else None)
 
-        def fake_run(*args, **kwargs):
-            return SimpleNamespace(
-                returncode=0,
-                stdout=(
+        def fake_spawn(argv, *, cwd, env=None, timeout_s):
+            return (
+                0,
+                (
                     "# runtime_diff_probe - php_serialize\n"
                     "local_php_version=7.3.4\n"
                     "filter_regex=/[oc]:\\d+:/i\n"
@@ -575,10 +672,11 @@ class TestBuiltinPythonExecute:
                     "filter_hit=0\n"
                     "unserialize_ok=false\n"
                 ),
-                stderr="",
+                "",
+                False,
             )
 
-        monkeypatch.setattr(builtin_tools.subprocess, "run", fake_run)
+        monkeypatch.setattr(builtin_tools, "_spawn_captured", fake_spawn)
         payload = (
             'O:11:"ctfShowUser":1:{s:5:"class";'
             'O:8:"backDoor":1:{s:4:"code";s:13:"echo "VCLAW";";}}'

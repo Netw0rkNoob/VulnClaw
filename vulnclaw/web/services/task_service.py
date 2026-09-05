@@ -3,56 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import re
 
-from vulnclaw.agent.constraint_policy import validate_action_constraints
-from vulnclaw.agent.context import TaskConstraints
 from vulnclaw.agent.core import AgentCore
-from vulnclaw.agent.input_analysis import extract_task_constraints
 from vulnclaw.config.settings import load_config
 from vulnclaw.i18n import init_i18n
 from vulnclaw.mcp.lifecycle import MCPLifecycleManager
-from vulnclaw.orchestrator import run_agent_task
+from vulnclaw.task_service import execute_task, prepare_task
 from vulnclaw.web.schemas import TaskCreateRequest
 from vulnclaw.web.task_manager import WebTaskManager
-
-_INJECTION_RE = re.compile(r"[\n\r\t\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-
-
-def _validate_request_inputs(request: TaskCreateRequest) -> None:
-    """Reject user-supplied strings that contain control characters (prompt injection).
-
-    This is a defense-in-depth layer on top of Pydantic validators.  It covers
-    *every* free-text field that is interpolated into prompts or passed to the
-    agent, not just the fields guarded by Pydantic ``@field_validator``.
-    """
-    string_fields = {
-        "target": request.target,
-        "command": request.command,
-        "cve": request.options.cve,
-        "cmd": request.options.cmd,
-        "only_host": request.options.only_host,
-        "only_path": request.options.only_path,
-        "blocked_host": request.options.blocked_host,
-        "blocked_path": request.options.blocked_path,
-        "run_name": request.run_name,
-    }
-    for name, value in string_fields.items():
-        if isinstance(value, str) and _INJECTION_RE.search(value):
-            raise ValueError(
-                f"Field '{name}' contains control characters (newlines/tabs/etc.) — rejected to prevent prompt injection"
-            )
-    if request.additional_targets:
-        for i, t in enumerate(request.additional_targets):
-            if isinstance(t, str) and _INJECTION_RE.search(t):
-                raise ValueError(
-                    f"Field 'additional_targets[{i}]' contains control characters — rejected to prevent prompt injection"
-                )
 
 
 def start_task(manager: WebTaskManager, request: TaskCreateRequest) -> str:
     """Create and schedule a new task."""
-    _validate_request_inputs(request)
     record = manager.create_task(request)
     task = asyncio.create_task(_run_task(manager, record.task_id, request))
     manager.bind_runtime_task(record.task_id, task)
@@ -66,18 +28,6 @@ async def _run_task(manager: WebTaskManager, task_id: str, request: TaskCreateRe
     # here before any of that code runs — the CLI does this at its own
     # entrypoints, but this background/orchestrated path has no CLI to do it.
     init_i18n(config=config)
-    task_constraints = _build_task_constraints(request)
-    violation = validate_action_constraints(request.command, task_constraints)
-    if violation is not None:
-        manager.set_failed(task_id, violation)
-        return
-    if request.options.only_path and request.command == "persistent":
-        manager.set_failed(
-            task_id,
-            "constraint_violation: persistent tasks are not allowed with only_path scope yet",
-        )
-        return
-
     mcp_manager = MCPLifecycleManager(config)
     mcp_manager.start_enabled_servers()
     agent = AgentCore(config, mcp_manager)
@@ -111,26 +61,19 @@ async def _run_task(manager: WebTaskManager, task_id: str, request: TaskCreateRe
                 },
             )
 
-        async def runner_fn(shared_agent: AgentCore) -> None:
-            manager.set_running(task_id)
-            if request.command == "persistent":
-                await _run_persistent_task(manager, task_id, shared_agent, request)
-            else:
-                await _run_single_task(manager, task_id, shared_agent, request)
-
-        run_result = await run_agent_task(
-            agent=agent,
-            command=request.command,
-            target=request.target,
-            resume=request.resume,
-            snapshot_id=request.snapshot_id,
+        execution = await execute_task(
+            agent,
+            prepare_task(request),
             before_restore=before_restore,
             on_restored=on_restored,
             on_legacy_import=on_legacy_import,
-            runner=runner_fn,
-            **_run_context_kwargs(request),
+            before_action=lambda: manager.set_running(task_id),
+            on_step=_build_step_callback(manager, task_id),
+            on_cycle_step=_build_cycle_step_callback(manager, task_id),
+            on_cycle_complete=_build_cycle_complete_callback(manager, task_id),
         )
-        manager.set_completed(task_id, latest_message="Task finished", summary=run_result.summary)
+        _publish_action_result(manager, task_id, execution.action_result)
+        manager.set_completed(task_id, latest_message="Task finished", summary=execution.run.summary)
     except asyncio.CancelledError:
         manager.set_stopped(task_id)
         raise
@@ -140,48 +83,7 @@ async def _run_task(manager: WebTaskManager, task_id: str, request: TaskCreateRe
         mcp_manager.stop_all()
 
 
-async def _run_single_task(
-    manager: WebTaskManager, task_id: str, agent: AgentCore, request: TaskCreateRequest
-) -> None:
-    prompt = _build_prompt_v2(request)
-
-    if request.command == "run":
-        max_rounds = request.options.max_rounds or agent.config.session.max_rounds
-        results = await agent.auto_pentest(
-            prompt,
-            target=request.target,
-            max_rounds=max_rounds,
-            on_step=_build_step_callback(manager, task_id),
-        )
-        if results:
-            last = results[-1]
-            manager.update_progress(
-                task_id, phase=last.phase, message=last.output[:200] if last.output else None
-            )
-        return
-
-    result = await agent.chat(prompt, target=request.target)
-    if result.output:
-        manager.publish(
-            task_id,
-            "round_output",
-            {
-                "phase": result.phase or agent.session_state.phase.value,
-                "text": result.output,
-            },
-        )
-        manager.update_progress(task_id, phase=result.phase, message=result.output[:200])
-
-
-async def _run_persistent_task(
-    manager: WebTaskManager, task_id: str, agent: AgentCore, request: TaskCreateRequest
-) -> None:
-    rounds_per_cycle = (
-        request.options.rounds_per_cycle or agent.config.session.persistent_rounds_per_cycle
-    )
-    max_cycles = request.options.max_cycles or agent.config.session.persistent_max_cycles
-    prompt = _build_prompt_v2(request)
-
+def _build_cycle_step_callback(manager: WebTaskManager, task_id: str):
     def on_cycle_step(round_num: int, cycle_num: int, result) -> None:
         manager.publish(
             task_id,
@@ -195,6 +97,10 @@ async def _run_persistent_task(
         )
         manager.update_progress(task_id, phase=result.phase, message=(result.output or "")[:200])
 
+    return on_cycle_step
+
+
+def _build_cycle_complete_callback(manager: WebTaskManager, task_id: str):
     def on_cycle_complete(cycle_num: int, cycle_result) -> None:
         manager.publish(
             task_id,
@@ -206,15 +112,7 @@ async def _run_persistent_task(
             },
         )
 
-    await agent.persistent_pentest(
-        user_input=prompt,
-        target=request.target,
-        rounds_per_cycle=rounds_per_cycle,
-        max_cycles=max_cycles,
-        auto_report=True,
-        on_cycle_step=on_cycle_step,
-        on_cycle_complete=on_cycle_complete,
-    )
+    return on_cycle_complete
 
 
 def _build_step_callback(manager: WebTaskManager, task_id: str):
@@ -233,90 +131,12 @@ def _build_step_callback(manager: WebTaskManager, task_id: str):
     return _callback
 
 
-def _build_task_constraints(request: TaskCreateRequest) -> TaskConstraints:
-    """Build hard constraints from structured Web task options and prompt text."""
-    constraints = extract_task_constraints(_build_prompt_v2(request))
-    options = request.options
-
-    if options.only_port is not None and options.only_port not in constraints.allowed_ports:
-        constraints.allowed_ports.append(options.only_port)
-    if options.only_host and options.only_host not in constraints.allowed_hosts:
-        constraints.allowed_hosts.append(options.only_host)
-    if options.only_path and options.only_path not in constraints.allowed_paths:
-        constraints.allowed_paths.append(options.only_path)
-    if options.blocked_host and options.blocked_host not in constraints.blocked_hosts:
-        constraints.blocked_hosts.append(options.blocked_host)
-    if options.blocked_path and options.blocked_path not in constraints.blocked_paths:
-        constraints.blocked_paths.append(options.blocked_path)
-    if options.allow_actions:
-        constraints.allowed_actions = list(
-            dict.fromkeys([*constraints.allowed_actions, *options.allow_actions])
-        )
-    if options.block_actions:
-        constraints.blocked_actions = list(
-            dict.fromkeys([*constraints.blocked_actions, *options.block_actions])
-        )
-
-    if options.only_port is not None and request.command == "exploit" and not options.allow_actions:
-        constraints.blocked_actions = list(dict.fromkeys([*constraints.blocked_actions, "exploit"]))
-
-    if not constraints.is_empty():
-        constraints.strict_mode = True
-    return constraints
-
-
-def _run_context_kwargs(request: TaskCreateRequest) -> dict:
-    kwargs = {}
-    if request.run_name:
-        kwargs["run_name"] = request.run_name
-    if request.resume_run_name:
-        kwargs["resume_run_name"] = request.resume_run_name
-    if request.runs_dir:
-        kwargs["runs_dir"] = request.runs_dir
-    if request.additional_targets:
-        kwargs["additional_targets"] = request.additional_targets
-    if request.target_type:
-        kwargs["target_type"] = request.target_type
-    if request.mount:
-        kwargs["mount"] = request.mount
-    if request.repair:
-        kwargs["repair"] = request.repair
-    if request.force_fresh:
-        kwargs["force_fresh"] = request.force_fresh
-    if request.no_import:
-        kwargs["no_import"] = request.no_import
-    return kwargs
-
-
-def _build_prompt_v2(request: TaskCreateRequest) -> str:
-    """Build a clean prompt string for Web-triggered tasks."""
-    constraints = []
-    if request.options.only_port is not None:
-        constraints.append(f"Only test port {request.options.only_port}")
-    if request.options.only_host:
-        constraints.append(f"Only test host {request.options.only_host}")
-    if request.options.only_path:
-        constraints.append(f"Only test path {request.options.only_path}")
-    if request.options.blocked_host:
-        constraints.append(f"Blocked host {request.options.blocked_host}")
-    if request.options.blocked_path:
-        constraints.append(f"Blocked path {request.options.blocked_path}")
-    if request.options.allow_actions:
-        constraints.append(f"Only allowed actions: {', '.join(request.options.allow_actions)}")
-    if request.options.block_actions:
-        constraints.append(f"Blocked actions: {', '.join(request.options.block_actions)}")
-    constraint_suffix = f" {' '.join(constraints)}." if constraints else ""
-
-    if request.command == "recon":
-        return f"Perform authorized reconnaissance and information gathering against {request.target}.{constraint_suffix}"
-    if request.command == "scan":
-        return f"Perform authorized vulnerability scanning and verification against {request.target}.{constraint_suffix}"
-    if request.command == "exploit":
-        cve_hint = f" using {request.options.cve}" if request.options.cve else ""
-        cmd_hint = f", verifying with command {request.options.cmd}" if request.options.cmd else ""
-        return f"Attempt authorized exploitation against {request.target}{cve_hint}{cmd_hint}.{constraint_suffix}"
-    if request.command == "persistent":
-        return f"Perform an authorized persistent penetration test against {request.target}.{constraint_suffix}"
-    return (
-        f"Perform a full authorized penetration test against {request.target}.{constraint_suffix}"
-    )
+def _publish_action_result(manager: WebTaskManager, task_id: str, result) -> None:
+    if isinstance(result, list) and result:
+        result = result[-1]
+    output = getattr(result, "output", "")
+    if not output:
+        return
+    phase = getattr(result, "phase", None)
+    manager.publish(task_id, "round_output", {"phase": phase, "text": output})
+    manager.update_progress(task_id, phase=phase, message=output[:200])

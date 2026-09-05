@@ -6,7 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 # ── LLM Provider Presets ────────────────────────────────────────────
 
@@ -27,6 +27,7 @@ class LLMProvider(str, Enum):
     STEPFUN = "stepfun"
     SENSETIME = "sensetime"
     YI = "yi"
+    OPENROUTER = "openrouter"
     OLLAMA = "ollama"
     CUSTOM = "custom"
 
@@ -98,6 +99,15 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
         "default_model": "yi-lightning",
         "label": "零一万物 (Yi)",
     },
+    # Aggregator fronting many vendors behind one OpenAI-compatible endpoint.
+    # Model IDs are namespaced by vendor (anthropic/..., openai/..., ...), so the
+    # default carries its vendor prefix. Pick a tool-capable model — VulnClaw
+    # drives everything through function calls.
+    LLMProvider.OPENROUTER: {
+        "base_url": "https://openrouter.ai/api/v1",
+        "default_model": "anthropic/claude-sonnet-5",
+        "label": "OpenRouter",
+    },
     # Local models via Ollama's OpenAI-compatible endpoint. No API key is
     # required (the client sends a placeholder). The default model must support
     # tool calling — VulnClaw drives everything through function calls — so pick
@@ -121,7 +131,7 @@ class LLMConfig(BaseModel):
 
     provider: str = Field(
         default="openai",
-        description="LLM provider name (openai/anthropic/minimax/deepseek/zhipu/moonshot/qwen/siliconflow/doubao/baichuan/stepfun/sensetime/yi/ollama/custom)",
+        description="LLM provider name (openai/anthropic/minimax/deepseek/zhipu/moonshot/qwen/siliconflow/doubao/baichuan/stepfun/sensetime/yi/openrouter/ollama/custom)",
     )
     api_key: str = Field(default="", description="Static API key for the chosen provider (auth_mode=static)")
     api_keys: list[str] = Field(
@@ -312,6 +322,55 @@ class SafetyConfig(BaseModel):
         default=5,
         description="Max number of tool calls executed concurrently per round (1=serial)",
     )
+    permission_mode: str = Field(
+        default="ask",
+        description=(
+            "Execution approval policy for dangerous tools: "
+            "ask (default, approve every request), auto_review, full_access"
+        ),
+    )
+    approval_timeout_seconds: int = Field(
+        default=300,
+        description="How long an un-answered execution approval waits before expiring",
+    )
+    trusted_commands: list[str] = Field(
+        default_factory=list,
+        description=(
+            "auto_review mode: shell commands whose first tokens match one of "
+            "these prefixes run without per-request approval (e.g. 'nmap', "
+            "'git diff'). Entries starting with a banned name are refused."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _warn_deprecated_python_sandbox_fields(self) -> "SafetyConfig":
+        """The lab/restricted regex+AST blacklist is not a security boundary.
+
+        The fields keep parsing for config compatibility, but any non-default
+        value gets a loud deprecation warning: the real control is the
+        execution approval gate, and these modes no longer change what code
+        may run.
+        """
+        import warnings
+
+        if self.python_execute_restricted:
+            warnings.warn(
+                "safety.python_execute_restricted is deprecated: the static "
+                "blacklist is not a security boundary. Use "
+                "safety.permission_mode to control execution approvals.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        mode = str(self.python_execute_mode or "").strip().lower()
+        if mode and mode != "trusted-local":
+            warnings.warn(
+                f"safety.python_execute_mode={mode!r} is deprecated: safe/lab "
+                "filtering does not restrict execution. Use "
+                "safety.permission_mode instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return self
 
 
 class SessionConfig(BaseModel):

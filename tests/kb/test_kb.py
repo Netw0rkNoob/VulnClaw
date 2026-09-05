@@ -4,6 +4,14 @@
 # ── store.py ─────────────────────────────────────────────────────────
 
 
+import os
+import stat
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
+
 class TestKnowledgeStore:
     """Test KnowledgeStore."""
 
@@ -54,6 +62,17 @@ class TestKnowledgeStore:
         results = store.search("nginx")
         assert len(results) >= 1
         assert results[0]["title"] == "Nginx Buffer Overflow"
+
+    def test_search_by_text_beyond_display_title_limit(self, tmp_path):
+        from vulnclaw.kb.store import KnowledgeStore
+
+        store = KnowledgeStore(store_dir=tmp_path)
+        title = f"{'a' * 81} searchable-suffix"
+        store.add_entry("cve", "CVE-2026-LONG", {"title": title, "tags": []})
+
+        rows = store.list_entries("cve")
+        assert len(rows[0]["title"]) == 80
+        assert store.search("searchable-suffix", category="cve")[0]["title"] == title
 
     def test_search_by_tags(self, tmp_path):
         from vulnclaw.kb.store import KnowledgeStore
@@ -125,6 +144,125 @@ class TestKnowledgeStore:
         store = KnowledgeStore(store_dir=tmp_path)
         store.add_entry("cve", "CVE-2026-0001", {"title": "Test", "tags": []})
         assert (tmp_path / "index.json").exists()
+
+    def test_index_file_permissions_are_owner_only_after_every_write(self, tmp_path):
+        from vulnclaw.kb.store import KnowledgeStore
+
+        if os.name == "nt":
+            pytest.skip("Windows chmod does not expose POSIX owner/group mode bits")
+
+        store = KnowledgeStore(store_dir=tmp_path)
+        index_path = tmp_path / "index.json"
+        assert stat.S_IMODE(index_path.stat().st_mode) == 0o600
+
+        os.chmod(index_path, 0o666)
+        store.add_entry("tools", "permission-check", {"title": "Private", "tags": []})
+
+        assert stat.S_IMODE(index_path.stat().st_mode) == 0o600
+
+    def test_add_entry_upserts_without_duplicate_index_rows(self, tmp_path):
+        from vulnclaw.kb.store import KnowledgeStore
+
+        store = KnowledgeStore(store_dir=tmp_path)
+        store.add_entry("cve", "CVE-2026-dup", {"title": "First", "tags": ["a"]})
+        store.add_entry("cve", "CVE-2026-dup", {"title": "Second", "tags": ["b"]})
+
+        rows = [row for row in store.list_entries("cve") if row["id"] == "CVE-2026-dup"]
+        assert len(rows) == 1
+        assert rows[0]["title"] == "Second"
+        assert rows[0]["tags"] == ["b"]
+        assert store.get_entry("cve", "CVE-2026-dup")["title"] == "Second"
+
+    def test_concurrent_store_instances_preserve_all_index_mutations(self, tmp_path):
+        import json
+
+        from vulnclaw.kb.store import KnowledgeStore
+
+        count = 8
+        stores = [KnowledgeStore(store_dir=tmp_path) for _ in range(count)]
+        barrier = threading.Barrier(count)
+
+        def add_entry(index: int) -> None:
+            barrier.wait()
+            stores[index].add_entry(
+                "tools",
+                f"concurrent-{index}",
+                {"title": f"Concurrent {index}", "tags": ["concurrency"]},
+            )
+
+        with ThreadPoolExecutor(max_workers=count) as executor:
+            list(executor.map(add_entry, range(count)))
+
+        persisted = json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))
+        ids = {row["id"] for row in persisted["tools"]}
+
+        assert ids == {f"concurrent-{index}" for index in range(count)}
+
+    def test_upsert_index_entry_is_idempotent(self, tmp_path):
+        from vulnclaw.kb.store import KnowledgeStore
+
+        store = KnowledgeStore(store_dir=tmp_path)
+        path = tmp_path / "experience" / "lesson-1.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "id": "lesson-1",
+            "lesson": "Use prepared statements",
+            "tags": {"tech": ["sqli"], "vuln_type": "sql-injection", "waf": "", "service": "http"},
+            "status": "pending",
+        }
+        path.write_text("{}", encoding="utf-8")
+
+        store.upsert_index_entry("experience", "lesson-1", path, data)
+        store.upsert_index_entry(
+            "experience",
+            "lesson-1",
+            path,
+            {**data, "status": "approved", "lesson": "Use bound parameters"},
+        )
+
+        rows = store.list_entries("experience")
+        assert len(rows) == 1
+        assert rows[0]["status"] == "approved"
+        assert "status:approved" in rows[0]["tags"]
+        assert "sqli" in rows[0]["tags"]
+        assert "bound parameters" in rows[0]["title"]
+
+    def test_rebuild_index_picks_up_experience_lesson_shape(self, tmp_path):
+        import json
+
+        from vulnclaw.kb.store import KnowledgeStore
+
+        experience_dir = tmp_path / "experience"
+        experience_dir.mkdir(parents=True)
+        payload = {
+            "id": "legacy-lesson",
+            "lesson": "Double URL-encode WAF bypass probes",
+            "context": "nginx + ModSecurity",
+            "tags": {"tech": ["waf"], "vuln_type": "", "waf": "modsecurity", "service": "http"},
+            "status": "approved",
+        }
+        (experience_dir / "legacy-lesson.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+        store = KnowledgeStore(store_dir=tmp_path)
+        stats = store.rebuild_index()
+        assert stats.get("experience") == 1
+        meta = store.list_entries("experience")[0]
+        assert meta["id"] == "legacy-lesson"
+        assert "WAF" in meta["title"] or "waf" in meta["title"].lower() or "Double" in meta["title"]
+        assert "modsecurity" in meta["tags"]
+        assert meta["status"] == "approved"
+
+    def test_delete_entry_removes_file_and_index_row(self, tmp_path):
+        from vulnclaw.kb.store import KnowledgeStore
+
+        store = KnowledgeStore(store_dir=tmp_path)
+        store.add_entry("tools", "nmap", {"title": "Nmap", "tags": ["scan"]})
+        assert store.delete_entry("tools", "nmap") is True
+        assert store.get_entry("tools", "nmap") is None
+        assert store.list_entries("tools") == []
+        assert not (tmp_path / "tools" / "nmap.json").exists()
 
 
 # ── retriever.py ─────────────────────────────────────────────────────

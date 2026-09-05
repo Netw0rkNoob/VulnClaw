@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 from vulnclaw.agent.constraint_policy import validate_phase_transition
-from vulnclaw.agent.context import PentestPhase
+from vulnclaw.agent.context import PentestPhase, TaskConstraints
 from vulnclaw.agent.ctf_mode import update_ctf_state
 from vulnclaw.agent.llm_client import call_llm_auto
 from vulnclaw.agent.reasoning_state import (
@@ -95,6 +95,7 @@ async def auto_pentest(
     on_step: Callable[[int, AgentResult], None] | None = None,
     *,
     stream_sink: Any = None,
+    task_constraints: TaskConstraints | None = None,
 ) -> list[AgentResult]:
     results: list[AgentResult] = []
 
@@ -108,6 +109,8 @@ async def auto_pentest(
 
     agent.context.add_user_message(user_input)
     agent._reset_runtime_state(user_input=user_input, detected_phase=detected_phase)
+    if task_constraints is not None:
+        agent.apply_task_constraints(task_constraints)
     _configure_reflexion(agent)
 
     for round_num in range(1, max_rounds + 1):
@@ -305,6 +308,7 @@ async def persistent_pentest(
     *,
     # stream_sink 由 core.py 透传入，传给 agent.auto_pentest() 实现流式输出
     stream_sink: Any = None,
+    task_constraints: TaskConstraints | None = None,
 ) -> list[PersistentCycleResult]:
     cycle_results: list[PersistentCycleResult] = []
 
@@ -314,6 +318,8 @@ async def persistent_pentest(
 
     agent.context.add_user_message(user_input)
     agent._reset_runtime_state(user_input=user_input)
+    if task_constraints is not None:
+        agent.apply_task_constraints(task_constraints)
 
     findings_at_cycle_start = len(agent.context.state.findings)
     cycle_num = 0
@@ -364,6 +370,7 @@ async def persistent_pentest(
                 on_step=_make_step_callback(cycle_num),
                 # 透传 stream_sink，使 persistent 模式也支持流式输出
                 stream_sink=stream_sink,
+                task_constraints=agent.context.state.task_constraints,
             )
             cycle_results_list = results if results else cycle_results_list
             if selected_engine == "solve":

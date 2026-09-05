@@ -145,6 +145,23 @@ class TestSkillLoader:
         skill = load_skill_by_name("pentest-flow")
         assert skill.get("references", []) == []
 
+    def test_hackerone_skill_and_reference_are_english(self):
+        """The HackerOne workflow should honor the English UI language."""
+        from vulnclaw.skills.loader import load_skill_by_name, load_skill_reference
+
+        skill = load_skill_by_name("hackerone")
+        reference = load_skill_reference("hackerone", "hackerone-report-and-scope.md")
+
+        assert skill is not None
+        assert reference is not None
+        assert not any("\u4e00" <= char <= "\u9fff" for char in skill["content"])
+        assert not any("\u4e00" <= char <= "\u9fff" for char in reference)
+        assert "Scope defined:" in skill["content"]
+        assert "Automatically begin recon" in skill["content"]
+        assert "Do not load or print the reference document during startup" in skill["content"]
+        assert "hackerone_scope" in skill["content"]
+        assert "Never treat `hackerone.com` as the recon/pentest target" in skill["content"]
+
     def test_load_skill_reference(self):
         """Test loading a specific reference file from a skill."""
         from vulnclaw.skills.loader import load_skill_reference

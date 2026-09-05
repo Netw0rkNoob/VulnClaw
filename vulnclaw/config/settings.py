@@ -393,6 +393,17 @@ def _overlay_env(config: VulnClawConfig) -> VulnClawConfig:
             config.safety.python_execute_max_output_chars = int(v)
     if v := os.environ.get("VULNCLAW_SAFETY_PYTHON_EXECUTE_AUDIT_ENABLED"):
         config.safety.python_execute_audit_enabled = v.lower() in ("1", "true", "yes", "on")
+    if v := os.environ.get("VULNCLAW_SAFETY_PERMISSION_MODE"):
+        candidate = v.strip().lower()
+        if candidate in ("ask", "auto_review", "full_access"):
+            config.safety.permission_mode = candidate
+    if v := os.environ.get("VULNCLAW_SAFETY_APPROVAL_TIMEOUT_SECONDS"):
+        with suppress(ValueError):
+            config.safety.approval_timeout_seconds = int(v)
+    if v := os.environ.get("VULNCLAW_SAFETY_TRUSTED_COMMANDS"):
+        config.safety.trusted_commands = [
+            item.strip() for item in v.split(",") if item.strip()
+        ]
 
     # ── Model-driven sub-agents ──────────────────────────────────────
     if v := os.environ.get("VULNCLAW_SUBAGENT_ENABLED"):

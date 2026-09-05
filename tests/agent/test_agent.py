@@ -1073,7 +1073,10 @@ class TestAgentCore:
             user_input="Use VulnClaw skill secknowledge-skill. test this target"
         )
         assert context is not None
-        assert "optional reference material" in context
+        # Explicit invocation injects the skill body as the active workflow,
+        # not the optional reference index used for keyword/fallback routing.
+        assert "Active skill (explicit invocation)" in context
+        assert "optional reference material only" not in context.lower()
         assert "secknowledge-skill" in context
 
     def test_build_openai_tools_includes_skill_ref(self):
@@ -1325,6 +1328,16 @@ class TestAgentCore:
         assert "example.com" in constraints.allowed_hosts
         assert "/admin" in constraints.allowed_paths
         assert constraints.strict_mode is True
+
+    def test_extract_task_constraints_parses_cli_style_host_and_path(self):
+        from vulnclaw.agent.input_analysis import extract_task_constraints
+
+        constraints = extract_task_constraints(
+            "Only test host app.example. Only test path /admin."
+        )
+
+        assert constraints.allowed_hosts == ["app.example"]
+        assert constraints.allowed_paths == ["/admin"]
 
     def test_extract_task_constraints_url_with_trailing_dot_in_sentence(self):
         """URL at end of sentence should not capture trailing period as part of host.

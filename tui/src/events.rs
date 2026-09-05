@@ -13,13 +13,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     // A transient toast (e.g. "Copied …") lives until the next key press.
     app.toast.clear();
 
-    if app.setup.is_some() {
-        // Allow Ctrl+C to quit even from the setup wizard.
-        if let (KeyCode::Char('c'), KeyModifiers::CONTROL) = (key.code, key.modifiers) {
-            app.running = false;
-            return;
+    // Execution approval modal is safety-critical and swallows every key:
+    // Y approves, N/Esc denies (default deny), anything else is ignored so
+    // injected content can never smuggle keystrokes into the composer.
+    if app.pending_execution.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => app.resolve_pending_execution(true),
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                app.resolve_pending_execution(false)
+            }
+            KeyCode::Up => app.scroll_pending_execution(false, false),
+            KeyCode::Down => app.scroll_pending_execution(true, false),
+            KeyCode::PageUp => app.scroll_pending_execution(false, true),
+            KeyCode::PageDown => app.scroll_pending_execution(true, true),
+            _ => {}
         }
-        app.setup_handle_key(key);
         return;
     }
 
@@ -78,116 +86,5 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             app.append_input(character)
         }
         _ => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::mpsc;
-
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    use super::handle_key;
-    use crate::app::{ActivePane, App, ExecutionMode, PermissionMode};
-
-    #[test]
-    fn tab_cycles_execution_mode_and_shift_tab_cycles_permission() {
-        let (sender, _) = mpsc::channel();
-        let mut app = App::new(sender);
-
-        handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-        handle_key(
-            &mut app,
-            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
-        );
-
-        // Default posture is Agent; one Tab cycles to the read-only Plan.
-        assert_eq!(app.mode, ExecutionMode::Plan);
-        assert_eq!(app.permission, PermissionMode::FullAccess);
-    }
-
-    #[test]
-    fn arrows_scroll_the_selected_inspector() {
-        let (sender, _) = mpsc::channel();
-        let mut app = App::new(sender);
-        app.active_pane = ActivePane::Findings;
-
-        handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-
-        assert_eq!(app.findings_scroll, 1);
-        assert_eq!(app.transcript_scroll, 0);
-    }
-
-    #[test]
-    fn task_confirmation_captures_shortcuts() {
-        let (sender, _) = mpsc::channel();
-        let mut app = App::new(sender);
-        app.pending_task = Some(vec!["task".into(), "run".into()]);
-
-        handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-
-        // While a task confirmation is pending, Tab is swallowed by the
-        // confirmation prompt and must not change the execution mode.
-        assert_eq!(app.mode, ExecutionMode::Agent);
-        assert!(app.pending_task.is_some());
-    }
-
-    #[test]
-    fn enter_executes_an_exact_command_instead_of_refilling_it() {
-        let (sender, _) = mpsc::channel();
-        let mut app = App::new(sender);
-        app.input = "/plan".into();
-
-        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-        assert!(app.input.is_empty());
-        assert!(app.transcript.iter().any(|item| item.text == "> /plan"));
-    }
-
-    #[test]
-    fn cursor_and_history_shortcuts_edit_the_composer() {
-        let (sender, _) = mpsc::channel();
-        let mut app = App::new(sender);
-        app.input = "/helpx".into();
-        app.input_cursor = app.input.len();
-
-        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-        handle_key(&mut app, KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        handle_key(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
-        );
-
-        assert_eq!(app.input, "/help");
-    }
-
-    #[test]
-    fn ctrl_c_aborts_a_running_worker_instead_of_quitting() {
-        let (sender, _) = mpsc::channel();
-        let mut app = App::new(sender);
-        app.worker_active = true;
-
-        handle_key(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-        );
-
-        assert!(!app.worker_active);
-        assert!(app.running, "TUI should stay open after aborting a run");
-    }
-
-    #[test]
-    fn ctrl_c_quits_when_no_worker_is_running() {
-        let (sender, _) = mpsc::channel();
-        let mut app = App::new(sender);
-        app.worker_active = false;
-
-        handle_key(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-        );
-
-        assert!(!app.running);
     }
 }

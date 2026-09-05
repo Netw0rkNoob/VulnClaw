@@ -1,7 +1,6 @@
 {
   "brand.name": "VulnClaw",
   "brand.tagline": "Attack surface mapping",
-
   "nav.scan": "Scan",
   "nav.findings": "Findings",
   "nav.reports": "Reports",
@@ -9,7 +8,6 @@
   "nav.history": "History",
   "nav.settings": "Settings",
   "nav.console": "Console",
-
   "quick.new_scan": "New scan",
   "quick.history": "History",
   "quick.reports": "Reports",
@@ -19,7 +17,6 @@
   "quick.refresh": "Refresh",
   "quick.home": "Home",
   "quick.stop_task": "Stop task",
-
   "view.scan.eyebrow": "SCAN",
   "view.scan.title": "New Scan",
   "view.scan.copy": "Enter a target and start.",
@@ -41,15 +38,12 @@
   "view.console.eyebrow": "CONTROL",
   "view.console.title": "Task Console",
   "view.console.copy": "Raw task controls.",
-
   "topbar.target": "Target: {target}",
   "topbar.no_target": "No target selected",
   "topbar.idle": "Idle",
-
   "shell.backend_unavailable": "Backend unavailable",
   "shell.backend_hint": "Start `vulnclaw web` and open the local address to load the live console.",
   "shell.retry": "Retry",
-
   "banner.active_scan": "Active scan",
   "banner.results": "Results",
   "banner.boundary": "Boundary",
@@ -58,7 +52,6 @@
   "banner.reports": "Reports",
   "banner.stop": "Stop",
   "banner.waiting": "Waiting for task events.",
-
   "dialog.confirmation_required": "Confirmation required",
   "dialog.cancel": "Cancel",
   "dialog.confirm": "Confirm",
@@ -67,7 +60,6 @@
   "dialog.close": "Close",
   "dialog.loading_preview": "Loading report preview...",
   "dialog.select_report_preview": "Select a report to preview.",
-
   "toast.task_started": "Task started",
   "toast.task_finished": "Task finished",
   "toast.task_finished_copy": "Review the risk results or generate a report.",
@@ -79,11 +71,9 @@
   "toast.task_stopped_copy": "Saved state and reports remain available.",
   "toast.stop_sent": "Stop request sent",
   "toast.stop_sent_copy": "VulnClaw is ending the current task.",
-
   "confirm.stop_scan_title": "Stop current scan?",
   "confirm.stop_scan_copy": "Stopping will end the current task, but saved state and reports will remain available.",
   "confirm.stop_task_label": "Stop task",
-
   "error.unreachable": "Unable to reach the VulnClaw backend API. Start `vulnclaw web` and reconnect.",
   "error.request_failed": "Request failed ({status}): {detail}",
   "error.request_failed_simple": "Request failed ({status}). Try again or open advanced diagnostics.",
@@ -96,7 +86,6 @@
   "error.invalid_task_params": "Invalid task parameters",
   "error.stop_failed": "Failed to stop task",
   "error.select_target_first": "Select a target first.",
-
   "status.idle": "Idle",
   "status.queued": "Queued",
   "status.restoring": "Restoring",
@@ -104,7 +93,6 @@
   "status.completed": "Completed",
   "status.failed": "Failed",
   "status.stopped": "Stopped",
-
   "phase.scope": "Scope",
   "phase.recon": "Recon",
   "phase.scan": "Scan",
@@ -117,7 +105,6 @@
   "phase.exploitation": "Exploitation",
   "phase.post_exploitation": "Post-exploitation",
   "phase.reporting": "Reporting",
-
   "command.recon": "Quick Recon",
   "command.run": "Standard Scan",
   "command.scan": "Deep Scan",
@@ -125,14 +112,12 @@
   "command.persistent": "Continuous Scan",
   "command.default": "Scan",
   "command.custom": "Custom Scan",
-
   "action.recon": "Recon",
   "action.run": "Standard Scan",
   "action.scan": "Scan",
   "action.exploit": "Verify",
   "action.persistent": "Continuous Scan",
   "action.post_exploitation": "Post-exploitation",
-
   "event.task_started": "Task started",
   "event.task_progress": "Task progress",
   "event.task_message": "Task message",
@@ -140,7 +125,6 @@
   "event.task_failed": "Task failed",
   "event.task_stopped": "Task stopped",
   "event.default": "Task event",
-
   "severity.critical": "Critical",
   "severity.high": "High",
   "severity.medium": "Medium",
@@ -148,24 +132,20 @@
   "severity.warning": "Warn",
   "severity.low": "Low",
   "severity.info": "Info",
-
   "finding_status.verified": "Verified",
   "finding_status.pending": "Pending",
   "finding_status.candidate": "Candidate",
   "finding_status.manual_review": "Manual review",
   "finding_status.dismissed": "Dismissed",
   "finding_status.false_positive": "False positive",
-
   "mcp_health.healthy": "Healthy",
   "mcp_health.degraded": "Degraded",
   "mcp_health.unavailable": "Offline",
   "mcp_health.unknown": "Unknown",
-
   "mcp_mode.local": "Local",
   "mcp_mode.placeholder": "Placeholder",
   "mcp_mode.sdk": "SDK",
   "mcp_mode.sse": "SSE",
-
   "resume.stop": "Can end current scan",
   "resume.verify": "Review verified findings first",
   "resume.exploit": "Verify authorization before validation",
@@ -173,7 +153,6 @@
   "resume.recon": "Add more recon",
   "resume.continue": "Resume from current state",
   "resume.none": "No resume guidance",
-
   "boundary.blocked_label": "blocked",
   "boundary.host_only": "Host only",
   "boundary.path_only": "Path only",
@@ -186,7 +165,6 @@
   "boundary.custom": "Custom boundary",
   "boundary.default_scope": "Default scope",
   "boundary.auto_scope": "Auto scope",
-
   "home.welcome": "Welcome to VulnClaw",
   "home.tagline": "Attack surface mapping",
   "home.scan": "Scan",
@@ -194,7 +172,7 @@
   "home.new_scan_task": "New Scan Task",
   "home.clear_target": "Clear target",
   "home.ip_domain": "IP/Domain",
-  "home.black_ip": "Black IP",
+  "home.black_ip": "Excluded hosts",
   "home.port": "Port",
   "home.custom_ports": "Custom ports",
   "home.resume_previous": "Resume previous state",
@@ -209,9 +187,8 @@
   "home.action_rules": "Action rules",
   "home.host": "Host",
   "home.path": "Path",
-  "home.block_host_field": "Block host",
-  "home.block_path_field": "Block path",
-
+  "home.block_host_field": "Excluded hosts",
+  "home.block_path_field": "Excluded path",
   "home.mode_quick": "Quick",
   "home.mode_quick_copy": "Light discovery.",
   "home.mode_standard": "Standard",
@@ -221,13 +198,11 @@
   "home.mode_label": "Mode",
   "home.mode_loop": "Loop",
   "home.mode_loop_copy": "Repeat scan.",
-
   "home.action_recon_copy": "Asset discovery and public signal collection.",
   "home.action_scan_copy": "Service and entry-point identification.",
   "home.action_exploit_copy": "Verification actions that need explicit approval.",
   "home.action_persistent_copy": "Multi-round continuous checking.",
   "home.action_post_exploit_copy": "Post-exploitation steps, usually blocked.",
-
   "home.running": "Running",
   "home.current_task": "Current task",
   "home.target": "Target",
@@ -243,18 +218,15 @@
   "home.hide_raw_events": "Hide raw events",
   "home.no_raw_events": "No raw task events yet.",
   "home.waiting_events": "Waiting for task events.",
-
   "home.scan_complete": "Scan complete",
   "home.scan_error": "Scan stopped by an error",
   "home.scan_stopped": "Scan stopped",
   "home.scanning": "Scanning {target}",
-
   "home.confirm_deep_title": "Start deep scan?",
   "home.confirm_scan_label": "Start scan",
   "home.confirm_lines": "Target: {target}\nMode: {mode}\nScope: {scope}\n{extra}",
   "home.confirm_extra_care": "This scan may run longer.",
   "home.confirm_not_set": "Not set",
-
   "home.inferred": "inferred",
   "home.host_scope": "host {host}",
   "home.host_scope_inferred": "host {host} (inferred)",
@@ -265,7 +237,6 @@
   "home.block_host_scope": "block host {host}",
   "home.block_path_scope": "block path {path}",
   "home.continuous_no_path": "Continuous mode does not support a path-only scope.",
-
   "risk.findings": "Findings",
   "risk.waiting": "Waiting",
   "risk.target": "Target",
@@ -308,7 +279,6 @@
   "risk.collapse": "Collapse",
   "risk.expand": "Expand",
   "risk.raw_collapsed": "Raw state collapsed.",
-
   "risk.action_generate_report": "Generate report",
   "risk.action_generate_report_copy": "Package the current assessment into Markdown or HTML.",
   "risk.action_review_scope": "Review scope",
@@ -322,7 +292,6 @@
   "risk.action_review_pending_copy": "Resolve pending evidence before generating the final report.",
   "risk.action_generate_default": "Generate report",
   "risk.action_generate_default_copy": "No next step is selected yet.",
-
   "risk.conclusion_verified": "Verified findings: {count}",
   "risk.conclusion_manual": "Manual review required: {count}",
   "risk.conclusion_pending": "Pending items: {count}",
@@ -332,7 +301,6 @@
   "risk.impact_needs_review": "Impact needs review.",
   "risk.uncategorized": "Uncategorized",
   "risk.default_finding": "Finding {index}",
-
   "reports.title": "Reports",
   "reports.files": "{count} files",
   "reports.selected": "Selected",
@@ -372,7 +340,6 @@
   "reports.markdown_report": "Markdown report",
   "reports.report_status": "{kind} - {size} - {date}",
   "reports.generated": "Generated: {path}",
-
   "boundary.title": "Boundary",
   "boundary.blocked": "{count} blocked",
   "boundary.target": "Target",
@@ -421,7 +388,6 @@
   "boundary.readiness_active_need_scope": "Add a host, port, or path boundary for precision.",
   "boundary.unknown": "Unknown",
   "boundary.unrecorded": "Unrecorded",
-
   "history.title": "History",
   "history.tasks_count": "{count} tasks",
   "history.tasks": "Tasks",
@@ -456,7 +422,6 @@
   "history.confirm_restore_title": "Restore snapshot",
   "history.confirm_restore_copy": "Restoring a snapshot rolls the current target state back to the selected point.",
   "history.restored": "Restored {target} to {snapshot}.",
-
   "settings.preferences": "Preferences",
   "settings.preferences_copy": "Local UI defaults",
   "settings.model": "Model",
@@ -471,7 +436,6 @@
   "settings.scripts_copy": "Local execution",
   "settings.diagnostics": "Diagnostics",
   "settings.diagnostics_copy": "MCP status",
-
   "settings.save_preferences": "Save preferences",
   "settings.save_boundary": "Save boundary",
   "settings.save_settings": "Save settings",
@@ -483,7 +447,6 @@
   "settings.no_api_key": "No API key",
   "settings.local_only": "Local only",
   "settings.local_only_note": "UI preferences are stored in this browser. Runtime settings are saved to the backend.",
-
   "settings.language": "Language",
   "settings.english": "English",
   "settings.chinese": "中文",
@@ -494,7 +457,6 @@
   "settings.continuous_scan": "Continuous Scan",
   "settings.default_report_format": "Default report format",
   "settings.show_raw_events_default": "Show raw event entry by default",
-
   "settings.provider": "Provider",
   "settings.provider_hint": "Backend provider id, for example openai.",
   "settings.model_field": "Model",
@@ -510,7 +472,6 @@
   "settings.loading_models": "Loading…",
   "settings.models_loaded": "Loaded {count} models",
   "settings.no_models": "No models returned. Save your API key, then refresh.",
-
   "settings.max_rounds": "Max rounds",
   "settings.rounds_per_cycle": "Rounds per cycle",
   "settings.max_cycles": "Max cycles",
@@ -529,7 +490,6 @@
   "settings.runnable": "Runnable",
   "settings.tools": "Tools",
   "settings.runtime_check": "Runtime check",
-
   "settings.default_port_only": "Default port only",
   "settings.default_port_hint": "Blank means set it per scan.",
   "settings.default_host_only": "Default host only",
@@ -538,11 +498,9 @@
   "settings.default_block_path": "Default block path",
   "settings.default_allow_actions": "Default allow actions",
   "settings.default_block_actions": "Default block actions",
-
   "settings.output_dir": "Output directory",
   "settings.reports_note": "Reports",
   "settings.reports_note_text": "If not overridden, reports are written under the VulnClaw sessions report directory.",
-
   "settings.enable_local_script": "Enable local script helper",
   "settings.record_script_audit": "Record local script audit",
   "settings.execution_guard": "Execution guard",
@@ -553,12 +511,10 @@
   "settings.trusted_mode": "Trusted local",
   "settings.trusted_mode_copy": "Full local capability for trusted authorized machines.",
   "settings.max_output_lines": "Max output lines",
-
   "settings.need_raw_inputs": "Need raw task inputs?",
   "settings.need_raw_inputs_text": "Open the task console for SSE events, raw command parameters, and boundary debugging.",
   "settings.open_task_console": "Open task console",
   "settings.no_mcp_diag": "No MCP diagnostics yet.",
-
   "console.title": "Task Console",
   "console.description": "Raw command inputs, SSE events, and advanced task parameters.",
   "console.command": "Command",
@@ -599,13 +555,15 @@
   "console.no_block_list": "No explicit block list",
   "console.backend_default": "Backend default",
   "console.continuous_only": "Continuous only",
-
   "error_boundary.kicker": "UI guard",
   "error_boundary.title": "VulnClaw UI hit a rendering error",
   "error_boundary.copy": "Saved targets, reports, and task history remain intact. Reload the UI, then continue from History or Reports.",
   "error_boundary.reload": "Reload UI",
   "error_boundary.technical": "Technical error",
-
   "report.dialog_title": "Report preview",
-  "report.dialog_kicker": "Report preview"
+  "report.dialog_kicker": "Report preview",
+  "shell.quick_actions": "Quick actions",
+  "home.scan_start_aria": "Start scan",
+  "home.excluded_hosts": "Excluded hosts",
+  "home.excluded_hosts_help": "Hosts or IPs to skip (blocklist). Separate with commas or new lines."
 }

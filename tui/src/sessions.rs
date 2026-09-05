@@ -4,22 +4,25 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::{App, ExecutionMode, PermissionMode, TranscriptItem, TranscriptKind};
+use crate::app::{App, ExecutionMode, TranscriptItem};
 use crate::protocol::Finding;
 
 #[derive(Deserialize, Serialize)]
 pub struct SessionState {
     mode: String,
-    #[serde(default)]
+    // Accepted from legacy session files but never persisted or applied. The
+    // Python backend is the sole authority for the execution permission mode.
+    #[serde(default, skip_serializing)]
     permission: String,
-    #[serde(default)]
+    // Read legacy files, but never write or restore business transcript/state.
+    #[serde(default, skip_serializing)]
     transcript: Vec<TranscriptItem>,
     #[serde(default)]
     history: Vec<String>,
     // Retained to open sessions written by the first VulnClaw TUI release.
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     messages: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     findings: Vec<Finding>,
 }
 
@@ -27,11 +30,11 @@ impl SessionState {
     pub fn from_app(app: &App) -> Self {
         Self {
             mode: app.mode.label().to_owned(),
-            permission: app.permission.label().to_owned(),
-            transcript: app.transcript.clone(),
+            permission: String::new(),
+            transcript: Vec::new(),
             history: app.command_history.clone(),
             messages: Vec::new(),
-            findings: app.findings.clone(),
+            findings: Vec::new(),
         }
     }
 
@@ -41,23 +44,14 @@ impl SessionState {
             "YOLO" => ExecutionMode::Yolo,
             _ => ExecutionMode::Plan,
         };
-        app.permission = match self.permission.as_str() {
-            "Ask" => PermissionMode::Ask,
-            "Full access" => PermissionMode::FullAccess,
-            _ => PermissionMode::AutoReview,
-        };
-        app.transcript = if self.transcript.is_empty() {
-            self.messages
-                .into_iter()
-                .map(|text| TranscriptItem {
-                    kind: TranscriptKind::System,
-                    text,
-                })
-                .collect()
-        } else {
-            self.transcript
-        };
-        app.findings = self.findings;
+        // Python is the only business-state source. Legacy transcript/findings
+        // are intentionally ignored; a backend state event hydrates them.
+        let _ = (
+            self.permission,
+            self.transcript,
+            self.messages,
+            self.findings,
+        );
         app.command_history = self.history;
         app.clear_composer();
         app.findings_scroll = 0;
@@ -100,35 +94,4 @@ fn expand_home(path: PathBuf) -> PathBuf {
             .join(rest);
     }
     path
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::mpsc;
-
-    use super::SessionState;
-    use crate::app::{App, ExecutionMode, PermissionMode};
-
-    #[test]
-    fn session_round_trip_preserves_composer_history_and_posture() {
-        let (sender, _) = mpsc::channel();
-        let mut source = App::new(sender);
-        source.insert_text("/help");
-        source.submit();
-        source.cycle_mode();
-        source.cycle_permission();
-        let state = SessionState::from_app(&source);
-
-        let (target_sender, _) = mpsc::channel();
-        let mut target = App::new(target_sender);
-        state.apply(&mut target);
-
-        assert_eq!(target.command_history, vec!["/help"]);
-        // Source started in Agent, cycled once to Plan — the round trip must
-        // restore that exact posture.
-        assert_eq!(target.mode, ExecutionMode::Plan);
-        assert_eq!(target.permission, PermissionMode::FullAccess);
-        assert!(target.input.is_empty());
-        assert!(target.transcript.iter().any(|item| item.text == "> /help"));
-    }
 }

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import re
@@ -30,6 +31,15 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
+from vulnclaw.cli.config_panel import (
+    mask_key_list as _mask_key_list,
+)
+from vulnclaw.cli.config_panel import (
+    mask_secret as _mask_secret,
+)
+from vulnclaw.cli.config_panel import (
+    split_csv_items as _split_csv_items,
+)
 from vulnclaw.config.schema import (
     BUILTIN_MCP_SERVERS,
     ENGINE_CHOICES,
@@ -466,7 +476,27 @@ def run_tui(
             file=sys.stderr,
         )
         sys.exit(1)
-    sys.exit(subprocess.call([str(binary)]))
+    state = initial_state or TuiState()
+    draft = build_task_draft(state)
+    bootstrap = {
+        "target": state.target.strip(),
+        "mode": state.mode,
+        "command": draft.command,
+        "only_host": draft.only_host,
+        "only_port": draft.only_port,
+        "only_path": draft.only_path,
+        "blocked_host": draft.blocked_host,
+        "blocked_path": draft.blocked_path,
+        "allow_actions": list(draft.allow_actions),
+        "block_actions": list(draft.block_actions),
+        "resume": draft.resume,
+    }
+    env = os.environ.copy()
+    env["VULNCLAW_PYTHON"] = sys.executable
+    env["VULNCLAW_TUI_BOOTSTRAP"] = json.dumps(
+        bootstrap, ensure_ascii=False, separators=(",", ":")
+    )
+    sys.exit(subprocess.call([str(binary)], env=env))
 
 
 def _find_tui_binary() -> Path | str | None:
@@ -845,6 +875,7 @@ def _build_slash_commands() -> dict[str, str]:
         "diag": _("tui.slash_diag"),
         "config": _("tui.slash_config"),
         "language": _("tui.slash_lang"),
+        "wizard": _("tui.slash_wizard"),
         "quit": _("tui.slash_quit"),
     }
 
@@ -861,6 +892,7 @@ def _build_repl_commands() -> dict[str, str]:
     return {
         "config": _("tui.slash_config"),
         "language": _("tui.slash_lang"),
+        "wizard": _("tui.slash_wizard"),
     }
 
 
@@ -1524,6 +1556,22 @@ def _cmd_language(session: dict[str, Any], args: str) -> None:
         _set_prompt_choice(session, _("tui.prompt_select_language"), choice_labels, _on_choice)
 
 
+@_register_handler("wizard")
+def _cmd_wizard(session: dict[str, Any], args: str) -> None:
+    """First-run setup: LLM, Chrome remote debugging, chrome-devtools MCP, Burp."""
+    from rich.console import Console
+
+    from vulnclaw.cli.wizard import run_setup_wizard
+
+    result = run_setup_wizard(console=Console())
+    if result.config is not None:
+        session["config"] = result.config
+    if result.completed:
+        session["_message"] = _("tui.wizard_complete")
+    else:
+        session["_message"] = _("tui.wizard_cancelled")
+
+
 def _apply_language_pt(session: dict[str, Any], lang: str) -> None:
     """Apply language switch (prompt_toolkit backend)."""
     session["config"].session.language = lang
@@ -2013,29 +2061,6 @@ def _config_confirm_ask(screen: Console, label: str, *, default: bool = False) -
         if value in ("n", "no"):
             return False
         screen.print(f"[{C_ERROR}]Enter y or n.[/]")
-
-
-def _split_csv_items(raw: str) -> list[str]:
-    """Split a comma/newline separated string into cleaned items."""
-    return [item.strip() for item in raw.replace("\n", ",").split(",") if item.strip()]
-
-
-def _mask_secret(value: str) -> str:
-    """Mask a secret so only a hint of it reaches the terminal."""
-    value = (value or "").strip()
-    if not value:
-        return "(not set)"
-    if len(value) <= 8:
-        return "…" + value[-2:]
-    return f"{value[:2]}…{value[-4:]}"
-
-
-def _mask_key_list(keys: list[str]) -> str:
-    """Summarise a list of API keys without printing any in the clear."""
-    usable = [k for k in keys if k and k.strip()]
-    if not usable:
-        return "(none)"
-    return f"{_mask_secret(usable[0])} ({len(usable)} key{'s' if len(usable) != 1 else ''})"
 
 
 def _prompt_text_value(screen: Console, label: str, current: str) -> str:
@@ -2569,7 +2594,197 @@ def _edit_mcp_config(screen: Console, config):
 
 
 def run_config_tui() -> None:
-    """Run the interactive config editor."""
+    """Run the interactive config editor: panel on a TTY, prompt chain otherwise."""
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        _run_config_panel()
+        return
+    _run_config_wizard()
+
+
+def _run_config_panel() -> None:
+    """Full-screen keyboard-navigable config panel."""
+    import threading
+
+    from prompt_toolkit import Application
+    from prompt_toolkit.application import run_in_terminal
+    from prompt_toolkit.formatted_text import ANSI
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import HSplit, Layout, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+
+    from vulnclaw.cli.config_panel import ConfigPanelModel
+    from vulnclaw.cli.config_panel_render import render_panel
+
+    screen = Console()
+    model = ConfigPanelModel(load_config())
+    outcome: dict[str, str] = {}
+    # Rows reserved for panel border, title, footer hint, and optional status lines.
+    _VIEWPORT_CHROME = 6
+
+    def _body() -> ANSI:
+        try:
+            term_rows = shutil.get_terminal_size().lines
+        except OSError:
+            term_rows = 24
+        model.set_viewport_height(max(3, term_rows - _VIEWPORT_CHROME))
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True, width=None, color_system="truecolor")
+        console.print(render_panel(model))
+        return ANSI(buf.getvalue().rstrip("\n"))
+
+    kb = KeyBindings()
+
+    @kb.add("up")
+    def _up(event: Any) -> None:
+        if model.dropdown_open:
+            model.select_option(-1)
+        elif not model.editing:
+            model.focus_prev()
+
+    @kb.add("down")
+    def _down(event: Any) -> None:
+        if model.dropdown_open:
+            model.select_option(1)
+        elif not model.editing:
+            model.focus_next()
+
+    @kb.add("tab")
+    def _tab(event: Any) -> None:
+        if not model.editing:
+            model.focus_next()
+
+    @kb.add("s-tab")
+    def _shift_tab(event: Any) -> None:
+        if not model.editing:
+            model.focus_prev()
+
+    @kb.add("left")
+    def _left(event: Any) -> None:
+        if not model.editing:
+            model.collapse()
+
+    @kb.add("right")
+    def _right(event: Any) -> None:
+        if not model.editing:
+            model.expand()
+
+    @kb.add("c-r")
+    def _reveal(event: Any) -> None:
+        model.toggle_reveal()
+
+    @kb.add("escape", eager=True)
+    def _escape(event: Any) -> None:
+        if model.dropdown_open:
+            model.cancel_option()
+            return
+        if model.editing:
+            model.cancel_edit()
+            return
+        outcome["result"] = "discarded"
+        event.app.exit()
+
+    @kb.add("c-c")
+    def _interrupt(event: Any) -> None:
+        outcome["result"] = "discarded"
+        event.app.exit()
+
+    def _save() -> None:
+        if not model.request_save():
+            return
+        save_config(model.draft)
+        outcome["result"] = "saved"
+        app.exit()
+
+    def _fetch() -> None:
+        if not model.can_fetch():
+            model.row_error = _("tui.config_panel.fetch_idle")
+            return
+        generation = model.begin_fetch()
+        base_url = model.draft.llm.base_url
+        api_key = model._usable_key()
+        loop = app.loop
+
+        def _worker() -> None:
+            try:
+                models = fetch_provider_models(base_url, api_key)
+                error = None
+            except Exception as exc:  # network/provider failure
+                models, error = [], str(exc)
+
+            def _apply() -> None:
+                model.apply_fetch_result(generation, models, error)
+                app.invalidate()
+
+            loop.call_soon_threadsafe(_apply)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    @kb.add("c-s")
+    def _ctrl_s(event: Any) -> None:
+        _save()
+
+    @kb.add("enter")
+    def _enter(event: Any) -> None:
+        if model.dropdown_open:
+            model.commit_option()
+            return
+        if model.editing:
+            model.commit_edit()
+            return
+        row = model.focused
+        if row.key == "action.save":
+            _save()
+        elif row.key == "action.fetch_models":
+            _fetch()
+        elif row.key == "action.add_server":
+            name = run_in_terminal(lambda: _read_server_name(screen))
+            model.add_server(name or "")
+        elif row.key.endswith(".action.delete"):
+            model.delete_server()
+        else:
+            model.activate()
+
+    @kb.add("space")
+    def _space(event: Any) -> None:
+        if model.editing:
+            model.set_edit_text(model.edit_text + " ")
+            return
+        model.activate()
+
+    @kb.add("backspace")
+    def _backspace(event: Any) -> None:
+        if model.editing:
+            model.set_edit_text(model.edit_text[:-1])
+
+    @kb.add("<any>")
+    def _typed(event: Any) -> None:
+        if model.editing and len(event.data) == 1 and event.data.isprintable():
+            model.set_edit_text(model.edit_text + event.data)
+
+    app = Application(
+        layout=Layout(HSplit([Window(FormattedTextControl(_body))])),
+        key_bindings=kb,
+        full_screen=True,
+    )
+    app.run()
+
+    if outcome.get("result") == "saved":
+        screen.print(
+            Panel(_("tui.config_panel.saved"), border_style=C_SUCCESS, box=box.ROUNDED)
+        )
+    else:
+        screen.print(
+            Panel(_("tui.config_panel.discarded"), border_style=C_WARNING, box=box.ROUNDED)
+        )
+
+
+def _read_server_name(screen: Console) -> str:
+    """Ask for a new MCP server name outside the full-screen app."""
+    return _read_config_prompt_raw("Server name", console=screen).strip()
+
+
+def _run_config_wizard() -> None:
+    """Run the interactive config editor (prompt-chain fallback)."""
     screen = Console()
     config = load_config()
 

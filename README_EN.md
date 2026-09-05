@@ -11,6 +11,7 @@
 [![PyPI](https://img.shields.io/badge/PyPI-v0.3.8-blueviolet)](https://pypi.org/project/vulnclaw/)
 [![codecov](https://codecov.io/gh/Netw0rkNoob/VulnClaw/branch/main/graph/badge.svg)](https://codecov.io/gh/Netw0rkNoob/VulnClaw)
 [![Security](https://img.shields.io/badge/Scope-Authorized_Only-red)](#-security-notice)
+[![Discord](https://img.shields.io/badge/Discord-Join_Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/q5nrZpe6S)
 [![AtomGitStars](https://atomgit.com/Unclecheng-li/VulnClaw/star/badge.svg)](https://atomgit.com/Unclecheng-li/VulnClaw)
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/1/2026-06-05/1d8h69mt3v89kkekg24gg">
@@ -23,6 +24,8 @@
 **This project is a standalone AI penetration testing Agent.**
 <br>
 Official Website: https://unclecheng-li.github.io/vulnclaw.com/
+<br>
+💬 **Community**: [Join our Discord](https://discord.gg/q5nrZpe6S)
 <br>
 
 Built on LLM Agent + MCP Toolchain + optional Skill reference material,
@@ -207,6 +210,7 @@ $ vulnclaw --help
    doctor        🏥  Check runtime environment
    tui           🖥️  Open the terminal UI workbench
    web           🌐 Launch local Web UI
+   code          🧬 Local source-code security scan (no network target)
 ```
 
 | Command | Description | Example |
@@ -226,6 +230,7 @@ $ vulnclaw --help
 | `vulnclaw plugins list` | List vulnerability detection plugins | `vulnclaw plugins list --stage discovery` |
 | `vulnclaw plugins info <id>` | View plugin metadata | `vulnclaw plugins info builtin.web.headers` |
 | `vulnclaw plugins run <id>` | Run plugin (analysis only) | `vulnclaw plugins run builtin.web.headers --input headers.json` |
+| `vulnclaw code scan <path>` | Local source-code security scan (L1 regex / L2 structural / L3 LLM optional) | `vulnclaw code scan ./src --format sarif` |
 
 ---
 
@@ -330,10 +335,25 @@ vulnclaw tui --target 192.168.1.100 --mode continuous
 Operate the full pentest workflow through a browser.
 
 ```bash
-pip install 'vulnclaw[web]'  # install Web dependencies
+git clone https://github.com/Netw0rkNoob/VulnClaw.git
+cd VulnClaw
+pip install -e '.[web]'       # install from a source checkout
+
+# First run: build the React frontend (Node.js 18+)
+cd frontend
+npm install
+npm run build
+cd ..
+
 vulnclaw web                  # launch (default 127.0.0.1:7788)
 vulnclaw web --port 8080      # custom port
 ```
+
+The published wheel does not contain the React build or its source files. Use
+the source-checkout installation above for the full Web UI. If you see the
+**Fallback Web Shell** (no full scan UI),
+`frontend/dist/index.html` is missing. Build as above, restart `vulnclaw web`,
+and hard-refresh. API endpoints such as `/api/health` still work while the SPA is unbuilt.
 
 > ⚠️ By default binds to localhost only. For remote access pass `--host 0.0.0.0 --allow-remote`.
 

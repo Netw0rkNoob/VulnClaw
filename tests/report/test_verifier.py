@@ -19,7 +19,9 @@ from vulnclaw.agent.context import VulnerabilityFinding
 from vulnclaw.report.verifier import (
     PoCGenerator,
     VerificationResult,
+    VerificationStatus,
     VerifierExecutor,
+    VulnerabilityVerifier,
 )
 
 ALL_TEMPLATE_TYPES = [
@@ -169,8 +171,50 @@ def test_guess_payload(vuln_type, expected):
         ("", -1, VerificationResult.TIMEOUT),
         ("", -2, VerificationResult.EXECUTION_ERROR),
         ("", -3, VerificationResult.EXECUTION_ERROR),
+        ("[REFUSED] approval missing", -4, VerificationResult.APPROVAL_REQUIRED),
         ("boom", 1, VerificationResult.FALSE_POSITIVE),
     ],
 )
 def test_parse_result(output, returncode, expected):
     assert VerifierExecutor.parse_result(output, returncode) == expected
+
+
+@pytest.mark.parametrize("install_deny_hook", [False, True])
+def test_unapproved_poc_is_skipped_not_rejected(install_deny_hook):
+    from vulnclaw.agent.exec_gate import get_execution_gate, reset_execution_gate
+
+    reset_execution_gate()
+    gate = get_execution_gate()
+    if install_deny_hook:
+        gate.install_sync_confirm_hook(lambda view: False)
+    verifier = VulnerabilityVerifier("http://example.test")
+    finding = VulnerabilityFinding(title="candidate", vuln_type="sql_injection")
+
+    verified = verifier.verify(finding)
+    summary = verifier.get_summary()
+
+    assert verified.status == VerificationStatus.SKIPPED
+    assert verified.result == VerificationResult.APPROVAL_REQUIRED
+    assert verified.poc_executed_at is None
+    assert verifier.rejected_findings == []
+    assert verifier.skipped_findings == [verified]
+    assert summary["total"] == 1
+    assert summary["verified"] == 0
+    assert summary["rejected"] == 0
+    assert summary["skipped"] == 1
+    assert summary["skipped_findings"][0]["result"] == "approval_required"
+    reset_execution_gate()
+
+
+def test_full_access_executes_poc_without_sync_hook():
+    from vulnclaw.agent.exec_gate import get_execution_gate, reset_execution_gate
+
+    reset_execution_gate()
+    gate = get_execution_gate()
+    gate.set_mode("full_access")
+
+    returncode, output = VerifierExecutor.execute_poc("print('FULL_ACCESS_POC')")
+
+    assert returncode == 0
+    assert "FULL_ACCESS_POC" in output
+    reset_execution_gate()

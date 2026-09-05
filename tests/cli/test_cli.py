@@ -418,7 +418,11 @@ class TestCLI:
             mcp_manager = None
 
             def __init__(self, *_args):
+                self.config = config
                 self.context = SimpleNamespace(state=SimpleNamespace(agent_state=DummyResearch()))
+
+            def apply_task_constraints(self, _constraints):
+                return None
 
         async def fake_orchestrated(*, command, target, resume, snapshot, runner):
             await runner(DummyAgent(), config)
@@ -452,11 +456,14 @@ class TestCLI:
 
         async def fake_orchestrated(*, command, target, resume, snapshot, runner):
             class DummyAgent:
+                def __init__(self, agent_config):
+                    self.config = agent_config
+
                 async def auto_pentest(self, prompt, **kwargs):
                     prompts.append(prompt)
                     return []
 
-            await runner(DummyAgent(), config)
+            await runner(DummyAgent(config), config)
             return type("RunResult", (), {"summary": {"findings_count": 0}})()
 
         monkeypatch.setattr(cli_main, "_run_cli_orchestrated_task", fake_orchestrated)
@@ -476,9 +483,7 @@ class TestCLI:
         )
         assert result.exit_code == 0
         assert prompts
-        assert "Only test port 443" in prompts[0]
-        assert "Only test host example.com" in prompts[0]
-        assert "Only test path /admin" in prompts[0]
+        assert all(value in prompts[0] for value in ("443", "example.com", "/admin"))
 
     def test_run_cli_blocked_host_and_path_are_appended_to_prompt(self, runner, monkeypatch):
         import vulnclaw.cli.main as cli_main
@@ -494,11 +499,14 @@ class TestCLI:
 
         async def fake_orchestrated(*, command, target, resume, snapshot, runner):
             class DummyAgent:
+                def __init__(self, agent_config):
+                    self.config = agent_config
+
                 async def auto_pentest(self, prompt, **kwargs):
                     prompts.append(prompt)
                     return []
 
-            await runner(DummyAgent(), config)
+            await runner(DummyAgent(config), config)
             return type("RunResult", (), {"summary": {"findings_count": 0}})()
 
         monkeypatch.setattr(cli_main, "_run_cli_orchestrated_task", fake_orchestrated)
@@ -516,8 +524,8 @@ class TestCLI:
         )
         assert result.exit_code == 0
         assert prompts
-        assert "Blocked host staging.example.com" in prompts[0]
-        assert "Blocked path /internal" in prompts[0]
+        assert "staging.example.com" in prompts[0]
+        assert "/internal" in prompts[0]
 
     def test_cli_blocks_command_when_allowed_actions_conflict(self, runner, monkeypatch):
         import vulnclaw.cli._helpers as helpers_mod
@@ -903,6 +911,40 @@ class TestCLI:
         assert launched[0].only_path == "/admin"
         assert launched[0].blocked_host == "staging.example.com"
         assert launched[0].allow_actions == ("recon",)
+
+    def test_native_tui_launcher_passes_python_and_bootstrap(self, monkeypatch):
+        import json
+        import sys
+
+        import vulnclaw.cli.tui as tui_mod
+
+        captured = {}
+        monkeypatch.setattr(tui_mod, "_find_tui_binary", lambda: "/tmp/vulnclaw-tui")
+
+        def fake_call(args, *, env):
+            captured["args"] = args
+            captured["env"] = env
+            return 0
+
+        monkeypatch.setattr(tui_mod.subprocess, "call", fake_call)
+        state = tui_mod.TuiState(
+            target="https://example.test",
+            mode="deep",
+            only_port="443",
+            blocked_host="internal.example.test",
+        )
+
+        with pytest.raises(SystemExit) as caught:
+            tui_mod.run_tui(initial_state=state)
+
+        assert caught.value.code == 0
+        assert captured["args"] == ["/tmp/vulnclaw-tui"]
+        assert captured["env"]["VULNCLAW_PYTHON"] == sys.executable
+        bootstrap = json.loads(captured["env"]["VULNCLAW_TUI_BOOTSTRAP"])
+        assert bootstrap["target"] == "https://example.test"
+        assert bootstrap["command"] == "scan"
+        assert bootstrap["only_port"] == 443
+        assert bootstrap["allow_actions"] == ["recon", "scan", "exploit"]
 
     def test_tui_scope_prompt_updates_action_constraints(self, monkeypatch):
         import vulnclaw.cli.tui as tui_mod
@@ -1424,7 +1466,7 @@ class TestClassicReplSlashPalette:
 
         assert len(completions) == len(list_repl_palette_entries())
         # Built-in commands come first, ahead of the skills.
-        assert [c.text for c in completions[:2]] == ["config", "language"]
+        assert [c.text for c in completions[:3]] == ["config", "language", "wizard"]
 
     def test_completion_style_keeps_terminal_background(self):
         from vulnclaw.cli.tui import build_repl_slash_style

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vulnclaw"
-version = "0.3.8"
+version = "0.3.9"
 description = "AI-powered penetration testing CLI tool for cybersecurity professionals"
 readme = "README.md"
 license = { text = "MIT" }
@@ -32,9 +32,14 @@ dependencies = [
     "openai>=1.30.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
+    "jsonschema>=4.20.0",
     "pyyaml>=6.0",
     "toml>=0.10.0",
     "jinja2>=3.1.0",
+    # streamable-http（及 sse/stdio）MCP 传输依赖 mcp 客户端 SDK；
+    # VulnClaw 的 lifecycle/probe 使用 mcp 1.x 时代的符号 streamablehttp_client，
+    # mcp>=2.0 已将其改名为 streamable_http_client，故 pin 到 1.x 以保证 HTTP MCP 可用。
+    "mcp>=1.0,<2.0",
     # ── 沙箱依赖（python_execute 运行时）──────────────────────────────
     # LLM 在 python_execute 中可直接 import 以下库
     "beautifulsoup4>=4.12.0",
@@ -81,6 +86,7 @@ vulnclaw = "vulnclaw.cli.main:app"
 exclude = [
     "/frontend/node_modules",
     "/frontend/dist",
+    "/tui/target",
     "/.test-tmp",
     "/.pytest_cache",
     "/dist",
@@ -92,12 +98,17 @@ exclude = [
 [tool.hatch.build.targets.wheel]
 packages = ["vulnclaw"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"protocol/tui-v1.schema.json" = "vulnclaw/protocol/tui-v1.schema.json"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "/vulnclaw",
     "/frontend",
+    "/tui",
     "/tests",
     "/scripts",
+    "/protocol",
     "/README.md",
     "/README_EN.md",
     "/LICENSE",
@@ -107,6 +118,7 @@ include = [
 exclude = [
     "/frontend/node_modules",
     "/frontend/dist",
+    "/tui/target",
     "/.test-tmp",
     "/.pytest_cache",
     "/dist",

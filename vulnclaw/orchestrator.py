@@ -165,6 +165,7 @@ async def run_agent_task(
         checkpoint("run_complete")
         if run_context is not None:
             mark_run_status(run_context, "completed", exit_code=0)
+            _schedule_completed_run_distillation(agent, run_context, primary_target)
     except KeyboardInterrupt:
         status = "interrupted"
         exit_code = 130
@@ -201,6 +202,46 @@ async def run_agent_task(
         status=status,
         exit_code=exit_code,
     )
+
+
+def _schedule_completed_run_distillation(
+    agent: AgentCore,
+    run_context: RunContext,
+    target: Target,
+) -> None:
+    """Launch lesson distillation after persistence; never affect run completion."""
+
+    try:
+        from vulnclaw.agent.distiller import (
+            RunArtifacts,
+            configured_distiller,
+            schedule_run_distillation,
+        )
+        from vulnclaw.config.token_provider import has_llm_credentials
+        from vulnclaw.feedback import feedback_for_distillation
+        from vulnclaw.kb.experience import ExperienceStore
+
+        if not has_llm_credentials(agent.config.llm):
+            run_context.append_event("distillation_skipped", {"reason": "missing_llm_credentials"})
+            return
+        artifacts = RunArtifacts.from_session(
+            run_context.run_name,
+            agent.session_state,
+            target_key=target.target_id,
+            feedback=feedback_for_distillation(run_context.run_dir),
+        )
+        schedule_run_distillation(
+            artifacts=artifacts,
+            llm=configured_distiller(agent.config),
+            store=ExperienceStore(),
+            run_context=run_context,
+        )
+    except Exception as exc:
+        # Completion is already durable. Any learning failure is diagnostic-only.
+        try:
+            run_context.append_event("distillation_failed", {"error": type(exc).__name__})
+        except Exception:
+            pass
 
 
 def _resolve_run_context(

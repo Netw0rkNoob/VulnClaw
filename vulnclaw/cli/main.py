@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -65,7 +66,7 @@ from vulnclaw.cli._helpers import (
     err_console,
 )
 from vulnclaw.cli.manual import available_topics, render_manual
-from vulnclaw.config.schema import ENGINE_CHOICES, resolve_engine
+from vulnclaw.config.schema import ENGINE_CHOICES
 from vulnclaw.config.settings import (
     RUNS_DIR,
     apply_provider_preset,
@@ -86,6 +87,13 @@ from vulnclaw.target_state.store import (
     list_target_snapshots,
     load_target_state,
     rollback_target_state,
+)
+from vulnclaw.task_service import (
+    SCOPE_FIELDS,
+    TaskCreateRequest,
+    TaskOptions,
+    prepare_task,
+    run_task_action,
 )
 
 
@@ -226,7 +234,14 @@ def _read_repl_line(
     return pt_session.prompt(HTML(f"vulnclaw {body}<b>&gt; </b>"))
 
 
-def _run_repl_command(name: str, args: str, agent: Any, config: Any) -> Any:
+def _run_repl_command(
+    name: str,
+    args: str,
+    agent: Any,
+    config: Any,
+    *,
+    mcp_manager: Any = None,
+) -> Any:
     """Execute a built-in classic-REPL slash command.
 
     Returns the (possibly reloaded) config so the caller can keep using it.
@@ -247,6 +262,48 @@ def _run_repl_command(name: str, args: str, agent: Any, config: Any) -> Any:
 
     if name == "language":
         return _repl_switch_language(args, agent, config)
+
+    if name == "mode":
+        from vulnclaw.agent.exec_gate import get_execution_gate
+
+        gate = get_execution_gate(config)
+        target = args.strip().lower()
+        if not target:
+            console.print(
+                f"[bold]Permission mode[/]: {gate.mode} "
+                "(ask | auto_review | full_access)"
+            )
+            return config
+        try:
+            new_mode = gate.set_mode(target, source="cli")
+        except ValueError as exc:
+            console.print(f"[red]✗[/] {exc}")
+            return config
+        console.print(f"[green]✓[/] Permission mode set to [bold]{new_mode}[/]")
+        if new_mode == "auto_review":
+            console.print(
+                "[yellow]⚠ auto_review: trusted read-only commands run without "
+                "approval; everything else still prompts. Extend the table via "
+                "safety.trusted_commands.[/]"
+            )
+        elif new_mode == "full_access":
+            console.print(
+                "[yellow]⚠ full_access executes without per-request approval; "
+                "injected content can drive arbitrary execution.[/]"
+            )
+        return config
+
+    if name == "wizard":
+        from vulnclaw.cli.wizard import run_setup_wizard
+
+        result = run_setup_wizard(
+            console=console,
+            mcp_manager=mcp_manager,
+            agent=agent,
+        )
+        if result.config is not None:
+            return result.config
+        return load_config()
 
     return config
 
@@ -303,6 +360,12 @@ def _run_repl() -> None:
     # Initialize agent
     agent = AgentCore(config, mcp_manager)
 
+    # ExecutionGate: interactive REPL on a real TTY gets the trusted
+    # approval channel; dangerous-tool executions prompt y/N.
+    from vulnclaw.cli.approval_channel import install_cli_approval_channel
+
+    install_cli_approval_channel(config)
+
     console.print(_("cli.welcome"))
     console.print()
 
@@ -356,7 +419,13 @@ def _run_repl() -> None:
                     console.print(_("cli.target_set", target=current_target))
                     continue
                 if result.kind == "command":
-                    config = _run_repl_command(result.value, result.text, agent, config)
+                    config = _run_repl_command(
+                        result.value,
+                        result.text,
+                        agent,
+                        config,
+                        mcp_manager=mcp_manager,
+                    )
                     continue
                 # result.kind == "run": fall through with the rewritten prompt.
                 user_input = result.text
@@ -565,7 +634,21 @@ def _run_repl() -> None:
                 console.print(_("cli.auto_mode_exited"))
                 is_auto_mode = False
             elif auto_mode_active:
-                is_auto_mode = True
+                from vulnclaw.cli.user_intent import (
+                    continue_task_prompt,
+                    is_affirmative_continue,
+                    is_conversational_checkin,
+                )
+
+                # Sticky auto mode must not swallow readiness check-ins
+                # ("ready to begin?") — answer first via single-turn chat.
+                if is_conversational_checkin(user_input):
+                    is_auto_mode = False
+                elif is_affirmative_continue(user_input):
+                    is_auto_mode = True
+                    user_input = continue_task_prompt(last_auto_input, current_target)
+                else:
+                    is_auto_mode = True
             else:
                 # Route to agent and detect whether this should be an autonomous loop
                 is_auto_mode = _should_auto_pentest(user_input, current_target)
@@ -907,6 +990,10 @@ def _run_context_kwargs(
     return kwargs
 
 
+def _scope_option_kwargs(values: dict[str, Any]) -> dict[str, Any]:
+    return {field: values.get(field) for field in SCOPE_FIELDS}
+
+
 def _print_run_completion_summary(summary: dict[str, Any]) -> None:
     run_name = summary.get("run_name")
     run_dir = summary.get("run_dir")
@@ -940,6 +1027,11 @@ app = typer.Typer(
     no_args_is_help=False,
     add_completion=False,
 )
+
+# ── Code sub-command group (local source-code scanning) ──────────────
+from vulnclaw.cli.code import code_app  # noqa: E402
+
+app.add_typer(code_app, name="code")
 
 
 @app.command()
@@ -1099,18 +1191,40 @@ def run(
         + (" | [bold]non-interactive[/]" if non_interactive else "")
     )
 
-    task_prompt = prompt if prompt else (
-        f"Perform an authorized {scope} pentest against {target}. "
-        "This target is in scope and explicitly authorized."
+    run_context = _run_context_kwargs(
+        run_name=run_name,
+        resume_run_name=resume_run,
+        runs_dir=runs_dir,
+        additional_targets=additional_targets,
+        target_type=target_type,
+        mount=mount,
+        repair=repair,
+        force_fresh=force_fresh,
+        no_import=no_import,
     )
-    task_prompt = _append_cli_constraints_compat(
-        task_prompt, only_port, only_host, only_path, blocked_host, blocked_path
+    task_request = TaskCreateRequest(
+        command="run",
+        target=target,
+        prompt=prompt,
+        resume=resume,
+        snapshot_id=snapshot,
+        **run_context,
+        options=TaskOptions(
+            engine=engine,
+            scope=scope,
+            max_steps=profile.max_steps,
+            max_directions=profile.max_directions,
+            max_tool_rounds=profile.max_tool_rounds,
+            max_parallel=profile.max_parallel,
+            max_rounds=profile.max_rounds,
+            **_scope_option_kwargs(locals()),
+        ),
     )
-    task_prompt = _append_action_constraints(task_prompt, allow_actions, block_actions)
-    violation = validate_action_constraints("run", extract_task_constraints(task_prompt))
-    if violation is not None:
-        err_console.print(f"[!] {violation}")
-        raise typer.Exit(headless.EXIT_ERROR)
+    try:
+        task = prepare_task(task_request)
+    except ValueError as exc:
+        err_console.print(f"[!] {exc}")
+        raise typer.Exit(headless.EXIT_ERROR) from exc
 
     agent_state_holder: dict = {}
     classification_holder: dict = {}
@@ -1118,10 +1232,6 @@ def run(
 
     async def _run():
         async def runner(agent, shared_config):
-            # Apply the resolved fan-out / round caps so solve/team/auto_pentest
-            # (which read them off config.session) honour the scan-mode preset.
-            shared_config.session.solve_max_parallel = profile.max_parallel
-            shared_config.session.max_rounds = profile.max_rounds
             # In headless mode suppress streaming thinking so nothing blocks on a TTY.
             if stream:
                 from vulnclaw.cli._helpers import JsonlStreamSink
@@ -1146,52 +1256,19 @@ def run(
                     else TerminalStreamSink(console, shared_config.session.show_thinking)
                 )
                 on_event = None if non_interactive else _make_solve_event_printer(console)
-            selected_engine = resolve_engine(shared_config, engine)
-            # 默认走目标驱动 solve 引擎；engine=team 启用角色团队；engine=rounds 回退旧循环
-            if selected_engine == "solve":
-                result = await agent.solve(
-                    task_prompt,
-                    target=target,
-                    max_steps=profile.max_steps,
-                    max_tool_rounds=profile.max_tool_rounds,
-                    stream_sink=sink,
-                    on_event=on_event,
-                )
-            elif selected_engine == "team":
-                from vulnclaw.agent.team import run_team_pentest
-
-                def agent_factory():
-                    return agent.__class__(shared_config, getattr(agent, "mcp_manager", None))
-
-                result = await run_team_pentest(
-                    agent,
-                    user_input=task_prompt,
-                    target=target,
-                    agent_factory=agent_factory,
-                    max_steps=profile.max_steps,
-                    max_directions=profile.max_directions,
-                    max_tool_rounds=profile.max_tool_rounds,
-                    # team fan-out reads its own cap (not config), so pass the
-                    # resolved scan-mode profile explicitly or quick/--max-parallel
-                    # would be ignored and it would fan out to every ready step.
-                    max_parallel=profile.max_parallel,
-                    stream_sink=sink,
-                    on_event=on_event,
-                )
-            else:
-                result = await agent.auto_pentest(
-                    task_prompt,
-                    target=target,
-                    max_rounds=profile.max_rounds,
-                    on_step=lambda r, res: (
-                        _print_agent_output(
-                            f"[dim]Round {r}[/]: {res.output[:200]}...", shared_config
-                        )
-                        if res.output and not non_interactive
-                        else None
-                    ),
-                    stream_sink=sink,
-                )
+            result = await run_task_action(
+                agent,
+                task,
+                stream_sink=sink,
+                on_event=on_event,
+                on_step=lambda r, res: (
+                    _print_agent_output(
+                        f"[dim]Round {r}[/]: {res.output[:200]}...", shared_config
+                    )
+                    if res.output and not non_interactive
+                    else None
+                ),
+            )
             agent_state = getattr(
                 getattr(getattr(agent, "context", None), "state", None), "agent_state", None
             )
@@ -1208,17 +1285,7 @@ def run(
             resume=resume,
             snapshot=snapshot,
             runner=runner,
-            **_run_context_kwargs(
-                run_name=run_name,
-                resume_run_name=resume_run,
-                runs_dir=runs_dir,
-                additional_targets=additional_targets,
-                target_type=target_type,
-                mount=mount,
-                repair=repair,
-                force_fresh=force_fresh,
-                no_import=no_import,
-            ),
+            **run_context,
         )
         return result
 
@@ -1501,18 +1568,36 @@ def persistent(
         )
     )
 
-    task_prompt = prompt if prompt else (
-        f"Perform an authorized persistent penetration test against {target}. "
-        "This target is in scope and explicitly authorized."
+    run_context = _run_context_kwargs(
+        run_name=run_name,
+        resume_run_name=resume_run,
+        runs_dir=runs_dir,
+        additional_targets=additional_targets,
+        target_type=target_type,
+        mount=mount,
+        repair=repair,
+        force_fresh=force_fresh,
+        no_import=no_import,
     )
-    task_prompt = _append_cli_constraints_compat(
-        task_prompt, only_port, only_host, only_path, blocked_host, blocked_path
+    task_request = TaskCreateRequest(
+        command="persistent",
+        target=target,
+        prompt=prompt,
+        resume=resume,
+        snapshot_id=snapshot,
+        **run_context,
+        options=TaskOptions(
+            rounds_per_cycle=rounds_per_cycle,
+            max_cycles=max_cycles,
+            auto_report=auto_report,
+            **_scope_option_kwargs(locals()),
+        ),
     )
-    task_prompt = _append_action_constraints(task_prompt, allow_actions, block_actions)
-    violation = validate_action_constraints("persistent", extract_task_constraints(task_prompt))
-    if violation is not None:
-        err_console.print(f"[!] {violation}")
-        raise typer.Exit(1)
+    try:
+        task = prepare_task(task_request)
+    except ValueError as exc:
+        err_console.print(f"[!] {exc}")
+        raise typer.Exit(1) from exc
 
     # Track stats
     all_cycle_results: list[PersistentCycleResult] = []
@@ -1543,12 +1628,9 @@ def persistent(
     async def _run():
         async def runner(agent, _config):
             sink = TerminalStreamSink(console, _config.session.show_thinking)
-            return await agent.persistent_pentest(
-                user_input=task_prompt,
-                target=target,
-                rounds_per_cycle=rounds_per_cycle,
-                max_cycles=max_cycles,
-                auto_report=auto_report,
+            return await run_task_action(
+                agent,
+                task,
                 on_cycle_step=_on_cycle_step,
                 on_cycle_complete=_on_cycle_complete,
                 stream_sink=sink,
@@ -1560,17 +1642,7 @@ def persistent(
             resume=resume,
             snapshot=snapshot,
             runner=runner,
-            **_run_context_kwargs(
-                run_name=run_name,
-                resume_run_name=resume_run,
-                runs_dir=runs_dir,
-                additional_targets=additional_targets,
-                target_type=target_type,
-                mount=mount,
-                repair=repair,
-                force_fresh=force_fresh,
-                no_import=no_import,
-            ),
+            **run_context,
         )
 
     try:
@@ -1663,15 +1735,31 @@ def recon(
     ),
 ) -> None:
     """Run reconnaissance only."""
-    task_prompt = prompt if prompt else f"Perform authorized reconnaissance against {target} without exploitation."
-    task_prompt = _append_cli_constraints_compat(
-        task_prompt, only_port, only_host, only_path, blocked_host, blocked_path
+    run_context = _run_context_kwargs(
+        run_name=run_name,
+        resume_run_name=resume_run,
+        runs_dir=runs_dir,
+        additional_targets=additional_targets,
+        target_type=target_type,
+        mount=mount,
+        repair=repair,
+        force_fresh=force_fresh,
+        no_import=no_import,
     )
-    task_prompt = _append_action_constraints(task_prompt, allow_actions, block_actions)
-    violation = validate_action_constraints("recon", extract_task_constraints(task_prompt))
-    if violation is not None:
-        err_console.print(f"[!] {violation}")
-        raise typer.Exit(1)
+    task_request = TaskCreateRequest(
+        command="recon",
+        target=target,
+        prompt=prompt,
+        resume=resume,
+        snapshot_id=snapshot,
+        **run_context,
+        options=TaskOptions(**_scope_option_kwargs(locals())),
+    )
+    try:
+        task = prepare_task(task_request)
+    except ValueError as exc:
+        err_console.print(f"[!] {exc}")
+        raise typer.Exit(1) from exc
 
     async def _run():
         async def runner(agent, _config):
@@ -1682,7 +1770,7 @@ def recon(
             else:
                 sink = TerminalStreamSink(console, _config.session.show_thinking)
             # TerminalStreamSink 已实时流式显示，不重复 console.print
-            return await agent.chat(task_prompt, target=target, stream_sink=sink)
+            return await run_task_action(agent, task, stream_sink=sink)
 
         await _run_cli_orchestrated_task(
             command="recon",
@@ -1690,17 +1778,7 @@ def recon(
             resume=resume,
             snapshot=snapshot,
             runner=runner,
-            **_run_context_kwargs(
-                run_name=run_name,
-                resume_run_name=resume_run,
-                runs_dir=runs_dir,
-                additional_targets=additional_targets,
-                target_type=target_type,
-                mount=mount,
-                repair=repair,
-                force_fresh=force_fresh,
-                no_import=no_import,
-            ),
+            **run_context,
         )
 
     asyncio.run(_run())
@@ -1763,16 +1841,34 @@ def scan(
     ),
 ) -> None:
     """Run vulnerability scanning only."""
-    port_hint = f", focusing on ports {ports}" if ports else ""
-    task_prompt = prompt if prompt else f"Perform authorized vulnerability scanning against {target}{port_hint} without exploitation."
-    task_prompt = _append_cli_constraints_compat(
-        task_prompt, only_port, only_host, only_path, blocked_host, blocked_path
+    run_context = _run_context_kwargs(
+        run_name=run_name,
+        resume_run_name=resume_run,
+        runs_dir=runs_dir,
+        additional_targets=additional_targets,
+        target_type=target_type,
+        mount=mount,
+        repair=repair,
+        force_fresh=force_fresh,
+        no_import=no_import,
     )
-    task_prompt = _append_action_constraints(task_prompt, allow_actions, block_actions)
-    violation = validate_action_constraints("scan", extract_task_constraints(task_prompt))
-    if violation is not None:
-        err_console.print(f"[!] {violation}")
-        raise typer.Exit(1)
+    task_request = TaskCreateRequest(
+        command="scan",
+        target=target,
+        prompt=prompt,
+        resume=resume,
+        snapshot_id=snapshot,
+        **run_context,
+        options=TaskOptions(
+            ports=ports,
+            **_scope_option_kwargs(locals()),
+        ),
+    )
+    try:
+        task = prepare_task(task_request)
+    except ValueError as exc:
+        err_console.print(f"[!] {exc}")
+        raise typer.Exit(1) from exc
 
     async def _run():
         async def runner(agent, _config):
@@ -1783,7 +1879,7 @@ def scan(
             else:
                 sink = TerminalStreamSink(console, _config.session.show_thinking)
             # TerminalStreamSink 已实时流式显示，不重复 console.print
-            return await agent.chat(task_prompt, target=target, stream_sink=sink)
+            return await run_task_action(agent, task, stream_sink=sink)
 
         await _run_cli_orchestrated_task(
             command="scan",
@@ -1791,17 +1887,7 @@ def scan(
             resume=resume,
             snapshot=snapshot,
             runner=runner,
-            **_run_context_kwargs(
-                run_name=run_name,
-                resume_run_name=resume_run,
-                runs_dir=runs_dir,
-                additional_targets=additional_targets,
-                target_type=target_type,
-                mount=mount,
-                repair=repair,
-                force_fresh=force_fresh,
-                no_import=no_import,
-            ),
+            **run_context,
         )
 
     asyncio.run(_run())
@@ -2085,18 +2171,35 @@ def exploit(
     ),
 ) -> None:
     """Run exploitation only."""
-    cve_hint = f" using {cve}" if cve else ""
-    task_prompt = prompt if prompt else (
-        f"Attempt authorized exploitation against {target}{cve_hint} and verify with command: {cmd}"
+    run_context = _run_context_kwargs(
+        run_name=run_name,
+        resume_run_name=resume_run,
+        runs_dir=runs_dir,
+        additional_targets=additional_targets,
+        target_type=target_type,
+        mount=mount,
+        repair=repair,
+        force_fresh=force_fresh,
+        no_import=no_import,
     )
-    task_prompt = _append_cli_constraints_compat(
-        task_prompt, only_port, only_host, only_path, blocked_host, blocked_path
+    task_request = TaskCreateRequest(
+        command="exploit",
+        target=target,
+        prompt=prompt,
+        resume=resume,
+        snapshot_id=snapshot,
+        **run_context,
+        options=TaskOptions(
+            cve=cve,
+            cmd=cmd,
+            **_scope_option_kwargs(locals()),
+        ),
     )
-    task_prompt = _append_action_constraints(task_prompt, allow_actions, block_actions)
-    violation = validate_action_constraints("exploit", extract_task_constraints(task_prompt))
-    if violation is not None:
-        err_console.print(f"[!] {violation}")
-        raise typer.Exit(1)
+    try:
+        task = prepare_task(task_request)
+    except ValueError as exc:
+        err_console.print(f"[!] {exc}")
+        raise typer.Exit(1) from exc
 
     async def _run():
         async def runner(agent, _config):
@@ -2107,7 +2210,7 @@ def exploit(
             else:
                 sink = TerminalStreamSink(console, _config.session.show_thinking)
             # TerminalStreamSink 已实时流式显示，不重复 console.print
-            return await agent.chat(task_prompt, target=target, stream_sink=sink)
+            return await run_task_action(agent, task, stream_sink=sink)
 
         await _run_cli_orchestrated_task(
             command="exploit",
@@ -2115,17 +2218,7 @@ def exploit(
             resume=resume,
             snapshot=snapshot,
             runner=runner,
-            **_run_context_kwargs(
-                run_name=run_name,
-                resume_run_name=resume_run,
-                runs_dir=runs_dir,
-                additional_targets=additional_targets,
-                target_type=target_type,
-                mount=mount,
-                repair=repair,
-                force_fresh=force_fresh,
-                no_import=no_import,
-            ),
+            **run_context,
         )
 
     asyncio.run(_run())
@@ -2571,6 +2664,9 @@ def doctor() -> None:
 kb_app = typer.Typer(help="Security knowledge base commands")
 app.add_typer(kb_app, name="kb")
 
+experience_app = typer.Typer(help="Review distilled cross-session experience lessons")
+app.add_typer(experience_app, name="experience")
+
 target_state_app = typer.Typer(help="Manage target history state")
 app.add_typer(target_state_app, name="target-state")
 
@@ -2805,6 +2901,245 @@ def kb_status() -> None:
     )
 
 
+@app.command("learn")
+def learn(
+    run_name: str = typer.Argument(..., help="Completed run name to distill into pending lessons"),
+    runs_dir: Optional[str] = typer.Option(None, "--runs-dir", help="Run-directory root"),
+) -> None:
+    """Distill an existing run on demand (for reruns and backfill)."""
+
+    from vulnclaw.agent.context import SessionState
+    from vulnclaw.agent.distiller import (
+        RunArtifacts,
+        configured_distiller,
+        persist_distilled_lessons,
+    )
+    from vulnclaw.feedback import feedback_for_distillation
+    from vulnclaw.kb.experience import ExperienceStore
+    from vulnclaw.run_context import RunContextError, load_run_context
+
+    config = load_config()
+    if not has_llm_credentials(config.llm):
+        err_console.print("[!] Configure LLM credentials first (api_key or auth_mode).")
+        raise typer.Exit(1)
+    try:
+        run_context = load_run_context(run_name, runs_dir=runs_dir, config=config)
+        state_data = json.loads(run_context.state_path().read_text(encoding="utf-8"))
+        session = SessionState.model_validate(state_data)
+        target = run_context.target_manifest()
+        artifacts = RunArtifacts.from_session(
+            run_context.run_name,
+            session,
+            target_key=str(target.get("target_id") or ""),
+            feedback=feedback_for_distillation(run_context.run_dir),
+        )
+        lessons = persist_distilled_lessons(
+            artifacts,
+            configured_distiller(config),
+            ExperienceStore(),
+        )
+        run_context.append_event("distillation_completed", {"lessons": len(lessons), "manual": True})
+    except (OSError, ValueError, json.JSONDecodeError, RunContextError) as exc:
+        err_console.print(f"[!] Could not distill run {run_name}: {exc}")
+        raise typer.Exit(1) from exc
+    except Exception as exc:
+        # Explicit backfill exposes a concise error, while preserving a run-local audit event.
+        try:
+            run_context.append_event("distillation_failed", {"error": type(exc).__name__, "manual": True})
+        except Exception:
+            pass
+        err_console.print(f"[!] Distillation failed: {type(exc).__name__}")
+        raise typer.Exit(1) from exc
+
+    console.print(f"[+] Distilled {len(lessons)} pending lesson(s) from run {run_context.run_name}.")
+
+
+@app.command("feedback")
+def feedback(
+    run: str = typer.Argument(..., help="Completed run name"),
+    rating: int = typer.Option(
+        ..., "--rating", "-r", help="Operator rating from 1 (poor) to 5 (excellent)"
+    ),
+    notes: str = typer.Option(..., "--notes", "-n", help="Operator notes for lesson distillation"),
+    runs_dir: Optional[str] = typer.Option(None, "--runs-dir", help="Run-directory root"),
+) -> None:
+    """Attach or update an operator assessment for a completed run."""
+
+    from vulnclaw.feedback import FeedbackError, save_feedback
+    from vulnclaw.run_context import RunContextError, load_run_context
+
+    try:
+        run_context = load_run_context(run, runs_dir=runs_dir, config=load_config())
+    except (RunContextError, ValueError) as exc:
+        err_console.print(f"[!] Unable to load run '{run}': {exc}")
+        raise typer.Exit(1) from exc
+
+    status = str(run_context.manifest.get("status") or "")
+    if status not in {"completed", "interrupted", "failed"}:
+        err_console.print(f"[!] Run '{run}' is not finished (status: {status or 'unknown'}).")
+        raise typer.Exit(1)
+    if not notes.strip():
+        err_console.print("[!] Feedback notes must not be empty.")
+        raise typer.Exit(1)
+
+    try:
+        saved = save_feedback(run_context.run_dir, rating=rating, notes=notes)
+        # Notes can contain sensitive operational detail; only record the rating.
+        run_context.append_event("feedback_updated", {"rating": saved.rating})
+    except FeedbackError as exc:
+        err_console.print(f"[!] Invalid feedback: {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print(f"[+] Feedback saved for {run}: rating={saved.rating}/5")
+
+
+def _print_cli_manual(topic: Optional[str], output_format: str) -> None:
+    """Print the packaged CLI manual, normalizing user-facing errors."""
+    try:
+        console.out(render_manual(output_format, topic), end="")
+    except ValueError as exc:
+        err_console.print(f"[!] {exc}")
+        err_console.print(f"    Available topics: {', '.join(available_topics())}")
+        raise typer.Exit(1) from exc
+
+
+
+
+def _experience_store():
+    """Create the human-gated lesson store only for an experience command."""
+    from vulnclaw.kb.experience import ExperienceStore
+
+    return ExperienceStore()
+
+
+def _experience_not_found(lesson_id: str) -> None:
+    """Emit a safe, consistent failure for unknown or invalid lesson IDs."""
+    err_console.print(Text(f"[!] Lesson not found: {lesson_id}"))
+    raise typer.Exit(1)
+
+
+@experience_app.command("list")
+@experience_app.command("review")
+def experience_list() -> None:
+    """List lessons awaiting human review."""
+    from rich.table import Table
+
+    from vulnclaw.kb.experience import LessonStatus
+
+    lessons = _experience_store().list_by_status(LessonStatus.PENDING)
+    if not lessons:
+        console.print("No pending experience lessons.")
+        return
+
+    table = Table(title="Pending Experience Lessons", show_lines=False)
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Scope")
+    table.add_column("Signal")
+    table.add_column("Confidence", justify="right")
+    table.add_column("Context")
+    for item in lessons:
+        table.add_row(
+            Text(item.id),
+            Text(item.scope.value),
+            Text(item.signal.value),
+            f"{item.confidence:.2f}",
+            Text(item.context),
+        )
+    console.print(table)
+
+
+@experience_app.command("show")
+def experience_show(lesson_id: str = typer.Argument(..., help="Lesson id")) -> None:
+    """Show full lesson text and evidence provenance."""
+    item = _experience_store().get(lesson_id)
+    if item is None:
+        _experience_not_found(lesson_id)
+
+    evidence = item.evidence_refs
+    tags = item.tags
+    source_runs = ", ".join(item.source_runs) or "-"
+    details = Text()
+
+    def add_line(label: str, value: str) -> None:
+        details.append(f"{label}: ", style="bold")
+        details.append(value)
+        details.append("\n")
+
+    add_line("ID", item.id)
+    add_line("Status", item.status.value)
+    add_line("Scope", item.scope.value)
+    add_line("Signal", item.signal.value)
+    add_line("Confidence", f"{item.confidence:.2f}")
+    add_line(
+        "Tags",
+        f"tech={', '.join(tags.tech) or '-'}, vuln_type={tags.vuln_type or '-'}, "
+        f"waf={tags.waf or '-'}, service={tags.service or '-'}",
+    )
+    add_line("Target key", item.target_key or "-")
+    add_line("Context", item.context)
+    add_line("Lesson", item.lesson)
+    add_line(
+        "Evidence",
+        f"run_id={evidence.run_id}, finding_id={evidence.finding_id or '-'}, "
+        f"path={evidence.path or '-'}",
+    )
+    add_line("Source runs", source_runs)
+    details.append("Created: ", style="bold")
+    details.append(item.created_at.isoformat())
+    console.print(
+        Panel(
+            details,
+            title="Experience Lesson",
+            border_style="cyan",
+        )
+    )
+
+
+def _experience_set_status(lesson_id: str, status: str) -> None:
+    """Apply one human review decision and report its durable result."""
+    store = _experience_store()
+    try:
+        item = store.approve(lesson_id) if status == "approved" else store.reject(lesson_id)
+    except ValueError:
+        _experience_not_found(lesson_id)
+    if item is None:
+        _experience_not_found(lesson_id)
+    console.print(f"[+] Lesson {item.id} marked {item.status.value}.")
+
+
+@experience_app.command("approve")
+def experience_approve(lesson_id: str = typer.Argument(..., help="Lesson id")) -> None:
+    """Approve a lesson so future matching runs may retrieve it."""
+    _experience_set_status(lesson_id, "approved")
+
+
+@experience_app.command("reject")
+def experience_reject(lesson_id: str = typer.Argument(..., help="Lesson id")) -> None:
+    """Reject a lesson so it cannot influence future runs."""
+    _experience_set_status(lesson_id, "rejected")
+
+
+@experience_app.command("edit")
+def experience_edit(
+    lesson_id: str = typer.Argument(..., help="Lesson id"),
+    context: Optional[str] = typer.Option(None, "--context", help="Replacement retrieval context"),
+    lesson_text: Optional[str] = typer.Option(
+        None, "--lesson", help="Replacement transferable instruction"
+    ),
+) -> None:
+    """Amend context and/or lesson text without changing provenance or status."""
+    if context is None and lesson_text is None:
+        raise typer.BadParameter("provide --context and/or --lesson")
+    try:
+        item = _experience_store().update(lesson_id, context=context, lesson=lesson_text)
+    except ValueError as exc:
+        err_console.print(Text(f"[!] Invalid lesson update: {exc}"))
+        raise typer.Exit(1) from None
+    if item is None:
+        _experience_not_found(lesson_id)
+    console.print(f"[+] Lesson {item.id} updated.")
+
+
 @target_state_app.command("list")
 def target_state_list(
     target: str = typer.Argument(..., help="Target host/IP/URL"),
@@ -2946,6 +3281,13 @@ def _should_auto_pentest(user_input: str, current_target: Optional[str]) -> bool
     - User asks for information gathering / recon / OSINT with a target
     - A target is present + multi-step task indicators
     """
+    from vulnclaw.cli.user_intent import is_conversational_checkin
+
+    # Readiness / meta questions (e.g. "ready to begin bug hunting?") get a
+    # spoken answer first — never jump straight into the solve tool loop.
+    if is_conversational_checkin(user_input):
+        return False
+
     input_lower = user_input.lower()
 
     # Explicit auto-mode triggers

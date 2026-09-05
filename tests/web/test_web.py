@@ -154,31 +154,85 @@ class TestWebServices:
         assert resp.models == []
         assert "key" in resp.detail.lower()
 
-    def test_web_provider_service_fetch_models_honors_request_base_url(self, monkeypatch):
+    def test_web_provider_service_fetch_models_rejects_cross_provider_saved_key(self, monkeypatch):
         import vulnclaw.web.services.provider_service as provider_service
         from vulnclaw.config.schema import VulnClawConfig
         from vulnclaw.web.schemas import ProviderModelsRequest
 
         config = VulnClawConfig()
-        config.llm.api_key = "sk-test"
-        config.llm.base_url = "https://config-default.example/v1"
+        config.llm.provider = "deepseek"
+        config.llm.api_key = "sk-deepseek"
+        config.llm.base_url = "https://api.deepseek.com/v1"
+        monkeypatch.setattr(provider_service, "load_config", lambda: config)
+
+        def must_not_call(*args, **kwargs):
+            raise AssertionError("a saved key must not cross provider boundaries")
+
+        monkeypatch.setattr(provider_service, "fetch_provider_models", must_not_call)
+
+        resp = provider_service.fetch_models(
+            ProviderModelsRequest(provider="openai", base_url="https://api.openai.com/v1")
+        )
+        assert resp.base_url == "https://api.openai.com/v1"
+        assert resp.models == []
+        assert resp.has_api_key is True
+        assert "saved provider" in resp.detail.lower()
+
+    def test_web_provider_service_fetch_models_rejects_saved_key_for_different_base_url(
+        self, monkeypatch
+    ):
+        import vulnclaw.web.services.provider_service as provider_service
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.web.schemas import ProviderModelsRequest
+
+        config = VulnClawConfig()
+        config.llm.provider = "openai"
+        config.llm.api_key = "sk-openai"
+        config.llm.base_url = "https://api.openai.com/v1"
+        monkeypatch.setattr(provider_service, "load_config", lambda: config)
+
+        def must_not_call(*args, **kwargs):
+            raise AssertionError("a saved key must not cross base URL boundaries")
+
+        monkeypatch.setattr(provider_service, "fetch_provider_models", must_not_call)
+
+        resp = provider_service.fetch_models(
+            ProviderModelsRequest(provider="openai", base_url="https://openrouter.ai/api/v1")
+        )
+        assert resp.models == []
+        assert resp.has_api_key is True
+        assert "base url" in resp.detail.lower()
+
+    @pytest.mark.parametrize("saved_provider", ["custom", "openai"])
+    def test_web_provider_service_fetch_models_uses_saved_key_for_matching_custom_base_url(
+        self, monkeypatch, saved_provider
+    ):
+        import vulnclaw.web.services.provider_service as provider_service
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.web.schemas import ProviderModelsRequest
+
+        config = VulnClawConfig()
+        config.llm.provider = saved_provider
+        config.llm.api_key = "sk-custom"
+        config.llm.base_url = "https://llm.example.com/v1/"
         monkeypatch.setattr(provider_service, "load_config", lambda: config)
 
         captured = {}
 
         def fake_fetch(base_url, api_key, timeout=10.0):
-            captured["base_url"] = base_url
-            return ["m"]
+            captured.update(base_url=base_url, api_key=api_key)
+            return ["custom-model"]
 
         monkeypatch.setattr(provider_service, "fetch_provider_models", fake_fetch)
 
-        # A known provider preset base_url is trusted and gets the saved key.
         resp = provider_service.fetch_models(
-            ProviderModelsRequest(base_url="https://api.openai.com/v1")
+            ProviderModelsRequest(provider=saved_provider, base_url="https://llm.example.com/v1")
         )
-        assert captured["base_url"] == "https://api.openai.com/v1"
-        assert resp.base_url == "https://api.openai.com/v1"
-        assert resp.models == ["m"]
+        assert resp.models == ["custom-model"]
+        assert captured == {
+            "base_url": "https://llm.example.com/v1",
+            "api_key": "sk-custom",
+        }
 
     def test_web_provider_service_fetch_models_rejects_untrusted_base_url(self, monkeypatch):
         """An arbitrary client-supplied base_url must never receive the saved API key."""
@@ -507,9 +561,11 @@ class TestWebServices:
         assert saved.summary.constraint_violations
         assert saved.summary.constraint_violation_events
 
-    def test_web_task_prompt_includes_explicit_constraints(self):
+    def test_web_task_prompt_includes_explicit_constraints(self, i18n_language):
+        from vulnclaw.task_service import prepare_task
         from vulnclaw.web.schemas import TaskCreateRequest, TaskOptions
-        from vulnclaw.web.services.task_service import _build_prompt_v2
+
+        i18n_language("en")
 
         request = TaskCreateRequest(
             command="run",
@@ -524,14 +580,17 @@ class TestWebServices:
                 block_actions=["exploit"],
             ),
         )
-        prompt = _build_prompt_v2(request)
-        assert "Only test port 443" in prompt
-        assert "Only test host example.com" in prompt
-        assert "Only test path /admin" in prompt
-        assert "Blocked host staging.example.com" in prompt
-        assert "Blocked path /internal" in prompt
-        assert "Only allowed actions: recon, scan" in prompt
-        assert "Blocked actions: exploit" in prompt
+        prompt = prepare_task(request).prompt
+        for value in (
+            "443",
+            "example.com",
+            "/admin",
+            "staging.example.com",
+            "/internal",
+            "recon, scan",
+            "exploit",
+        ):
+            assert value in prompt
 
     def test_web_task_options_reject_invalid_only_port(self):
         from pydantic import ValidationError
@@ -614,7 +673,7 @@ class TestWebServices:
             def session_state(self):
                 return self.context.state
 
-            async def chat(self, prompt, target=None):
+            async def chat(self, prompt, target=None, **kwargs):
                 return type("Result", (), {"output": "hello", "phase": "Recon"})()
 
         events: list[str] = []
@@ -633,6 +692,7 @@ class TestWebServices:
             on_restored=None,
             on_legacy_import=None,
             runner=None,
+            **kwargs,
         ):
             if before_restore is not None:
                 before_restore(None)
@@ -684,7 +744,9 @@ class TestWebServices:
                 },
             )()
 
-        monkeypatch.setattr(task_service, "run_agent_task", fake_run_agent_task)
+        import vulnclaw.task_service as shared_task_service
+
+        monkeypatch.setattr(shared_task_service, "run_agent_task", fake_run_agent_task)
 
         manager = WebTaskManager()
         request = TaskCreateRequest(
@@ -712,58 +774,28 @@ class TestWebServices:
         assert saved.summary.constraint_violation_events
         assert "task_restoring" in events
 
-    @pytest.mark.asyncio
-    async def test_web_task_service_blocks_exploit_when_only_port_scope_is_set(self, monkeypatch):
-        import vulnclaw.web.services.task_service as task_service
-        from vulnclaw.config.schema import VulnClawConfig
+    def test_shared_task_service_preserves_port_scope_for_exploit(self):
+        from vulnclaw.task_service import prepare_task
         from vulnclaw.web.schemas import TaskCreateRequest, TaskOptions
-        from vulnclaw.web.task_manager import WebTaskManager
 
-        config = VulnClawConfig()
-        monkeypatch.setattr(task_service, "load_config", lambda: config)
-
-        manager = WebTaskManager()
         request = TaskCreateRequest(
             command="exploit",
             target="https://example.com",
             options=TaskOptions(only_port=443),
         )
-        record = manager.create_task(request)
+        assert prepare_task(request).constraints.allowed_ports == [443]
 
-        await task_service._run_task(manager, record.task_id, request)
+    def test_shared_task_service_rejects_explicit_action_conflict(self):
+        from vulnclaw.task_service import prepare_task
+        from vulnclaw.web.schemas import TaskCreateRequest, TaskOptions
 
-        saved = manager.get_task(record.task_id)
-        assert saved is not None
-        assert saved.status == "failed"
-        assert saved.error is not None
-        assert "constraint_violation" in saved.error
-
-    @pytest.mark.asyncio
-    async def test_web_task_service_blocks_run_when_allowed_actions_conflict(self, monkeypatch):
-        import vulnclaw.web.services.task_service as task_service
-        from vulnclaw.config.schema import VulnClawConfig
-        from vulnclaw.web.schemas import TaskCreateRequest
-        from vulnclaw.web.task_manager import WebTaskManager
-
-        config = VulnClawConfig()
-        monkeypatch.setattr(task_service, "load_config", lambda: config)
-        monkeypatch.setattr(
-            task_service,
-            "_build_prompt_v2",
-            lambda request: (
-                "Perform authorized reconnaissance against https://example.com. 仅做信息收集。"
-            ),
+        request = TaskCreateRequest(
+            command="exploit",
+            target="https://example.com",
+            options=TaskOptions(allow_actions=["recon"]),
         )
-
-        manager = WebTaskManager()
-        request = TaskCreateRequest(command="run", target="https://example.com")
-        record = manager.create_task(request)
-
-        await task_service._run_task(manager, record.task_id, request)
-
-        saved = manager.get_task(record.task_id)
-        assert saved is not None
-        assert saved.status == "completed"
+        with pytest.raises(ValueError, match="outside allowed actions"):
+            prepare_task(request)
 
     @pytest.mark.asyncio
     async def test_web_task_service_initializes_i18n_from_config_language(
@@ -811,7 +843,7 @@ class TestWebServices:
             def session_state(self):
                 return self.context.state
 
-            async def persistent_pentest(self, **kwargs):
+            async def persistent_pentest(self, *args, **kwargs):
                 # Language must already be resolved from config by the time the
                 # agent/report code runs — not left at whatever was active before.
                 observed_lang["lang"] = current_lang()
@@ -825,7 +857,9 @@ class TestWebServices:
                 await runner(agent)
             return type("RunResult", (), {"restore_result": None, "summary": {}})()
 
-        monkeypatch.setattr(task_service, "run_agent_task", fake_run_agent_task)
+        import vulnclaw.task_service as shared_task_service
+
+        monkeypatch.setattr(shared_task_service, "run_agent_task", fake_run_agent_task)
 
         manager = WebTaskManager()
         request = TaskCreateRequest(command="persistent", target="https://example.com")

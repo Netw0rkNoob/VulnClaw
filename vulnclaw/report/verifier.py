@@ -55,6 +55,7 @@ class VerificationResult(str, Enum):
     TIMEOUT = "timeout"  # 超时
     ERROR_403_404 = "error_403_404"  # 403/404 正常拒绝
     EXECUTION_ERROR = "execution_error"  # PoC 执行环境错误（如解释器缺失）
+    APPROVAL_REQUIRED = "approval_required"  # 未获执行审批，PoC 未运行
 
 
 @dataclass
@@ -442,6 +443,11 @@ class VerifierExecutor:
     def execute_poc(cls, poc_code: str, timeout: int = 30) -> tuple[int, str]:
         """执行 PoC 代码.
 
+        The generated PoC is arbitrary code: it only runs when a local
+        synchronous approval hook has been installed on the ExecutionGate
+        (interactive CLI) or when the operator explicitly opts in. Silent
+        auto-execution is refused.
+
         Args:
             poc_code: PoC Python 代码
             timeout: 超时秒数
@@ -449,6 +455,23 @@ class VerifierExecutor:
         Returns:
             (返回码, 输出内容)
         """
+        # ── ExecutionGate: generated PoC needs explicit local consent ────
+        from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate
+
+        gate = get_execution_gate()
+        if not gate.confirm_sync(
+            GateRequest(
+                kind="poc",
+                display=poc_code,
+                detail="generated PoC verification",
+            )
+        ):
+            return (
+                -4,
+                "[REFUSED] generated PoC execution requires per-request "
+                "operator approval, but approval was not granted.",
+            )
+
         # 写入临时文件
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -498,6 +521,8 @@ class VerifierExecutor:
         output_lower = output.lower()
 
         # 执行失败
+        if returncode == -4 or "[refused]" in output_lower:
+            return VerificationResult.APPROVAL_REQUIRED
         if returncode == -1:
             return VerificationResult.TIMEOUT
         if returncode in (-2, -3):
@@ -547,6 +572,7 @@ class VulnerabilityVerifier:
         self.baseline_len = baseline_len
         self.verified_findings: list[VerifiedFinding] = []
         self.rejected_findings: list[VerifiedFinding] = []
+        self.skipped_findings: list[VerifiedFinding] = []
 
     def verify(self, finding: VulnerabilityFinding) -> VerifiedFinding:
         """验证一个漏洞发现.
@@ -570,11 +596,12 @@ class VulnerabilityVerifier:
         # 执行 PoC
         returncode, output = VerifierExecutor.execute_poc(poc_code)
         vf.poc_output = output
-        vf.poc_executed_at = datetime.now().isoformat()
 
         # 解析结果
         result = VerifierExecutor.parse_result(output, returncode)
         vf.result = result
+        if result != VerificationResult.APPROVAL_REQUIRED:
+            vf.poc_executed_at = datetime.now().isoformat()
 
         # 根据结果判定状态
         if result in (
@@ -583,16 +610,15 @@ class VulnerabilityVerifier:
             VerificationResult.SECURITY_BYPASS,
         ):
             vf.status = VerificationStatus.VERIFIED
-            vf._build_verified_finding(output)
+            self.verified_findings.append(vf)
+            self._build_verified_finding(output)
+        elif result == VerificationResult.APPROVAL_REQUIRED:
+            vf.status = VerificationStatus.SKIPPED
+            self.skipped_findings.append(vf)
         else:
             vf.status = VerificationStatus.REJECTED
-            vf._build_rejected_finding(result, output)
-
-        # 分类存储
-        if vf.status == VerificationStatus.VERIFIED:
-            self.verified_findings.append(vf)
-        else:
             self.rejected_findings.append(vf)
+            self._build_rejected_finding(result, output)
 
         return vf
 
@@ -697,9 +723,14 @@ class VulnerabilityVerifier:
     def get_summary(self) -> dict[str, Any]:
         """获取验证摘要."""
         return {
-            "total": len(self.verified_findings) + len(self.rejected_findings),
+            "total": (
+                len(self.verified_findings)
+                + len(self.rejected_findings)
+                + len(self.skipped_findings)
+            ),
             "verified": len(self.verified_findings),
             "rejected": len(self.rejected_findings),
+            "skipped": len(self.skipped_findings),
             "target": self.target,
             "verified_findings": [
                 {
@@ -715,5 +746,12 @@ class VulnerabilityVerifier:
                     "reason": vf.rejection_reason,
                 }
                 for vf in self.rejected_findings
+            ],
+            "skipped_findings": [
+                {
+                    "title": vf.original_finding.title,
+                    "result": vf.result.value if vf.result else None,
+                }
+                for vf in self.skipped_findings
             ],
         }
