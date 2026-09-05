@@ -474,11 +474,13 @@ async def _run_cli_orchestrated_task(
     """Run a CLI task through the shared orchestrator helpers."""
 
     from vulnclaw.agent.core import AgentCore
+    from vulnclaw.cli.approval_channel import install_cli_approval_channel
     from vulnclaw.config.settings import load_config
     from vulnclaw.mcp.lifecycle import MCPLifecycleManager
     from vulnclaw.orchestrator import run_agent_task
 
     config = load_config()
+    install_cli_approval_channel(config)
     mcp_manager = MCPLifecycleManager(config)
     mcp_manager.start_enabled_servers()
     agent = AgentCore(config, mcp_manager)

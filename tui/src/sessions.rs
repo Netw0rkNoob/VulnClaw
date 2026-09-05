@@ -4,13 +4,15 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::{App, ExecutionMode, PermissionMode, TranscriptItem};
+use crate::app::{App, ExecutionMode, TranscriptItem};
 use crate::protocol::Finding;
 
 #[derive(Deserialize, Serialize)]
 pub struct SessionState {
     mode: String,
-    #[serde(default)]
+    // Accepted from legacy session files but never persisted or applied. The
+    // Python backend is the sole authority for the execution permission mode.
+    #[serde(default, skip_serializing)]
     permission: String,
     // Read legacy files, but never write or restore business transcript/state.
     #[serde(default, skip_serializing)]
@@ -28,7 +30,7 @@ impl SessionState {
     pub fn from_app(app: &App) -> Self {
         Self {
             mode: app.mode.label().to_owned(),
-            permission: app.permission.label().to_owned(),
+            permission: String::new(),
             transcript: Vec::new(),
             history: app.command_history.clone(),
             messages: Vec::new(),
@@ -42,14 +44,14 @@ impl SessionState {
             "YOLO" => ExecutionMode::Yolo,
             _ => ExecutionMode::Plan,
         };
-        app.permission = match self.permission.as_str() {
-            "Ask" => PermissionMode::Ask,
-            "Full access" => PermissionMode::FullAccess,
-            _ => PermissionMode::AutoReview,
-        };
         // Python is the only business-state source. Legacy transcript/findings
         // are intentionally ignored; a backend state event hydrates them.
-        let _ = (self.transcript, self.messages, self.findings);
+        let _ = (
+            self.permission,
+            self.transcript,
+            self.messages,
+            self.findings,
+        );
         app.command_history = self.history;
         app.clear_composer();
         app.findings_scroll = 0;

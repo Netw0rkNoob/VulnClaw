@@ -160,6 +160,7 @@ fn ready_event_hydrates_backend_capabilities() {
         harness.app.backend_control_operations,
         vec![
             "example.inspect",
+            "session.permission.set",
             "session.scope.reset",
             "session.scope.update"
         ]
@@ -317,9 +318,31 @@ fn mode_and_permission_cycles_are_independent() {
     app.cycle_permission();
 
     // Default posture is Agent; one Tab cycles to the read-only Plan.
+    // Permission now requires a connected backend (the server owns the
+    // authoritative policy), so offline cycling must keep the posture.
     assert_eq!(app.mode, ExecutionMode::Plan);
-    assert_eq!(app.permission, PermissionMode::FullAccess);
-    assert!(app.pending_task.is_none());
+    assert_eq!(app.permission, PermissionMode::Ask);
+}
+
+#[test]
+fn active_task_permission_change_waits_for_backend_confirmation() {
+    let mut harness = AppHarness::connected();
+    let (_, _) = start_task(&mut harness, "permission.test");
+    assert!(harness.app.worker_active);
+    assert_eq!(harness.app.permission, PermissionMode::Ask);
+
+    harness.app.cycle_permission();
+    assert_eq!(
+        harness.app.permission,
+        PermissionMode::Ask,
+        "the client must not update permission optimistically"
+    );
+    assert!(matches!(
+        harness.apply_next(),
+        vulnclaw_tui::protocol::BackendEvent::ControlResult { .. }
+    ));
+    assert_eq!(harness.app.permission, PermissionMode::AutoReview);
+    assert!(harness.app.worker_active);
 }
 
 #[test]

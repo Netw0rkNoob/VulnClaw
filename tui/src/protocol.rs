@@ -125,6 +125,9 @@ pub struct BackendCapabilities {
     pub control_operations: Vec<String>,
     pub cancellation: bool,
     pub authoritative_state: bool,
+    /// Authoritative permission policy from the backend (empty on old backends).
+    #[serde(default)]
+    pub permission_mode: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -203,6 +206,25 @@ pub enum BackendEvent {
     ApprovalRequired {
         task_id: String,
         question: String,
+        #[serde(default)]
+        request_hash: String,
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        cwd: String,
+        #[serde(default)]
+        detail: String,
+        #[serde(default)]
+        expires_at: String,
+        #[serde(default)]
+        expires_in_seconds: u64,
+        #[serde(default)]
+        risk: String,
+    },
+    ApprovalClosed {
+        task_id: String,
+        request_hash: String,
+        status: String,
     },
     TaskCompleted {
         request_id: String,

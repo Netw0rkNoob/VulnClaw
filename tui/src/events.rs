@@ -13,6 +13,24 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     // A transient toast (e.g. "Copied …") lives until the next key press.
     app.toast.clear();
 
+    // Execution approval modal is safety-critical and swallows every key:
+    // Y approves, N/Esc denies (default deny), anything else is ignored so
+    // injected content can never smuggle keystrokes into the composer.
+    if app.pending_execution.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => app.resolve_pending_execution(true),
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                app.resolve_pending_execution(false)
+            }
+            KeyCode::Up => app.scroll_pending_execution(false, false),
+            KeyCode::Down => app.scroll_pending_execution(true, false),
+            KeyCode::PageUp => app.scroll_pending_execution(false, true),
+            KeyCode::PageDown => app.scroll_pending_execution(true, true),
+            _ => {}
+        }
+        return;
+    }
+
     if app.pending_task.is_some() {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => app.confirm_task(),

@@ -78,6 +78,9 @@ def protocol_validator() -> Draft202012Validator:
 
 @pytest.mark.asyncio
 async def test_initialize_and_two_tasks_share_one_session_backend_pid() -> None:
+    from vulnclaw.agent.exec_gate import reset_execution_gate
+
+    reset_execution_gate()
     stream = io.StringIO()
     runtime = FakeRuntime()
 
@@ -130,7 +133,10 @@ async def test_initialize_and_two_tasks_share_one_session_backend_pid() -> None:
     ready = next(event for event in emitted if event["type"] == "ready")
     completed = [event for event in emitted if event["type"] == "task_completed"]
     assert ready["backend"]["pid"] == os.getpid()
+    assert ready["capabilities"]["permission_mode"] == "ask"
     assert ready["capabilities"]["control_operations"] == [
+        "execution.approval.resolve",
+        "session.permission.set",
         "session.scope.reset",
         "session.scope.update",
     ]
@@ -433,3 +439,97 @@ def test_python_rejects_command_outside_allowed_actions() -> None:
                 options=TaskOptions(allow_actions=["recon", "scan"]),
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_permission_set_updates_gate_policy() -> None:
+    from vulnclaw.agent.exec_gate import get_execution_gate, reset_execution_gate
+
+    reset_execution_gate()
+    stream = io.StringIO()
+    session = BackendSession(JsonlWriter(stream), runtime_factory=FakeRuntime)
+    await session.handle(request("initialize", "r-init"))
+
+    await session.handle(
+        request(
+            "control",
+            "r-perm",
+            payload={
+                "operation": "session.permission.set",
+                "arguments": {"mode": "auto_review"},
+            },
+        )
+    )
+    result = events(stream)[-1]
+    assert result["result"]["mode"] == "auto_review"
+    assert get_execution_gate().mode == "auto_review"
+
+    # De-escalation back to ask works while idle too.
+    await session.handle(
+        request(
+            "control",
+            "r-perm2",
+            payload={"operation": "session.permission.set", "arguments": {"mode": "ask"}},
+        )
+    )
+    reset_execution_gate()
+
+
+@pytest.mark.asyncio
+async def test_permission_set_allows_all_transitions_while_task_active() -> None:
+    from vulnclaw.agent.exec_gate import get_execution_gate, reset_execution_gate
+
+    reset_execution_gate()
+    stream = io.StringIO()
+    session = BackendSession(JsonlWriter(stream), runtime_factory=FakeRuntime)
+    await session.handle(request("initialize", "r-init"))
+    blocker = asyncio.Event()
+    session.active_task = asyncio.create_task(blocker.wait())
+    session.active_task_id = "task-active"
+
+    try:
+        # Covers ask→full, full→auto, auto→ask, ask→auto,
+        # auto→full, and full→ask while the same task remains active.
+        modes = ["full_access", "auto_review", "ask", "auto_review", "full_access", "ask"]
+        for index, mode in enumerate(modes):
+            await session.handle(
+                request(
+                    "control",
+                    f"r-active-{index}",
+                    payload={
+                        "operation": "session.permission.set",
+                        "arguments": {"mode": mode},
+                    },
+                )
+            )
+            result = events(stream)[-1]
+            assert result["type"] == "control_result"
+            assert result["result"]["mode"] == mode
+            assert get_execution_gate().mode == mode
+            assert session.active_task.done() is False
+    finally:
+        session.active_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await session.active_task
+        session.active_task = None
+        session.active_task_id = None
+        reset_execution_gate()
+
+
+@pytest.mark.asyncio
+async def test_permission_set_rejects_unknown_mode() -> None:
+    session = BackendSession(JsonlWriter(io.StringIO()), runtime_factory=FakeRuntime)
+    await session.handle(request("initialize", "r-init"))
+
+    with pytest.raises(ProtocolError) as caught:
+        await session.handle(
+            request(
+                "control",
+                "r-perm-bad",
+                payload={
+                    "operation": "session.permission.set",
+                    "arguments": {"mode": "yolo"},
+                },
+            )
+        )
+    assert caught.value.code == "invalid_control"

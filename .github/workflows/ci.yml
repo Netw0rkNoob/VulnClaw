@@ -47,6 +47,9 @@ jobs:
       - name: Ruff
         run: ruff check vulnclaw tests
 
+      - name: Execution boundary check
+        run: python scripts/verify_execution_boundary.py
+
       - name: Frontend typecheck
         working-directory: frontend
         run: npx tsc -b

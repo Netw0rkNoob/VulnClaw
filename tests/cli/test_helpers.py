@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from types import SimpleNamespace
@@ -13,8 +14,112 @@ from typer.testing import CliRunner
 import vulnclaw.cli._helpers as helpers
 
 
+@pytest.mark.asyncio
+async def test_cli_approval_prompt_is_cancellable(monkeypatch):
+    import prompt_toolkit
+
+    from vulnclaw.agent.exec_gate import ApprovalView
+    from vulnclaw.cli.approval_channel import CliTtyApprovalChannel
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class FakePromptSession:
+        async def prompt_async(self, _message):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+    monkeypatch.setattr(prompt_toolkit, "PromptSession", FakePromptSession)
+    monkeypatch.setattr("vulnclaw.cli.approval_channel.sys.stdout", io.StringIO())
+    channel = CliTtyApprovalChannel()
+    view = ApprovalView(
+        request_hash="a" * 64,
+        kind="shell",
+        display_escaped="id",
+        cwd="/tmp",
+        detail="",
+        expires_at="soon",
+        expires_in_seconds=1,
+    )
+
+    task = asyncio.create_task(channel.request_approval(view))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cancelled.is_set()
+
+
 def _json_lines(stream: io.StringIO) -> list[dict]:
     return [json.loads(line) for line in stream.getvalue().splitlines() if line]
+
+
+@pytest.mark.asyncio
+async def test_shared_orchestrator_installs_approval_before_agent(monkeypatch):
+    import signal
+
+    import vulnclaw.agent.core as core_mod
+    import vulnclaw.cli.approval_channel as approval_mod
+    import vulnclaw.config.settings as settings_mod
+    import vulnclaw.mcp.lifecycle as lifecycle_mod
+    import vulnclaw.orchestrator as orchestrator_mod
+
+    config = SimpleNamespace()
+    events: list[str] = []
+
+    monkeypatch.setattr(settings_mod, "load_config", lambda: config)
+    monkeypatch.setattr(
+        approval_mod,
+        "install_cli_approval_channel",
+        lambda received: events.append("approval") or received is config,
+    )
+
+    class FakeMCP:
+        def __init__(self, received):
+            assert received is config
+            events.append("mcp_init")
+
+        def start_enabled_servers(self):
+            events.append("mcp_start")
+
+        def stop_all(self):
+            events.append("mcp_stop")
+
+    class FakeAgent:
+        def __init__(self, received, manager):
+            assert received is config
+            assert isinstance(manager, FakeMCP)
+            events.append("agent_init")
+
+    async def fake_run_agent_task(**kwargs):
+        events.append("orchestrator")
+        return await kwargs["runner"](kwargs["agent"])
+
+    monkeypatch.setattr(lifecycle_mod, "MCPLifecycleManager", FakeMCP)
+    monkeypatch.setattr(core_mod, "AgentCore", FakeAgent)
+    monkeypatch.setattr(orchestrator_mod, "run_agent_task", fake_run_agent_task)
+    monkeypatch.setattr(signal, "signal", lambda *_args: None)
+
+    async def runner(agent, received):
+        assert isinstance(agent, FakeAgent)
+        assert received is config
+        events.append("runner")
+        return "done"
+
+    result = await helpers._run_cli_orchestrated_task(
+        command="recon",
+        target="example.test",
+        resume=False,
+        snapshot=None,
+        runner=runner,
+    )
+
+    assert result == "done"
+    assert events.index("approval") < events.index("agent_init")
+    assert events[-1] == "mcp_stop"
 
 
 def test_tui_group_event_round_trips_through_wire_protocol():

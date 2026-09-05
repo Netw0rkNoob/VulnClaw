@@ -34,7 +34,19 @@ from vulnclaw.tui_protocol import (
 
 # Concrete management operations are capability-gated feature extensions. The
 # base backend owns mutable session scope defaults; client posture remains local.
-SUPPORTED_CONTROL_OPERATIONS = frozenset({"session.scope.reset", "session.scope.update"})
+# Execution decisions and operator-initiated permission changes are usable
+# while a task is active. Scope mutation remains idle-only.
+SUPPORTED_CONTROL_OPERATIONS = frozenset(
+    {
+        "session.scope.reset",
+        "session.scope.update",
+        "execution.approval.resolve",
+        "session.permission.set",
+    }
+)
+TASK_ACTIVE_CONTROL_OPERATIONS = frozenset(
+    {"execution.approval.resolve", "session.permission.set"}
+)
 RUNTIME_STATE_FIELDS = frozenset(
     {"target", "phase", "task_constraints", "findings", "evidence", "constraint_violations"}
 )
@@ -195,6 +207,11 @@ class BackendSession:
             if callable(apply_constraints):
                 apply_constraints(initial_constraints)
         self.initialized = True
+        from vulnclaw.agent.exec_gate import get_execution_gate
+
+        permission_mode = get_execution_gate(
+            getattr(self.runtime, "config", None)
+        ).mode
         self.writer.event(
             "ready",
             request_id=message.request_id,
@@ -208,6 +225,9 @@ class BackendSession:
                 "control_operations": sorted(SUPPORTED_CONTROL_OPERATIONS),
                 "cancellation": True,
                 "authoritative_state": True,
+                # Authoritative policy: the client label must sync to this on
+                # startup instead of trusting its own persisted posture.
+                "permission_mode": permission_mode,
             },
             runtime=_runtime_metadata(self.runtime),
             state=self.state_snapshot(),
@@ -360,7 +380,11 @@ class BackendSession:
                 f"unsupported control operation: {operation}",
                 request_id=message.request_id,
             )
-        if self.active_task is not None and not self.active_task.done():
+        if (
+            self.active_task is not None
+            and not self.active_task.done()
+            and operation not in TASK_ACTIVE_CONTROL_OPERATIONS
+        ):
             raise ProtocolError(
                 "task_busy",
                 "session scope cannot change while a task is active",
@@ -383,6 +407,32 @@ class BackendSession:
         self, operation: str, arguments: dict[str, Any]
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Extension point for feature-owned management operations."""
+
+        if operation == "session.permission.set":
+            from vulnclaw.agent.exec_gate import get_execution_gate
+
+            mode = str(arguments.get("mode") or "").strip().lower()
+            gate = get_execution_gate()
+            if mode not in {"ask", "auto_review", "full_access"}:
+                raise ValueError("mode must be one of: ask, auto_review, full_access")
+            new_mode = gate.set_mode(mode, source="tui")
+            return {
+                "message": f"Permission mode set to {new_mode}.",
+                "mode": new_mode,
+            }, None
+
+        if operation == "execution.approval.resolve":
+            from vulnclaw.agent.exec_gate import get_execution_gate
+
+            request_hash = str(arguments.get("request_hash") or "")
+            decision = str(arguments.get("decision") or "")
+            if not request_hash or decision not in {"approve", "deny"}:
+                raise ValueError(
+                    "execution.approval.resolve requires "
+                    "request_hash and decision=approve|deny"
+                )
+            result = await get_execution_gate().resolve(request_hash, decision)
+            return result, None
 
         if operation == "session.scope.update":
             raw_scope = arguments.get("scope")
@@ -552,6 +602,31 @@ async def _create_runtime() -> BackendRuntime:
     return BackendRuntime(config, mcp_manager, AgentCore(config, mcp_manager), started)
 
 
+class TuiApprovalChannel:
+    """Trusted approval channel over the TUI JSONL control path.
+
+    Emits the structured ``approval_required`` event, then awaits the
+    operator decision arriving as the ``execution.approval.resolve``
+    control operation. The decision never travels through model text.
+    """
+
+    def __init__(self, sink: BackendStreamSink) -> None:
+        self._sink = sink
+
+    async def request_approval(self, view: Any) -> str:
+        from vulnclaw.agent.exec_gate import get_execution_gate
+
+        self._sink._event("approval_required", **view.to_event_payload())
+        gate = get_execution_gate()
+        return await gate.wait_decision(view.request_hash)
+
+    async def notify_closed(self, request_hash: str, status: str) -> None:
+        """Dismiss the client modal when the pending leaves the queue."""
+        self._sink._event(
+            "approval_closed", request_hash=request_hash, status=status
+        )
+
+
 async def _run_task(
     runtime: BackendRuntime, task: PreparedTask, sink: BackendStreamSink
 ) -> dict[str, Any]:
@@ -566,13 +641,25 @@ async def _run_task(
             sink._event("status", status="goal reached")
         elif kind == "no_path":
             sink._event("log", message=f"no path: {payload.get('reason', '')}")
+    execution = None
+    approval_channel = TuiApprovalChannel(sink)
+    from vulnclaw.agent.exec_gate import get_execution_gate
 
-    execution = await execute_task(
-        runtime.agent,
-        task,
-        stream_sink=sink,
-        on_event=on_event,
-    )
+    _approval_gate = get_execution_gate()
+    _previous_channel = _approval_gate.channel
+    _approval_gate.install_channel(approval_channel)
+    try:
+        execution = await execute_task(
+            runtime.agent,
+            task,
+            stream_sink=sink,
+            on_event=on_event,
+        )
+    finally:
+        if _previous_channel is not None:
+            _approval_gate.install_channel(_previous_channel)
+        else:
+            _approval_gate.uninstall_channel()
     result = execution.run
     run_context = result.run_context
     action_result = execution.action_result

@@ -30,6 +30,7 @@ SERVER_EVENT_TYPES = frozenset(
         "tool_result",
         "finding",
         "approval_required",
+        "approval_closed",
         "task_completed",
         "task_cancelled",
         "task_failed",

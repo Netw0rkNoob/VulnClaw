@@ -263,6 +263,36 @@ def _run_repl_command(
     if name == "language":
         return _repl_switch_language(args, agent, config)
 
+    if name == "mode":
+        from vulnclaw.agent.exec_gate import get_execution_gate
+
+        gate = get_execution_gate(config)
+        target = args.strip().lower()
+        if not target:
+            console.print(
+                f"[bold]Permission mode[/]: {gate.mode} "
+                "(ask | auto_review | full_access)"
+            )
+            return config
+        try:
+            new_mode = gate.set_mode(target, source="cli")
+        except ValueError as exc:
+            console.print(f"[red]✗[/] {exc}")
+            return config
+        console.print(f"[green]✓[/] Permission mode set to [bold]{new_mode}[/]")
+        if new_mode == "auto_review":
+            console.print(
+                "[yellow]⚠ auto_review: trusted read-only commands run without "
+                "approval; everything else still prompts. Extend the table via "
+                "safety.trusted_commands.[/]"
+            )
+        elif new_mode == "full_access":
+            console.print(
+                "[yellow]⚠ full_access executes without per-request approval; "
+                "injected content can drive arbitrary execution.[/]"
+            )
+        return config
+
     if name == "wizard":
         from vulnclaw.cli.wizard import run_setup_wizard
 
@@ -329,6 +359,12 @@ def _run_repl() -> None:
 
     # Initialize agent
     agent = AgentCore(config, mcp_manager)
+
+    # ExecutionGate: interactive REPL on a real TTY gets the trusted
+    # approval channel; dangerous-tool executions prompt y/N.
+    from vulnclaw.cli.approval_channel import install_cli_approval_channel
+
+    install_cli_approval_channel(config)
 
     console.print(_("cli.welcome"))
     console.print()
