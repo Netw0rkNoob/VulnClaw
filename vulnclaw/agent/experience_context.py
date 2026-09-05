@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from vulnclaw.kb.experience import ExperienceStore
-from vulnclaw.kb.retriever import _tokenize
+from vulnclaw.kb.ranking import bigram_tokenize
 from vulnclaw.targets import parse_target
 
 _MAX_LESSONS = 5
@@ -150,12 +150,12 @@ def _rank_lessons(
 
 
 def _tfidf_similarity(query: str, documents: list[str]) -> list[float]:
-    """Use the KB keyword retriever's TF-IDF weighting model for ranking."""
-    query_counts = Counter(_tokenize(query))
+    """Rank documents by TF-IDF cosine similarity over Chinese-aware tokens."""
+    query_counts = Counter(bigram_tokenize(query))
     if not query_counts or not documents:
         return [0.0] * len(documents)
 
-    document_counts = [Counter(_tokenize(document)) for document in documents]
+    document_counts = [Counter(bigram_tokenize(document)) for document in documents]
     document_frequency: Counter[str] = Counter()
     for counts in document_counts:
         document_frequency.update(counts.keys())
@@ -214,7 +214,7 @@ def _as_items(value: Any) -> list[Any]:
 def _terms(value: Any) -> set[str]:
     if isinstance(value, Mapping):
         return {term for nested in value.values() for term in _terms(nested)}
-    return set(_tokenize(str(value)))
+    return set(bigram_tokenize(str(value)))
 
 
 def _single_line(value: Any) -> str:
