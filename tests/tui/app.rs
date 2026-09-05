@@ -80,9 +80,11 @@ fn composer_suggests_and_completes_slash_commands() {
 }
 
 #[test]
-fn task_dispatch_uses_backend_advertised_commands() {
+fn task_dispatch_uses_frontend_known_task_verbs() {
     let (sender, _) = mpsc::channel();
     let mut app = App::new_disconnected(sender);
+    app.mode = ExecutionMode::Agent;
+    app.backend_ready = true;
     app.backend_commands = vec!["recon".into()];
     app.insert_text("/recon https://lab.example");
     app.submit();
@@ -92,20 +94,26 @@ fn task_dispatch_uses_backend_advertised_commands() {
         Some("/recon https://lab.example")
     );
 
+    // /run is a known task verb even if the backend has not advertised it,
+    // so it is accepted and armed (execution is still gated on backend_ready).
     app.dismiss_task();
+    app.backend_ready = true;
+    app.backend_commands = Vec::new();
     app.insert_text("/run https://lab.example");
     app.submit();
-    assert!(app.pending_task.is_none());
+    assert!(app.pending_task.is_some());
     assert!(app
         .transcript
         .iter()
-        .any(|item| item.text.contains("Unknown command: /run")));
+        .any(|item| item.text.contains("armed for")));
 }
 
 #[test]
-fn codescan_dispatches_when_advertised_by_backend() {
+fn codescan_dispatches_as_known_task_verb() {
     let (sender, _) = mpsc::channel();
     let mut app = App::new_disconnected(sender);
+    app.mode = ExecutionMode::Agent;
+    app.backend_ready = true;
     app.backend_commands = vec!["codescan".into()];
     app.insert_text("/codescan demo/unsafe-ai-sample.ts");
     app.submit();
@@ -115,16 +123,14 @@ fn codescan_dispatches_when_advertised_by_backend() {
         Some("/codescan demo/unsafe-ai-sample.ts")
     );
 
-    // Not advertised -> rejected as unknown.
+    // /codescan is part of the frontend's canonical task verbs, so it is still
+    // armed when the backend has not advertised it yet.
     app.dismiss_task();
-    app.insert_text("/codescan src/main.rs");
+    app.backend_ready = true;
     app.backend_commands = Vec::new();
+    app.insert_text("/codescan src/main.rs");
     app.submit();
-    assert!(app.pending_task.is_none());
-    assert!(app
-        .transcript
-        .iter()
-        .any(|item| item.text.contains("Unknown command: /codescan")));
+    assert!(app.pending_task.is_some());
 }
 
 #[test]
@@ -384,6 +390,7 @@ fn agent_mode_arms_a_task_and_waits_for_confirmation() {
     let mut app = App::new_disconnected(sender);
     app.mode = ExecutionMode::Agent;
     app.permission = PermissionMode::FullAccess;
+    app.backend_ready = true;
     app.backend_commands = vec!["run".into()];
 
     app.insert_text("/run https://lab.example");
@@ -406,6 +413,7 @@ fn task_requires_a_target() {
     let (sender, _) = mpsc::channel();
     let mut app = App::new_disconnected(sender);
     app.mode = ExecutionMode::Agent;
+    app.backend_ready = true;
     app.backend_commands = vec!["run".into()];
 
     app.insert_text("/run");

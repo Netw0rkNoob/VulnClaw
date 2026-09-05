@@ -246,12 +246,24 @@ pub struct SlashCommand {
     pub description: &'static str,
 }
 
+/// Slash commands rendered locally in the TUI composer palette. The first
+/// five are presentation-layer helpers; the remainder mirror the task verbs
+/// advertised by the Python backend via `capabilities.commands`. Keeping them
+/// here ensures the palette is never empty (or misleadingly tiny) while the
+/// backend is still initializing, and gives users a discoverable path to the
+/// core pentest workflows even if the capability handshake is delayed.
 const LOCAL_SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/scope ", "update session scope defaults"),
     ("/report", "show report export guidance"),
     ("/config", "show configuration guidance"),
     ("/clear", "clear the transcript"),
     ("/help", "list available commands"),
+    ("/run ", "run a task through the Python backend"),
+    ("/recon ", "run a task through the Python backend"),
+    ("/scan ", "run a task through the Python backend"),
+    ("/exploit ", "run a task through the Python backend"),
+    ("/persistent ", "run a task through the Python backend"),
+    ("/codescan ", "run a task through the Python backend"),
 ];
 
 const MAX_COMMAND_HISTORY: usize = 50;
@@ -488,7 +500,7 @@ impl App {
         } else if let Some((verb, arguments)) = split_slash_command(&command) {
             if verb == "scope" {
                 self.request_scope_control(arguments);
-            } else if self.backend_commands.iter().any(|item| item == verb) {
+            } else if is_task_verb(verb) {
                 self.request_task(verb, arguments);
             } else {
                 self.error(format!("Unknown command: {command}"));
@@ -1706,6 +1718,19 @@ fn split_slash_command(command: &str) -> Option<(&str, &str)> {
     let split_at = raw.find(char::is_whitespace).unwrap_or(raw.len());
     let (verb, remainder) = raw.split_at(split_at);
     (!verb.is_empty()).then_some((verb, remainder.trim_start()))
+}
+
+/// Check whether a slash verb maps to a known task command.
+///
+/// This mirrors `TaskCommand` in `vulnclaw/task_service.py`. Keeping the set
+/// explicit on the frontend lets the TUI offer meaningful completions even
+/// before the backend capability handshake finishes, while still routing the
+/// command through the same protocol path once executed.
+fn is_task_verb(verb: &str) -> bool {
+    matches!(
+        verb,
+        "run" | "recon" | "scan" | "exploit" | "persistent" | "codescan"
+    )
 }
 
 /// Adapt a presentation-layer slash command into the structured task DTO sent
