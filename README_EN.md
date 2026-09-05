@@ -410,7 +410,7 @@ FINAL passes evidence gate → accepted; otherwise the rejection is fed back and
 | **MCP Orchestration** | `mcp/registry.py` + `lifecycle.py` + `router.py` | Service registry + lifecycle + tool routing |
 | **Config** | `config/schema.py` + `settings.py` | Pydantic + YAML + 14 provider presets + SubagentConfig |
 | **Report Generator** | `report/generator.py` + `poc_builder.py` | Markdown reports + PoC scripts |
-| **Security KB** | `kb/store.py` + `retriever.py` | JSON storage + CVE/technique/tool retrieval |
+| **Security KB** | `kb/store.py` + `retriever.py` + `ranking.py` | JSON storage + Chinese-aware BM25 retrieval + optional reranking |
 
 ---
 

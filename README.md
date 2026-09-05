@@ -401,7 +401,7 @@ FINAL 经过证据闸门校验 → 通过才结束，否则把拒绝原因返回
 | **MCP 编排** | `mcp/registry.py` + `lifecycle.py` + `router.py` | 服务注册 + 生命周期 + 工具路由 |
 | **配置管理** | `config/schema.py` + `settings.py` | Pydantic + YAML + 13 Provider 预设 |
 | **报告生成** | `report/generator.py` + `poc_builder.py` | Markdown 报告 + PoC 脚本 |
-| **安全知识库** | `kb/store.py` + `retriever.py` | JSON 存储 + CVE/技术/工具检索 |
+| **安全知识库** | `kb/store.py` + `retriever.py` + `ranking.py` | JSON 存储 + 中文感知 BM25 检索 + 可选重排序 |
 
 ---
 
