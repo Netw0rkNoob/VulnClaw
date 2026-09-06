@@ -139,7 +139,7 @@ vulnclaw config set llm.model your-model-name
 # 2. 设置 API Key
 vulnclaw config set llm.api_key sk-your-key-here
 #    — 或改用 ChatGPT 订阅登录（无需 API Key）：
-#      vulnclaw login   （浏览器登录；详见 docs/keyless-auth.md，注意 ToS 风险）
+#      vulnclaw login   （浏览器登录；注意 ToS 风险）
 
 # 3. 默认：打开原 CLI / REPL
 vulnclaw
