@@ -144,7 +144,7 @@ vulnclaw config set llm.model your-model-name
 # 2. Set API Key
 vulnclaw config set llm.api_key sk-your-key-here
 #    — or sign in with ChatGPT subscription (no API key needed):
-#      vulnclaw login   (browser sign-in; see docs/keyless-auth.md, note ToS caveat)
+#      vulnclaw login   (browser sign-in; note ToS caveat)
 
 # 3. Default: open the original CLI / REPL
 vulnclaw
