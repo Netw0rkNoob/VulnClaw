@@ -25,6 +25,7 @@
   "cli.language_set_to": "Language set to",
   "cli.resuming_auto_pentest": "Resuming auto pentest",
   "cli.compressed_earlier_context": "[green]Compressed earlier context[/green], keeping recent messages; summary length {var_001} characters.",
+  "cli.host_no_set": "[!] Set a target first with [bold]target <host>[/] or run [bold]persistent <host>[/].",
   "cli.target_within_range_and_explicitly_authorized": "This target is in scope and explicitly authorized.",
   "report.rec.uncategorized": "Uncategorized",
   "report.rec.fix_priority": "Prioritize fixing {vt} risk: {title}",
