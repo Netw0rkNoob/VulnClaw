@@ -44,6 +44,9 @@ WORKDIR /app
 # Install Python deps first (better caching): copy only project metadata
 COPY pyproject.toml README.md LICENSE ./
 COPY vulnclaw ./vulnclaw
+# pyproject.toml force-includes protocol/tui-v1.schema.json into the wheel;
+# hatchling aborts the editable install when it is missing from the build root.
+COPY protocol ./protocol
 
 # Editable install so vulnclaw resolves to /app and finds frontend/dist.
 #   web → fastapi + uvicorn for the Web UI
