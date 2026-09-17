@@ -46,6 +46,11 @@ def _apply_overrides(
     if "body" in overrides:
         raw = overrides["body"]
         body = raw if isinstance(raw, bytes) else str(raw).encode("utf-8", "replace")
+        # Captured lengths describe the old body. Keep both the HTTP request and
+        # its saved replay evidence consistent with the replacement's byte size.
+        for name in headers:
+            if name.lower() == "content-length":
+                headers[name] = str(len(body))
 
     return CapturedRequest(method=method, url=url, headers=headers, body=body)
 
