@@ -676,3 +676,165 @@ fn approval_closed_ignores_non_matching_hash() {
     ));
     assert!(app.pending_execution.is_some(), "hash 不匹配不得误关");
 }
+
+fn open_settings_screen(app: &mut App) {
+    app.insert_text("/config");
+    app.submit();
+}
+
+fn press(app: &mut App, code: KeyCode) {
+    handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+}
+
+#[test]
+fn the_config_command_opens_the_settings_screen_and_esc_closes_it() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    // Opening needs a ready backend; this asserts the gate, not the screen.
+    open_settings_screen(&mut app);
+    assert!(app.llm_settings.is_none());
+
+    let mut harness = crate::support::AppHarness::connected();
+    open_settings_screen(&mut harness.app);
+    assert!(harness.app.llm_settings.is_some());
+
+    press(&mut harness.app, KeyCode::Esc);
+    assert!(harness.app.llm_settings.is_none());
+}
+
+#[test]
+fn typing_into_a_settings_row_requires_a_confirming_enter_each_way() {
+    let mut harness = crate::support::AppHarness::connected();
+    open_settings_screen(&mut harness.app);
+    harness.apply_next();
+
+    let focus = |app: &App| app.llm_settings.as_ref().unwrap().focus;
+    let editing = |app: &App| app.llm_settings.as_ref().unwrap().editing;
+    let website = |app: &App| app.llm_settings.as_ref().unwrap().website_url.clone();
+    assert_eq!(focus(&harness.app), vulnclaw_tui::app::LlmField::Provider);
+
+    press(&mut harness.app, KeyCode::Down);
+    assert_eq!(focus(&harness.app), vulnclaw_tui::app::LlmField::WebsiteUrl);
+
+    // Selecting a row is not editing it: keys do nothing until Enter.
+    assert!(!editing(&harness.app));
+    let untouched = website(&harness.app);
+    press(&mut harness.app, KeyCode::Backspace);
+    press(&mut harness.app, KeyCode::Char('x'));
+    assert_eq!(website(&harness.app), untouched);
+
+    // The first Enter opens the row.
+    press(&mut harness.app, KeyCode::Enter);
+    assert!(editing(&harness.app));
+
+    // …and while open, ↑/↓ cannot move the selection elsewhere.
+    press(&mut harness.app, KeyCode::Down);
+    press(&mut harness.app, KeyCode::Up);
+    assert_eq!(focus(&harness.app), vulnclaw_tui::app::LlmField::WebsiteUrl);
+
+    // Editing now takes effect: backspace eats the template's trailing slash,
+    // and Home then types at the front, proving the caret is tracked per row.
+    press(&mut harness.app, KeyCode::Backspace);
+    assert_eq!(website(&harness.app), "https://www.deepseek.com");
+    press(&mut harness.app, KeyCode::Char('x'));
+    press(&mut harness.app, KeyCode::Home);
+    press(&mut harness.app, KeyCode::Char('#'));
+    assert_eq!(website(&harness.app), "#https://www.deepseek.comx");
+    // The composer stays untouched while the modal owns the keyboard.
+    assert!(harness.app.input.is_empty());
+
+    // The second Enter closes it, and only then do the rows move again.
+    press(&mut harness.app, KeyCode::Enter);
+    assert!(!editing(&harness.app));
+    press(&mut harness.app, KeyCode::Down);
+    assert_eq!(focus(&harness.app), vulnclaw_tui::app::LlmField::BaseUrl);
+    // Up walks back, wrapping past the first row to the last.
+    for _ in 0..3 {
+        press(&mut harness.app, KeyCode::Up);
+    }
+    assert_eq!(focus(&harness.app), vulnclaw_tui::app::LlmField::Model);
+}
+
+#[test]
+fn esc_inside_an_open_row_reverts_it_without_leaving_the_screen() {
+    let mut harness = crate::support::AppHarness::connected();
+    open_settings_screen(&mut harness.app);
+    harness.apply_next();
+
+    press(&mut harness.app, KeyCode::Down);
+    press(&mut harness.app, KeyCode::Enter);
+    for character in "junk".chars() {
+        press(&mut harness.app, KeyCode::Char(character));
+    }
+
+    press(&mut harness.app, KeyCode::Esc);
+    let settings = harness.app.llm_settings.as_ref().unwrap();
+    assert!(!settings.editing);
+    assert_eq!(settings.website_url, "https://www.deepseek.com/");
+    // Esc unwinds one level: the screen is still up.
+    press(&mut harness.app, KeyCode::Esc);
+    assert!(harness.app.llm_settings.is_none());
+}
+
+#[test]
+fn settings_enter_opens_the_template_list_and_esc_backs_out_of_it() {
+    let mut harness = crate::support::AppHarness::connected();
+    open_settings_screen(&mut harness.app);
+    harness.apply_next();
+
+    press(&mut harness.app, KeyCode::Enter);
+    assert!(
+        harness
+            .app
+            .llm_settings
+            .as_ref()
+            .unwrap()
+            .template_list_open
+    );
+
+    // Esc closes the list, not the screen.
+    press(&mut harness.app, KeyCode::Esc);
+    assert!(harness.app.llm_settings.is_some());
+    assert!(
+        !harness
+            .app
+            .llm_settings
+            .as_ref()
+            .unwrap()
+            .template_list_open
+    );
+}
+
+#[test]
+fn a_paste_lands_in_the_settings_row_not_the_composer() {
+    let mut harness = crate::support::AppHarness::connected();
+    open_settings_screen(&mut harness.app);
+    harness.apply_next();
+    // Walk down to the API key row, which starts empty.
+    for _ in 0..3 {
+        press(&mut harness.app, KeyCode::Down);
+    }
+    assert_eq!(
+        harness.app.llm_settings.as_ref().unwrap().focus,
+        vulnclaw_tui::app::LlmField::ApiKey
+    );
+
+    // A paste only lands once the row has been opened with Enter.
+    vulnclaw_tui::events::handle_paste(&mut harness.app, "sk-ignored");
+    assert!(harness
+        .app
+        .llm_settings
+        .as_ref()
+        .unwrap()
+        .api_key
+        .is_empty());
+
+    press(&mut harness.app, KeyCode::Enter);
+    vulnclaw_tui::events::handle_paste(&mut harness.app, "sk-pasted");
+
+    assert!(harness.app.input.is_empty());
+    assert_eq!(
+        harness.app.llm_settings.as_ref().unwrap().api_key,
+        "sk-pasted"
+    );
+}

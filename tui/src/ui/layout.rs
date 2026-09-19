@@ -6,7 +6,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, COMPOSER_FRAME_ROWS, COMPOSER_STATUS_ROWS, PALETTE_ROWS};
+use crate::app::{
+    App, COMPOSER_FRAME_ROWS, COMPOSER_STATUS_ROWS, LLM_SUGGESTION_ROWS, PALETTE_ROWS,
+};
 use crate::theme;
 use crate::views::status;
 use crate::workbench::{ContainerId, Gesture, LayoutGeometry, ViewId};
@@ -37,6 +39,297 @@ pub fn render(frame: &mut Frame, app: &App) {
     if let Some(pending) = &app.pending_execution {
         render_approval_modal(frame, pending, frame.area());
     }
+    if let Some(settings) = &app.llm_settings {
+        render_llm_settings_modal(frame, settings, frame.area());
+    }
+}
+
+/// Columns reserved for a settings row's label, so every value lines up.
+const LLM_LABEL_COLUMNS: u16 = 18;
+/// Rows the settings body needs on top of the fields: header plus footer.
+const LLM_CHROME_ROWS: u16 = 3;
+/// Width of the marker column ("› ").
+const LLM_MARKER_COLUMNS: u16 = 2;
+
+/// The `/config` LLM settings screen: a centered blocking modal editing the
+/// provider template and the four fields it drives.
+fn render_llm_settings_modal(frame: &mut Frame, settings: &crate::app::LlmSettings, area: Rect) {
+    let modal_area = llm_modal_area(area);
+    if modal_area.width == 0 || modal_area.height == 0 {
+        return;
+    }
+    frame.render_widget(ratatui::widgets::Clear, modal_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::ACTION))
+        .style(Style::default().bg(theme::PANEL));
+    let inner = block.inner(modal_area);
+    frame.render_widget(block, modal_area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let footer_rows = inner.height.min(2);
+    let body_height = inner.height.saturating_sub(footer_rows);
+    let (lines, caret) = llm_settings_body(settings, inner.width, body_height);
+    if body_height > 0 {
+        frame.render_widget(
+            Paragraph::new(lines),
+            Rect {
+                x: inner.x,
+                y: inner.y,
+                width: inner.width,
+                height: body_height,
+            },
+        );
+    }
+
+    // A caret needs a real cursor, and ratatui keeps only one per frame — this
+    // is why the composer's own cursor is suppressed while the modal is up.
+    if let Some((row, column)) = caret {
+        if row < body_height {
+            let x = inner
+                .x
+                .saturating_add(column)
+                .min(inner.right().saturating_sub(1));
+            frame.set_cursor_position((x, inner.y.saturating_add(row)));
+        }
+    }
+
+    let footer_y = inner.y.saturating_add(body_height);
+    let feedback = if settings.error.is_empty() {
+        settings.status.clone()
+    } else {
+        settings.error.clone()
+    };
+    if footer_rows >= 2 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                feedback,
+                Style::default().fg(if settings.error.is_empty() {
+                    theme::TEXT_HINT
+                } else {
+                    theme::ROSE
+                }),
+            ))),
+            Rect::new(inner.x, footer_y, inner.width, 1),
+        );
+    }
+    // The hint follows the mode, so the current Enter/Esc meaning is explicit.
+    let hint = if settings.template_list_open {
+        " ↑↓ choose template · Enter apply · Esc cancel"
+    } else if settings.editing {
+        " typing · ↑↓ pick suggestion · Enter confirm · Esc revert"
+    } else {
+        " ↑↓ row · Enter edit · Ctrl+S save · Esc close"
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            hint,
+            Style::default().fg(theme::TEXT_HINT),
+        ))),
+        Rect::new(
+            inner.x,
+            footer_y.saturating_add(footer_rows.saturating_sub(1)),
+            inner.width,
+            1,
+        ),
+    );
+}
+
+fn llm_modal_area(area: Rect) -> Rect {
+    let width = area.width.min(92);
+    let height = area.height.min(22);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
+/// Build the settings body plus the caret location, in body-relative rows.
+fn llm_settings_body(
+    settings: &crate::app::LlmSettings,
+    width: u16,
+    body_height: u16,
+) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
+    use crate::app::LlmField;
+
+    let mut lines = vec![Line::from(Span::styled(
+        " LLM settings ",
+        Style::default()
+            .fg(Color::Rgb(10, 6, 2))
+            .bg(theme::ACTION)
+            .add_modifier(Modifier::BOLD),
+    ))];
+    let mut caret = None;
+
+    let value_columns = width
+        .saturating_sub(LLM_MARKER_COLUMNS)
+        .saturating_sub(LLM_LABEL_COLUMNS);
+    let aux_budget = body_height.saturating_sub(LLM_CHROME_ROWS + 5);
+
+    for field in LlmField::ORDER {
+        let focused = settings.focus == field;
+        let list_here = focused && settings.template_list_open;
+        let editing_here = focused && settings.editing;
+        let label = format!(
+            "{:<width$}",
+            field.label(),
+            width = usize::from(LLM_LABEL_COLUMNS)
+        );
+        let value = if list_here {
+            "▾".to_owned()
+        } else {
+            truncate_to_columns(&settings.display_value(field), value_columns)
+        };
+        // A distinct marker is the operator's cue that the row is open for
+        // typing, and that Enter now closes rather than opens it.
+        let marker = if editing_here {
+            "✎ "
+        } else if focused {
+            "› "
+        } else {
+            "  "
+        };
+        let text = format!("{marker}{label}{value}");
+        let style = if focused {
+            Style::default()
+                .fg(theme::BG)
+                .bg(theme::ACTION)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::TEXT_SOFT)
+        };
+        lines.push(Line::from(Span::styled(text, style)));
+
+        if editing_here && field.is_editable_text() {
+            // The caret sits after whatever prefix precedes the value.
+            let offset = Line::from(settings.focused_text().get(..settings.cursor).unwrap_or(""))
+                .width()
+                .min(usize::from(value_columns));
+            caret = Some((
+                u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX),
+                LLM_MARKER_COLUMNS + LLM_LABEL_COLUMNS + u16::try_from(offset).unwrap_or(u16::MAX),
+            ));
+        }
+
+        if aux_budget == 0 {
+            continue;
+        }
+        // Whatever the terminal leaves below the rows already drawn.
+        let visible_rows = usize::from(body_height).saturating_sub(lines.len());
+        if list_here {
+            let options = settings.template_labels();
+            push_options(
+                &mut lines,
+                &options,
+                Some(settings.list_index),
+                value_columns,
+                body_height,
+                visible_rows,
+            );
+        } else if editing_here && field == LlmField::Model {
+            let options = settings.suggestions();
+            push_options(
+                &mut lines,
+                &options,
+                settings.suggestion,
+                value_columns,
+                body_height,
+                visible_rows.min(LLM_SUGGESTION_ROWS),
+            );
+        }
+    }
+
+    (lines, caret)
+}
+
+/// Draw a window of *options* beneath the focused row, highlighting *selected*.
+///
+/// Only `window_rows` entries are drawn, but `options` is the whole list and
+/// the window scrolls with the selection, so nothing becomes unreachable just
+/// because the provider returned more models than fit.
+fn push_options(
+    lines: &mut Vec<Line<'static>>,
+    options: &[String],
+    selected: Option<usize>,
+    value_columns: u16,
+    body_height: u16,
+    window_rows: usize,
+) {
+    let (start, size) = option_window(options.len(), selected, window_rows);
+    for (index, option) in options.iter().enumerate().skip(start).take(size) {
+        if lines.len() >= usize::from(body_height) {
+            break;
+        }
+        let text = format!(
+            "    {}",
+            truncate_to_columns(option, value_columns.saturating_sub(2))
+        );
+        let style = if selected == Some(index) {
+            Style::default()
+                .fg(theme::BG)
+                .bg(theme::GOLD)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::TEXT_MUTED)
+        };
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+    // How much of the list is still below the window. Counted from the window
+    // rather than the list, so it ticks down as the selection scrolls and drops
+    // away entirely once the window reaches the last entry.
+    let below = options.len().saturating_sub(start + size);
+    if below > 0 && lines.len() < usize::from(body_height) {
+        lines.push(Line::from(Span::styled(
+            format!("    {MORE_ROWS_HINT}{below} more"),
+            Style::default().fg(theme::TEXT_HINT),
+        )));
+    }
+}
+
+/// The slice of a list the screen should show, as `(start, count)`.
+///
+/// The window keeps a fixed height and follows the highlighted entry, scrolling
+/// only once the selection would otherwise fall outside it.
+fn option_window(total: usize, selected: Option<usize>, rows: usize) -> (usize, usize) {
+    if total == 0 || rows == 0 {
+        return (0, 0);
+    }
+    let size = rows.min(total);
+    let selected = selected.unwrap_or(0).min(total - 1);
+    // Zero while the selection still fits; otherwise scroll just enough to keep
+    // it on the last visible row.
+    let start = (selected + 1).saturating_sub(size);
+    (start.min(total - size), size)
+}
+
+/// Clip *text* to *columns* display cells, marking a cut with an ellipsis.
+///
+/// Measured in cells rather than characters so CJK labels do not overflow into
+/// the next column of the modal.
+fn truncate_to_columns(text: &str, columns: u16) -> String {
+    let limit = usize::from(columns);
+    if limit == 0 {
+        return String::new();
+    }
+    if Line::from(text).width() <= limit {
+        return text.to_owned();
+    }
+    let mut clipped = String::new();
+    let mut used = 0usize;
+    for character in text.chars() {
+        let width = Line::from(character.to_string()).width();
+        if used + width > limit.saturating_sub(1) {
+            break;
+        }
+        clipped.push(character);
+        used += width;
+    }
+    clipped.push('…');
+    clipped
 }
 
 /// Blocking execution-approval modal. Mirrors the pending_task confirm
@@ -560,6 +853,8 @@ const PROMPT_MARKER: &str = " > ";
 
 /// Marks the model name on the right of the composer status line.
 const MODEL_MARKER: &str = "◈ ";
+/// Introduces the "N more" row that closes a list too long for its window.
+const MORE_ROWS_HINT: &str = "… ";
 const PROMPT_MARKER_WIDTH: u16 = PROMPT_MARKER.len() as u16;
 
 fn render_composer_input(frame: &mut Frame, app: &App, composer_area: Rect) {
@@ -594,6 +889,11 @@ fn render_composer_input(frame: &mut Frame, app: &App, composer_area: Rect) {
         composer_area,
     );
     if app.input.is_empty() || inner.height == 0 || inner.width == 0 {
+        return;
+    }
+    // ratatui holds a single cursor per frame; the settings modal draws after
+    // the composer and owns it while it is open.
+    if app.llm_settings.is_some() {
         return;
     }
     let cursor_x = inner

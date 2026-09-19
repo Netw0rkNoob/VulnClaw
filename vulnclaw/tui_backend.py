@@ -36,13 +36,17 @@ from vulnclaw.tui_protocol import (
 # Concrete management operations are capability-gated feature extensions. The
 # base backend owns mutable session scope defaults; client posture remains local.
 # Execution decisions and operator-initiated permission changes are usable
-# while a task is active. Scope mutation remains idle-only.
+# while a task is active. Scope and LLM config mutation remain idle-only.
 SUPPORTED_CONTROL_OPERATIONS = frozenset(
     {
         "session.scope.reset",
         "session.scope.update",
         "execution.approval.resolve",
         "session.permission.set",
+        "config.read",
+        "config.preset",
+        "config.models",
+        "config.write",
     }
 )
 TASK_ACTIVE_CONTROL_OPERATIONS = frozenset(
@@ -428,10 +432,98 @@ class BackendSession:
                 },
                 self.state_snapshot(),
             )
+        if operation == "config.read":
+            return self._config_form_payload(), None
+
+        if operation == "config.preset":
+            from vulnclaw.config.settings import provider_form_values
+
+            return provider_form_values(str(arguments.get("provider") or "")), None
+
+        if operation == "config.models":
+            from vulnclaw.config.settings import fetch_provider_models, normalize_base_url
+
+            base_url = normalize_base_url(str(arguments.get("base_url") or ""))
+            api_key = str(arguments.get("api_key") or "").strip()
+            # The client never receives the stored key back, so a refresh after
+            # the first save must be able to reuse it without a retype.
+            used_saved_key = False
+            if not api_key:
+                api_key = self._saved_api_key()
+                used_saved_key = bool(api_key)
+            if not base_url or not api_key:
+                raise ValueError("config.models requires a base URL and an API key")
+            # Blocking network call: ~3 attempts x 10s worst case, so it must
+            # not stall the protocol loop (approvals included).
+            models = await asyncio.to_thread(fetch_provider_models, base_url, api_key)
+            return {"models": models, "used_saved_key": used_saved_key}, None
+
+        if operation == "config.write":
+            from vulnclaw.config.settings import apply_llm_form, load_config, save_config
+
+            agent = getattr(self.runtime, "agent", None)
+            if agent is None:
+                raise ValueError("config.write requires an initialised runtime")
+
+            config = load_config()
+            apply_llm_form(
+                config,
+                provider=str(arguments.get("provider") or ""),
+                base_url=str(arguments.get("base_url") or ""),
+                model=str(arguments.get("model") or ""),
+                website_url=str(arguments.get("website_url") or ""),
+            )
+            # A blank or omitted key keeps whatever is already stored.
+            api_key = str(arguments.get("api_key") or "").strip()
+            if api_key:
+                config.llm.api_key = api_key
+            save_config(config)
+            # Rebind the live runtime so the new provider/model/key takes effect
+            # without restarting the TUI (mirrors the classic REPL `/config`).
+            self.runtime.config = config
+            agent.apply_config(config)
+            return {
+                "message": f"Saved {config.llm.provider}/{config.llm.model}.",
+                "provider": config.llm.provider,
+                "model": config.llm.model,
+                "config_ready": _llm_configured(config.llm),
+            }, None
+
         raise ProtocolError(
             "unsupported_operation",
             f"unsupported control operation: {operation}",
         )
+
+    def _saved_api_key(self) -> str:
+        config = getattr(self.runtime, "config", None)
+        llm = getattr(config, "llm", None)
+        primary_key = getattr(llm, "primary_key", None)
+        return str(primary_key() or "") if callable(primary_key) else ""
+
+    def _config_form_payload(self) -> dict[str, Any]:
+        """Current LLM settings for the TUI form. Never echoes the API key."""
+        from vulnclaw.config.settings import list_providers
+
+        config = getattr(self.runtime, "config", None)
+        llm = getattr(config, "llm", None)
+        providers = [
+            {
+                "id": entry["provider"],
+                "label": entry["label"],
+                "website_url": entry["website_url"],
+                "base_url": entry["base_url"],
+                "default_model": entry["default_model"],
+            }
+            for entry in list_providers()
+        ]
+        return {
+            "provider": str(getattr(llm, "provider", "")),
+            "website_url": str(getattr(llm, "website_url", "")),
+            "base_url": str(getattr(llm, "base_url", "")),
+            "model": str(getattr(llm, "model", "")),
+            "api_key_set": bool(self._saved_api_key()),
+            "providers": providers,
+        }
 
     def _apply_session_scope(self, bootstrap: dict[str, Any]) -> None:
         constraints = build_scope_constraints(self.current_target, bootstrap)
@@ -688,6 +780,18 @@ def main() -> None:
     asyncio.run(serve(sys.stdin, JsonlWriter(protocol_output)))
 
 
+def _llm_configured(llm: Any) -> bool:
+    """Whether *llm* carries usable credentials (static key or stored OAuth)."""
+    if llm is None:
+        return False
+    try:
+        from vulnclaw.config.token_provider import has_llm_credentials
+
+        return bool(has_llm_credentials(llm))
+    except Exception:
+        return False
+
+
 def _runtime_metadata(runtime: Any) -> dict[str, Any]:
     custom = getattr(runtime, "metadata", None)
     if callable(custom):
@@ -697,14 +801,13 @@ def _runtime_metadata(runtime: Any) -> dict[str, Any]:
     config = getattr(runtime, "config", None)
     llm = getattr(config, "llm", None)
     try:
-        from vulnclaw.config.token_provider import has_llm_credentials
         from vulnclaw.skills.loader import (
             list_core_skills,
             list_custom_skills,
             list_specialized_skills,
         )
 
-        configured = bool(llm is not None and has_llm_credentials(llm))
+        configured = _llm_configured(llm)
         skills = sorted(
             set(list_core_skills() + list_specialized_skills() + list_custom_skills())
         )

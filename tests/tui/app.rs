@@ -166,6 +166,10 @@ fn ready_event_hydrates_backend_capabilities() {
     assert_eq!(
         harness.app.backend_control_operations,
         vec![
+            "config.models",
+            "config.preset",
+            "config.read",
+            "config.write",
             "example.inspect",
             "session.permission.set",
             "session.scope.reset",
@@ -800,4 +804,292 @@ fn the_palette_falls_back_to_local_verbs_before_the_handshake() {
         ["/run "],
         "the local list keeps task verbs discoverable while the backend is silent"
     );
+}
+
+fn open_settings(harness: &mut AppHarness) {
+    harness.app.insert_text("/config");
+    harness.app.submit();
+    assert!(matches!(
+        harness.apply_next(),
+        vulnclaw_tui::protocol::BackendEvent::ControlResult { .. }
+    ));
+}
+
+#[test]
+fn config_command_opens_the_settings_screen_seeded_from_the_backend() {
+    let mut harness = AppHarness::connected();
+
+    harness.app.insert_text("/config");
+    harness.app.submit();
+    // The screen opens immediately and awaits the backend rather than blocking.
+    assert!(harness.app.llm_settings.is_some());
+    assert!(harness.app.llm_settings.as_ref().unwrap().loading);
+
+    assert!(matches!(
+        harness.apply_next(),
+        vulnclaw_tui::protocol::BackendEvent::ControlResult { .. }
+    ));
+    let settings = harness.app.llm_settings.as_ref().unwrap();
+    assert!(!settings.loading);
+    assert_eq!(settings.provider, "deepseek");
+    assert_eq!(settings.website_url, "https://www.deepseek.com/");
+    assert_eq!(settings.base_url, "https://api.deepseek.com");
+    assert_eq!(settings.model, "deepseek-v4-pro");
+    assert!(settings.api_key_set);
+    // The credential itself never crosses the protocol.
+    assert!(settings.api_key.is_empty());
+    assert_eq!(settings.providers.len(), 2);
+    assert_eq!(
+        settings.display_value(vulnclaw_tui::app::LlmField::ApiKey),
+        "•••••••• (saved)"
+    );
+}
+
+#[test]
+fn choosing_the_custom_template_blanks_the_preset_fields() {
+    let mut harness = AppHarness::connected();
+    open_settings(&mut harness);
+
+    harness.app.select_llm_template("custom");
+    assert!(matches!(
+        harness.apply_next(),
+        vulnclaw_tui::protocol::BackendEvent::ControlResult { .. }
+    ));
+
+    let settings = harness.app.llm_settings.as_ref().unwrap();
+    assert_eq!(settings.provider, "custom");
+    assert!(settings.website_url.is_empty());
+    assert!(settings.base_url.is_empty());
+    assert!(settings.model.is_empty());
+}
+
+#[test]
+fn saving_the_settings_refreshes_the_header_and_closes_the_screen() {
+    let mut harness = AppHarness::connected();
+    open_settings(&mut harness);
+
+    harness.app.llm_settings.as_mut().unwrap().model = "deepseek-v4-pro".into();
+    harness.app.save_llm_settings();
+    assert!(matches!(
+        harness.apply_next(),
+        vulnclaw_tui::protocol::BackendEvent::ControlResult { .. }
+    ));
+
+    // The badge is otherwise only seeded from `ready`, so a save must refresh it.
+    assert_eq!(harness.app.provider.as_deref(), Some("deepseek"));
+    assert_eq!(harness.app.model.as_deref(), Some("deepseek-v4-pro"));
+    assert!(harness.app.llm_settings.is_none());
+    assert!(harness
+        .app
+        .transcript
+        .iter()
+        .any(|item| item.text == "Saved deepseek/deepseek-v4-pro"));
+}
+
+#[test]
+fn a_rejected_save_keeps_the_screen_open_with_the_reason() {
+    let mut harness = AppHarness::connected();
+    open_settings(&mut harness);
+
+    // The fake backend rejects this sentinel provider.
+    harness.app.llm_settings.as_mut().unwrap().provider = "reject".into();
+    harness.app.save_llm_settings();
+    assert!(matches!(
+        harness.apply_next(),
+        vulnclaw_tui::protocol::BackendEvent::Error { .. }
+    ));
+
+    let settings = harness.app.llm_settings.as_ref().unwrap();
+    assert!(!settings.loading);
+    assert!(settings.error.contains("config.write failed"));
+}
+
+#[test]
+fn opening_the_model_row_fetches_the_suggestions() {
+    use vulnclaw_tui::app::LlmField;
+
+    let mut harness = AppHarness::connected();
+    open_settings(&mut harness);
+
+    // Enter on the model row opens it for typing and pulls the list — there is
+    // no separate fetch command.
+    harness.app.llm_settings.as_mut().unwrap().focus = LlmField::Model;
+    harness.app.begin_llm_edit();
+    assert!(harness.app.llm_settings.as_ref().unwrap().editing);
+    assert!(matches!(
+        harness.apply_next(),
+        vulnclaw_tui::protocol::BackendEvent::ControlResult { .. }
+    ));
+
+    let settings = harness.app.llm_settings.as_ref().unwrap();
+    assert_eq!(settings.models, vec!["deepseek-chat", "deepseek-v4-pro"]);
+    assert!(!settings.loading);
+    // Nothing is adopted just by opening the row.
+    assert_eq!(settings.model, "deepseek-v4-pro");
+    assert!(settings.suggestion.is_none());
+}
+
+#[test]
+fn an_open_row_still_offers_suggestions_matching_what_was_typed() {
+    use vulnclaw_tui::app::LlmField;
+
+    let mut harness = AppHarness::connected();
+    open_settings(&mut harness);
+    harness.app.llm_settings.as_mut().unwrap().focus = LlmField::Model;
+    harness.app.begin_llm_edit();
+    harness.apply_next();
+
+    // Retype a prefix; suggestions narrow to the matching models.
+    let settings = harness.app.llm_settings.as_mut().unwrap();
+    settings.model = "deepseek-c".into();
+    settings.move_cursor_to_edge(true);
+    assert_eq!(
+        harness.app.llm_settings.as_ref().unwrap().suggestions(),
+        vec!["deepseek-chat"]
+    );
+
+    // ↓ picks it, and the confirming Enter adopts it.
+    harness.app.move_llm_suggestion(true);
+    harness.app.commit_llm_edit();
+
+    let settings = harness.app.llm_settings.as_ref().unwrap();
+    assert_eq!(settings.model, "deepseek-chat");
+    assert!(!settings.editing);
+}
+
+#[test]
+fn an_open_row_cannot_be_left_without_a_second_enter() {
+    use vulnclaw_tui::app::LlmField;
+
+    let mut harness = AppHarness::connected();
+    open_settings(&mut harness);
+    harness.app.llm_settings.as_mut().unwrap().focus = LlmField::Model;
+    harness.app.begin_llm_edit();
+
+    // ↑/↓ inside an open row walk its suggestions, never the rows.
+    harness.app.move_llm_focus(true);
+    harness.app.move_llm_focus(true);
+    assert_eq!(
+        harness.app.llm_settings.as_ref().unwrap().focus,
+        LlmField::Model
+    );
+
+    // Esc reverts the text and closes the row, leaving the screen up.
+    harness.app.llm_settings.as_mut().unwrap().model = "half-typed".into();
+    harness.app.cancel_llm_edit();
+    let settings = harness.app.llm_settings.as_ref().unwrap();
+    assert_eq!(settings.model, "deepseek-v4-pro");
+    assert!(!settings.editing);
+
+    // Only now do the rows move again (Model is last, so forward wraps).
+    harness.app.move_llm_focus(true);
+    assert_eq!(
+        harness.app.llm_settings.as_ref().unwrap().focus,
+        LlmField::Provider
+    );
+}
+
+#[test]
+fn the_settings_screen_refuses_to_open_while_a_task_runs() {
+    let mut harness = AppHarness::connected();
+    start_task(&mut harness, "complete.test");
+
+    harness.app.open_llm_settings();
+
+    assert!(harness.app.llm_settings.is_none());
+    assert!(harness
+        .app
+        .transcript
+        .iter()
+        .any(|item| item.text.contains("cannot change while a task is running")));
+}
+
+#[test]
+fn a_long_model_list_stays_fully_navigable() {
+    use vulnclaw_tui::app::LlmField;
+
+    let mut harness = AppHarness::connected();
+    open_settings(&mut harness);
+    // Far more models than the six rows the screen can show — OpenRouter
+    // advertises several hundred.
+    let models: Vec<String> = (0..40).map(|i| format!("model-{i:02}")).collect();
+    {
+        let settings = harness.app.llm_settings.as_mut().unwrap();
+        settings.focus = LlmField::Model;
+        settings.models = models;
+        settings.model = String::new();
+        settings.begin_edit();
+        settings.move_cursor_to_edge(true);
+    }
+
+    // Every match is offered, not only the ones that fit on screen.
+    assert_eq!(
+        harness
+            .app
+            .llm_settings
+            .as_ref()
+            .unwrap()
+            .suggestions()
+            .len(),
+        40
+    );
+
+    // ↓ walks past the first window instead of wrapping inside it: the first
+    // press selects entry 0, so ten presses land on entry 9 — well beyond the
+    // six rows the screen shows.
+    for _ in 0..10 {
+        harness.app.move_llm_suggestion(true);
+    }
+    assert_eq!(
+        harness.app.llm_settings.as_ref().unwrap().suggestion,
+        Some(9)
+    );
+
+    // The tail of the list is reachable, and only the end wraps.
+    for _ in 0..30 {
+        harness.app.move_llm_suggestion(true);
+    }
+    assert_eq!(
+        harness.app.llm_settings.as_ref().unwrap().suggestion,
+        Some(39)
+    );
+    harness.app.move_llm_suggestion(true);
+    assert_eq!(
+        harness.app.llm_settings.as_ref().unwrap().suggestion,
+        Some(0)
+    );
+
+    // ↑ from the top wraps to the last entry, not the last visible one.
+    harness.app.move_llm_suggestion(false);
+    assert_eq!(
+        harness.app.llm_settings.as_ref().unwrap().suggestion,
+        Some(39)
+    );
+
+    // The confirming Enter adopts whatever the window scrolled to.
+    for _ in 0..8 {
+        harness.app.move_llm_suggestion(false);
+    }
+    harness.app.commit_llm_edit();
+    assert_eq!(harness.app.llm_settings.as_ref().unwrap().model, "model-31");
+}
+
+#[test]
+fn typing_narrows_a_long_model_list_without_capping_it() {
+    use vulnclaw_tui::app::LlmField;
+
+    let mut harness = AppHarness::connected();
+    open_settings(&mut harness);
+    let settings = harness.app.llm_settings.as_mut().unwrap();
+    settings.focus = LlmField::Model;
+    settings.models = (0..40).map(|i| format!("model-{i:02}")).collect();
+    settings.begin_edit();
+
+    // A prefix that matches more than the window can hold stays fully listed.
+    settings.model = "model-1".into();
+    settings.move_cursor_to_edge(true);
+    let matches = harness.app.llm_settings.as_ref().unwrap().suggestions();
+    assert_eq!(matches.len(), 10);
+    assert_eq!(matches[0], "model-10");
+    assert_eq!(matches[9], "model-19");
 }

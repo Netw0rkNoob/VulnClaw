@@ -30,12 +30,15 @@ class LLMProvider(str, Enum):
     CUSTOM = "custom"
 
 
-# Provider preset definitions: base_url + default_model + notes
+# Provider preset definitions: base_url + default_model + label + website_url.
+# ``website_url`` is the vendor's public site (where credentials are issued); it
+# is surfaced by the TUI settings screen and seeded into ``llm.website_url``.
 PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
     LLMProvider.OPENAI: {
         "base_url": "https://api.openai.com/v1",
         "default_model": "gpt-5.6-sol",
         "label": "OpenAI",
+        "website_url": "https://platform.openai.com/",
     },
     # Anthropic's canonical API IDs are hyphenated (claude-opus-5); the dotted
     # forms seen on aggregators are slugs, not native IDs.
@@ -43,36 +46,43 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
         "base_url": "https://api.anthropic.com/v1",
         "default_model": "claude-opus-5",
         "label": "Anthropic Claude",
+        "website_url": "https://www.anthropic.com/",
     },
     LLMProvider.MINIMAX: {
         "base_url": "https://api.minimaxi.com/v1",
         "default_model": "MiniMax-M3",
         "label": "MiniMax",
+        "website_url": "https://www.minimaxi.com/",
     },
     LLMProvider.DEEPSEEK: {
         "base_url": "https://api.deepseek.com",
         "default_model": "deepseek-v4-pro",
         "label": "DeepSeek",
+        "website_url": "https://www.deepseek.com/",
     },
     LLMProvider.ZHIPU: {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "default_model": "glm-5.3",
         "label": "智谱 GLM",
+        "website_url": "https://open.bigmodel.cn/",
     },
     LLMProvider.MOONSHOT: {
         "base_url": "https://api.moonshot.cn/v1",
         "default_model": "kimi-k3",
         "label": "Kimi (月之暗面)",
+        "website_url": "https://www.moonshot.cn/",
     },
     LLMProvider.QWEN: {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "default_model": "qwen3.8-max",
         "label": "通义千问",
+        "website_url": "https://dashscope.aliyun.com/",
     },
     LLMProvider.SILICONFLOW: {
         "base_url": "https://api.siliconflow.cn/v1",
         "default_model": "deepseek-ai/DeepSeek-V4-Flash",
         "label": "SiliconFlow",
+        "website_url": "https://www.siliconflow.cn/",
     },
     # Ark serves preset endpoints by model ID directly, so a plain model name is
     # enough for a preset; custom/fine-tuned models would need an ``ep-`` id.
@@ -82,11 +92,13 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
         "base_url": "https://ark.cn-beijing.volces.com/api/v3",
         "default_model": "doubao-seed-evolving",
         "label": "豆包 (字节跳动)",
+        "website_url": "https://www.volcengine.com/product/doubao",
     },
     LLMProvider.STEPFUN: {
         "base_url": "https://api.stepfun.com/v1",
         "default_model": "step-3.7-flash",
         "label": "阶跃星辰",
+        "website_url": "https://www.stepfun.com/",
     },
     # ``api.sensenova.cn/v1`` is the legacy native gateway, not this schema's
     # OpenAI-compatible contract; the compatible-mode path is the one to use.
@@ -94,6 +106,7 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
         "base_url": "https://api.sensenova.cn/compatible-mode/v2",
         "default_model": "SenseNova-V6.5-Pro",
         "label": "商汤 (日日新)",
+        "website_url": "https://www.sensenova.cn/",
     },
     # Aggregator fronting many vendors behind one OpenAI-compatible endpoint.
     # Model IDs are namespaced by vendor (anthropic/..., openai/..., ...), so the
@@ -103,6 +116,7 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
         "base_url": "https://openrouter.ai/api/v1",
         "default_model": "anthropic/claude-opus-5",
         "label": "OpenRouter",
+        "website_url": "https://openrouter.ai/",
     },
     # Local models via Ollama's OpenAI-compatible endpoint. No API key is
     # required (the client sends a placeholder). The default model must support
@@ -113,11 +127,13 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
         "base_url": "http://localhost:11434/v1",
         "default_model": "qwen3.5:9b",
         "label": "Ollama (本地)",
+        "website_url": "https://ollama.com/",
     },
     LLMProvider.CUSTOM: {
         "base_url": "",
         "default_model": "",
         "label": "自定义",
+        "website_url": "",
     },
 }
 
@@ -163,6 +179,11 @@ class LLMConfig(BaseModel):
     model: str = Field(
         default=PROVIDER_PRESETS[LLMProvider.OPENAI]["default_model"],
         description="Model name to use (auto-filled by provider)",
+    )
+    website_url: str = Field(
+        default="",
+        description="Provider's official site or console, seeded from the provider preset "
+        "and editable from the TUI settings screen.",
     )
     max_tokens: int = Field(default=4096, description="Max tokens per response")
     max_context_tokens: int = Field(

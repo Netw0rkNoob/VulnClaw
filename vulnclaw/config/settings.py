@@ -7,6 +7,7 @@ import os
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import ValidationError
@@ -450,6 +451,9 @@ def _strip_defaults(raw: dict) -> None:
         raw["llm"].pop("api_key", None)
     if raw.get("llm", {}).get("api_keys") == []:
         raw["llm"].pop("api_keys", None)
+    # website_url is preset-seeded metadata; an unset one carries no information.
+    if raw.get("llm", {}).get("website_url") == "":
+        raw["llm"].pop("website_url", None)
     # Don't strip base_url/model if provider is set — they may be provider-specific.
     # Only strip when still at the OpenAI defaults, read from the preset so the
     # schema default and this stripper cannot drift apart.
@@ -509,6 +513,11 @@ def apply_provider_preset(config: VulnClawConfig, provider_name: str) -> VulnCla
     elif preset.get("default_model"):
         config.llm.model = preset["default_model"]
 
+    # website_url is pure preset metadata with no user-customisable equivalent,
+    # so it follows the preset unconditionally (``custom`` has none to offer).
+    if preset.get("website_url"):
+        config.llm.website_url = preset["website_url"]
+
     return config
 
 
@@ -522,9 +531,87 @@ def list_providers() -> list[dict[str, str]]:
                 "label": preset.get("label", provider.value),
                 "base_url": preset.get("base_url", ""),
                 "default_model": preset.get("default_model", ""),
+                "website_url": preset.get("website_url", ""),
             }
         )
     return result
+
+
+def normalize_base_url(value: str | None) -> str:
+    """Validate an OpenAI-compatible HTTP(S) base URL, stripping a trailing slash.
+
+    Mirrors the rule the Web UI applies in ``vulnclaw.web.schemas`` so both
+    surfaces accept exactly the same strings; it lives here so the config layer
+    keeps no dependency on the optional ``web`` extra.
+    """
+    if value is None:
+        return ""
+    normalized = value.strip().rstrip("/")
+    if not normalized:
+        return ""
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("base_url must use http or https")
+    if not parsed.netloc or not parsed.hostname:
+        raise ValueError("base_url must include a host")
+    if parsed.username or parsed.password:
+        raise ValueError("base_url must not include credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("base_url must not include query strings or fragments")
+    return normalized
+
+
+def provider_form_values(provider_name: str) -> dict[str, str]:
+    """Field values a settings form adopts when a provider template is chosen.
+
+    ``custom`` has no preset behind it, so it deliberately returns blanks for
+    everything preset-derived — that is what clears the form for hand entry.
+    """
+    try:
+        provider = LLMProvider(provider_name.strip().lower())
+    except (AttributeError, ValueError):
+        raise ValueError(f"unknown provider: {provider_name}") from None
+    preset = PROVIDER_PRESETS[provider]
+    return {
+        "provider": provider.value,
+        "website_url": preset.get("website_url", ""),
+        "base_url": preset.get("base_url", ""),
+        "model": preset.get("default_model", ""),
+    }
+
+
+def apply_llm_form(
+    config: VulnClawConfig,
+    *,
+    provider: str,
+    base_url: str,
+    model: str,
+    website_url: str = "",
+) -> VulnClawConfig:
+    """Write the LLM settings form onto *config*, validating before it lands.
+
+    Blank fields fall back to the chosen preset so a half-filled form still
+    saves; ``custom`` has no preset to fall back on and must stand alone.
+    """
+    try:
+        resolved = LLMProvider(provider.strip().lower())
+    except (AttributeError, ValueError):
+        raise ValueError(f"unknown provider: {provider}") from None
+
+    preset = PROVIDER_PRESETS[resolved]
+    normalized = normalize_base_url(base_url) or preset.get("base_url", "")
+    if not normalized:
+        raise ValueError("a base URL is required for the custom provider")
+
+    model_name = model.strip() or preset.get("default_model", "")
+    if not model_name:
+        raise ValueError("a model name is required")
+
+    config.llm.provider = resolved.value
+    config.llm.base_url = normalized
+    config.llm.model = model_name
+    config.llm.website_url = website_url.strip()
+    return config
 
 
 def fetch_provider_models(base_url: str, api_key: str, timeout: float = 10.0) -> list[str]:

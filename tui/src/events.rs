@@ -4,7 +4,7 @@ use crossterm::event::{
 };
 use ratatui::layout::Position;
 
-use crate::app::App;
+use crate::app::{App, LlmSettings};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
     // crossterm emits a Press and a Release (and sometimes Repeat) event for a
@@ -43,6 +43,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => app.dismiss_task(),
             _ => {}
         }
+        return;
+    }
+
+    // The LLM settings screen is a blocking overlay: it owns every key while
+    // open, so its bindings below are deliberately self-contained.
+    if app.llm_settings.is_some() {
+        app.cancel_layout_gesture();
+        handle_llm_settings_key(app, key);
         return;
     }
 
@@ -150,6 +158,85 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// Bindings for the open LLM settings screen.
+///
+/// The screen swallows every key, so this must cover closing, saving, moving
+/// between rows, and editing text — nothing falls through to the composer.
+fn handle_llm_settings_key(app: &mut App, key: KeyEvent) {
+    let (list_open, editing) = app
+        .llm_settings
+        .as_ref()
+        .map_or((false, false), |settings| {
+            (settings.template_list_open, settings.editing)
+        });
+    match (key.code, key.modifiers) {
+        // Esc unwinds one level at a time: the template list, then the open
+        // row, and only then the screen itself.
+        (KeyCode::Esc, _) => {
+            if list_open {
+                app.close_llm_template_list();
+            } else if editing {
+                app.cancel_llm_edit();
+            } else {
+                app.close_llm_settings();
+            }
+        }
+        (KeyCode::Char('s'), KeyModifiers::CONTROL) => app.save_llm_settings(),
+        // Enter is the confirmation both ways: it opens the focused row, and a
+        // second press closes it.
+        (KeyCode::Enter, _) => {
+            if list_open {
+                app.commit_llm_template_list();
+            } else if editing {
+                app.commit_llm_edit();
+            } else {
+                app.begin_llm_edit();
+            }
+        }
+        // While a row is open these walk its suggestions, never the rows, so an
+        // unconfirmed edit cannot be abandoned by moving away.
+        (KeyCode::Up, _) => {
+            if list_open {
+                app.move_llm_template_list(false);
+            } else if editing {
+                app.move_llm_suggestion(false);
+            } else {
+                app.move_llm_focus(false);
+            }
+        }
+        (KeyCode::Down, _) => {
+            if list_open {
+                app.move_llm_template_list(true);
+            } else if editing {
+                app.move_llm_suggestion(true);
+            } else {
+                app.move_llm_focus(true);
+            }
+        }
+        (KeyCode::Tab, _) if !list_open && !editing => app.move_llm_focus(true),
+        (KeyCode::BackTab, _) if !list_open && !editing => app.move_llm_focus(false),
+        (KeyCode::Backspace, _) if editing => edit_llm_settings(app, |s| s.delete_backward()),
+        (KeyCode::Delete, _) if editing => edit_llm_settings(app, |s| s.delete_forward()),
+        (KeyCode::Left, _) if editing => edit_llm_settings(app, |s| s.move_cursor(false)),
+        (KeyCode::Right, _) if editing => edit_llm_settings(app, |s| s.move_cursor(true)),
+        (KeyCode::Home, _) if editing => edit_llm_settings(app, |s| s.move_cursor_to_edge(false)),
+        (KeyCode::End, _) if editing => edit_llm_settings(app, |s| s.move_cursor_to_edge(true)),
+        (KeyCode::Char(character), modifiers)
+            if editing && !modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            edit_llm_settings(app, |s| s.insert_char(character));
+        }
+        _ => {}
+    }
+}
+
+/// Apply *edit* to the open settings screen; a no-op when it is closed.
+fn edit_llm_settings(app: &mut App, edit: impl FnOnce(&mut LlmSettings)) {
+    if let Some(settings) = app.llm_settings.as_mut() {
+        edit(settings);
+    }
+}
+
 pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     let point = Position::new(mouse.column, mouse.row);
     if app.pending_execution.is_some() {
@@ -163,7 +250,7 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         }
         return;
     }
-    if app.pending_task.is_some() || app.show_attack_chain {
+    if app.pending_task.is_some() || app.show_attack_chain || app.llm_settings.is_some() {
         app.cancel_layout_gesture();
         return;
     }
@@ -319,6 +406,12 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
 pub fn handle_paste(app: &mut App, text: &str) {
     app.cancel_layout_gesture();
     if app.pending_execution.is_some() || app.pending_task.is_some() || app.show_attack_chain {
+        return;
+    }
+    // A paste into the settings screen belongs to its focused row; letting it
+    // through to the composer would type a credential into the wrong place.
+    if app.llm_settings.is_some() {
+        edit_llm_settings(app, |settings| settings.insert_text(text));
         return;
     }
     if !app.geometry(app.terminal_size).too_small {

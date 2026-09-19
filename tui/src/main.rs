@@ -48,6 +48,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> io::Result
         if area != app.terminal_size
             || app.pending_execution.is_some()
             || app.pending_task.is_some()
+            || app.llm_settings.is_some()
         {
             app.cancel_layout_gesture();
         }

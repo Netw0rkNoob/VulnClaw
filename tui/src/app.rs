@@ -199,6 +199,390 @@ impl PendingExecution {
     }
 }
 
+/// Editable rows of the LLM settings screen, in display order.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LlmField {
+    #[default]
+    Provider,
+    WebsiteUrl,
+    BaseUrl,
+    ApiKey,
+    Model,
+}
+
+impl LlmField {
+    /// Display order; also the order ↑/↓ walks.
+    pub const ORDER: [LlmField; 5] = [
+        LlmField::Provider,
+        LlmField::WebsiteUrl,
+        LlmField::BaseUrl,
+        LlmField::ApiKey,
+        LlmField::Model,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LlmField::Provider => "Template",
+            LlmField::WebsiteUrl => "Website URL",
+            LlmField::BaseUrl => "API request URL",
+            LlmField::ApiKey => "API key",
+            LlmField::Model => "Model",
+        }
+    }
+
+    /// The template row is chosen from the backend's preset list; every other
+    /// row is typed into directly.
+    pub fn is_editable_text(self) -> bool {
+        !matches!(self, LlmField::Provider)
+    }
+
+    fn position(self) -> usize {
+        Self::ORDER
+            .iter()
+            .position(|candidate| *candidate == self)
+            .unwrap_or(0)
+    }
+}
+
+/// One provider template advertised by the backend.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ProviderEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub website_url: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub default_model: String,
+}
+
+/// How many suggestion rows are visible under the model row at once.
+///
+/// This is a window height, not a cap on the list: the window scrolls to follow
+/// the highlighted entry, so every match stays reachable however many the
+/// provider returns.
+pub const LLM_SUGGESTION_ROWS: usize = 6;
+
+/// State of the `/config` LLM settings screen.
+///
+/// The screen has two modes. In navigation mode ↑/↓ walk the rows. Enter opens
+/// the focused row for typing — after that ↑/↓ no longer leave the row, and only
+/// a second Enter (commit) or Esc (discard) closes it again.
+#[derive(Clone, Debug, Default)]
+pub struct LlmSettings {
+    pub provider: String,
+    pub website_url: String,
+    pub base_url: String,
+    /// Only ever holds a key the operator just typed. The backend never returns
+    /// stored credentials, so an empty value means "leave the saved one alone".
+    pub api_key: String,
+    pub api_key_set: bool,
+    pub model: String,
+    pub providers: Vec<ProviderEntry>,
+    /// Models the provider advertises, offered as suggestions while typing the
+    /// model name.
+    pub models: Vec<String>,
+    pub focus: LlmField,
+    pub cursor: usize,
+    /// True while the focused row is open for typing.
+    pub editing: bool,
+    /// What the focused row held when typing began; Esc puts it back. Owned by
+    /// [`LlmSettings::begin_edit`] / [`LlmSettings::end_edit`], not by callers.
+    pub edit_backup: String,
+    /// True while the provider template list is open over the focused row.
+    pub template_list_open: bool,
+    pub list_index: usize,
+    /// Highlighted entry of [`Self::suggestions`], once ↑/↓ has picked one.
+    pub suggestion: Option<usize>,
+    pub status: String,
+    pub error: String,
+    pub loading: bool,
+}
+
+impl LlmSettings {
+    /// A screen awaiting its first `config.read` reply.
+    pub fn loading() -> Self {
+        Self {
+            loading: true,
+            status: "Loading configuration…".to_owned(),
+            ..Self::default()
+        }
+    }
+
+    pub fn focused_text(&self) -> &str {
+        match self.focus {
+            LlmField::WebsiteUrl => &self.website_url,
+            LlmField::BaseUrl => &self.base_url,
+            LlmField::ApiKey => &self.api_key,
+            LlmField::Model => &self.model,
+            // Not a text row; the template list owns it.
+            LlmField::Provider => "",
+        }
+    }
+
+    fn focused_text_mut(&mut self) -> Option<&mut String> {
+        match self.focus {
+            LlmField::WebsiteUrl => Some(&mut self.website_url),
+            LlmField::BaseUrl => Some(&mut self.base_url),
+            LlmField::ApiKey => Some(&mut self.api_key),
+            LlmField::Model => Some(&mut self.model),
+            LlmField::Provider => None,
+        }
+    }
+
+    /// Value shown for a row, masking a stored key that was never disclosed.
+    pub fn display_value(&self, field: LlmField) -> String {
+        match field {
+            LlmField::Provider => {
+                if self.provider.is_empty() {
+                    String::new()
+                } else {
+                    self.providers
+                        .iter()
+                        .find(|entry| entry.id == self.provider)
+                        .map_or_else(|| self.provider.clone(), |entry| entry.label.clone())
+                }
+            }
+            LlmField::WebsiteUrl => self.website_url.clone(),
+            LlmField::BaseUrl => self.base_url.clone(),
+            LlmField::ApiKey => {
+                if self.api_key.is_empty() && self.api_key_set {
+                    "•••••••• (saved)".to_owned()
+                } else if self.api_key.is_empty() {
+                    String::new()
+                } else {
+                    "•".repeat(self.api_key.chars().count())
+                }
+            }
+            LlmField::Model => self.model.clone(),
+        }
+    }
+
+    pub fn focus_field(&mut self, field: LlmField) {
+        self.focus = field;
+        self.cursor = self.focused_text().len();
+        self.editing = false;
+        self.edit_backup.clear();
+        self.template_list_open = false;
+        self.list_index = 0;
+        self.suggestion = None;
+    }
+
+    /// Walk the rows. Refuses to move while a row is open for typing, which is
+    /// what makes the opening Enter a real confirmation step.
+    pub fn move_focus(&mut self, forward: bool) {
+        if self.editing || self.template_list_open {
+            return;
+        }
+        let position = self.focus.position();
+        let count = LlmField::ORDER.len();
+        let next = if forward {
+            (position + 1) % count
+        } else {
+            (position + count - 1) % count
+        };
+        self.focus_field(LlmField::ORDER[next]);
+    }
+
+    /// Enter on the focused row.
+    ///
+    /// Returns true when a text row was opened, which is the caller's cue to
+    /// fetch the model list for the row that needs one.
+    pub fn begin_edit(&mut self) -> bool {
+        self.error.clear();
+        if self.focus == LlmField::Provider {
+            if self.providers.is_empty() {
+                self.error = "No provider templates loaded yet.".to_owned();
+                return false;
+            }
+            self.template_list_open = true;
+            let current = self.provider.clone();
+            self.list_index = self
+                .providers
+                .iter()
+                .position(|entry| entry.id == current)
+                .unwrap_or(0);
+            return false;
+        }
+        self.editing = true;
+        self.edit_backup = self.focused_text().to_owned();
+        self.move_cursor_to_edge(true);
+        self.suggestion = None;
+        true
+    }
+
+    /// The second Enter closes the row; Esc rolls it back instead.
+    pub fn end_edit(&mut self, commit: bool) {
+        if !self.editing {
+            return;
+        }
+        if commit {
+            // A suggestion picked with ↑/↓ wins over the raw text.
+            self.adopt_suggestion();
+        } else {
+            let backup = std::mem::take(&mut self.edit_backup);
+            if let Some(text) = self.focused_text_mut() {
+                *text = backup;
+            }
+        }
+        self.editing = false;
+        self.edit_backup.clear();
+        self.suggestion = None;
+        self.move_cursor_to_edge(true);
+    }
+
+    /// Model names offered while typing, filtered by what has been typed.
+    ///
+    /// Returns every match — a provider can advertise hundreds (OpenRouter
+    /// reports 445) and the screen only windows them for display.
+    pub fn suggestions(&self) -> Vec<String> {
+        if !self.editing || self.focus != LlmField::Model {
+            return Vec::new();
+        }
+        let typed = self.model.trim().to_lowercase();
+        let matches =
+            |model: &String| typed.is_empty() || model.to_lowercase().contains(typed.as_str());
+        // Prefix matches first: they are almost always what was meant.
+        let mut prefixed: Vec<String> = self
+            .models
+            .iter()
+            .filter(|model| typed.is_empty() || model.to_lowercase().starts_with(&typed))
+            .cloned()
+            .collect();
+        let rest: Vec<String> = self
+            .models
+            .iter()
+            .filter(|model| !prefixed.contains(model) && matches(model))
+            .cloned()
+            .collect();
+        prefixed.extend(rest);
+        prefixed
+    }
+
+    pub fn move_suggestion(&mut self, forward: bool) {
+        let count = self.suggestions().len();
+        if count == 0 {
+            return;
+        }
+        self.suggestion = Some(match self.suggestion {
+            None => {
+                if forward {
+                    0
+                } else {
+                    count - 1
+                }
+            }
+            Some(index) if forward => (index + 1) % count,
+            Some(index) => (index + count - 1) % count,
+        });
+    }
+
+    /// Replace the typed model with the highlighted suggestion, if any.
+    fn adopt_suggestion(&mut self) -> bool {
+        let Some(index) = self.suggestion else {
+            return false;
+        };
+        let Some(model) = self.suggestions().get(index).cloned() else {
+            return false;
+        };
+        self.model = model;
+        true
+    }
+
+    /// Close the template list, optionally adopting the highlighted template.
+    pub fn close_template_list(&mut self, commit: bool) -> Option<String> {
+        if !self.template_list_open {
+            return None;
+        }
+        self.template_list_open = false;
+        if !commit {
+            return None;
+        }
+        self.providers
+            .get(self.list_index)
+            .map(|entry| entry.id.clone())
+    }
+
+    /// Labels of the open template list.
+    pub fn template_labels(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .map(|entry| entry.label.clone())
+            .collect()
+    }
+
+    pub fn insert_char(&mut self, character: char) {
+        // Rows only accept input once Enter has opened them, so a stray
+        // keystroke or paste can never mutate an unconfirmed row.
+        if !self.editing {
+            return;
+        }
+        let cursor = self.cursor.min(self.focused_text().len());
+        if let Some(text) = self.focused_text_mut() {
+            text.insert(cursor, character);
+        }
+        self.cursor = cursor + character.len_utf8();
+        // Any edit invalidates a highlight chosen against the older text.
+        self.suggestion = None;
+    }
+
+    pub fn insert_text(&mut self, value: &str) {
+        for character in value
+            .chars()
+            .filter(|character| *character != '\r' && *character != '\n')
+        {
+            self.insert_char(character);
+        }
+    }
+
+    pub fn delete_backward(&mut self) {
+        if !self.editing {
+            return;
+        }
+        let cursor = self.cursor;
+        if cursor == 0 {
+            return;
+        }
+        let previous = previous_char_boundary(self.focused_text(), cursor);
+        if let Some(text) = self.focused_text_mut() {
+            text.drain(previous..cursor);
+        }
+        self.cursor = previous;
+        self.suggestion = None;
+    }
+
+    pub fn delete_forward(&mut self) {
+        if !self.editing {
+            return;
+        }
+        let cursor = self.cursor;
+        if cursor >= self.focused_text().len() {
+            return;
+        }
+        let next = next_char_boundary(self.focused_text(), cursor);
+        if let Some(text) = self.focused_text_mut() {
+            text.drain(cursor..next);
+        }
+        self.suggestion = None;
+    }
+
+    pub fn move_cursor(&mut self, right: bool) {
+        if !self.editing {
+            return;
+        }
+        self.cursor = if right {
+            next_char_boundary(self.focused_text(), self.cursor)
+        } else {
+            previous_char_boundary(self.focused_text(), self.cursor)
+        };
+    }
+
+    pub fn move_cursor_to_edge(&mut self, end: bool) {
+        self.cursor = if end { self.focused_text().len() } else { 0 };
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum TranscriptKind {
     User,
@@ -231,7 +615,7 @@ pub struct SlashCommand {
 const LOCAL_SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/scope ", "update session scope defaults"),
     ("/report", "show report export guidance"),
-    ("/config", "show configuration guidance"),
+    ("/config", "configure the LLM provider"),
     ("/clear", "clear the transcript"),
     ("/help", "list available commands"),
     ("/run ", "run a task through the Python backend"),
@@ -332,6 +716,9 @@ pub struct App {
     pub worker_started_at: Option<Instant>,
     pub show_attack_chain: bool,
     pub pending_task: Option<String>,
+    /// `/config` LLM settings screen. `Some` while it is open; like the other
+    /// overlays it is a plain field rather than an entry in a modal stack.
+    pub llm_settings: Option<LlmSettings>,
     pub skills: Vec<SkillNode>,
     /// Last known terminal viewport size, captured each frame. Used to render an
     /// offscreen copy of the focused pane for independent clipboard copies.
@@ -409,6 +796,7 @@ impl App {
             worker_started_at: None,
             show_attack_chain: false,
             pending_task: None,
+            llm_settings: None,
             skills: skill_tree(),
             terminal_size: Rect::default(),
             toast: String::new(),
@@ -493,7 +881,7 @@ impl App {
                 "Use vulnclaw report <result.json> [--pdf] to write the report; the TUI shows findings live.",
             );
         } else if command == "/config" {
-            self.status("Use vulnclaw config set <key> <value> for llm.provider / llm.api_key / llm.base_url / llm.model.");
+            self.open_llm_settings();
         } else if let Some((verb, arguments)) = split_slash_command(&command) {
             if verb == "scope" {
                 self.request_scope_control(arguments);
@@ -1266,6 +1654,27 @@ impl App {
                             };
                         }
                     }
+                    // The settings operations own their feedback: it belongs in
+                    // the modal, which covers the hotbar the status line uses.
+                    match operation.as_str() {
+                        "config.read" => {
+                            self.apply_config_read(&result);
+                            return;
+                        }
+                        "config.preset" => {
+                            self.apply_config_preset(&result);
+                            return;
+                        }
+                        "config.models" => {
+                            self.apply_config_models(&result);
+                            return;
+                        }
+                        "config.write" => {
+                            self.apply_config_write(&result);
+                            return;
+                        }
+                        _ => {}
+                    }
                     self.status(
                         result
                             .get("message")
@@ -1282,6 +1691,7 @@ impl App {
                     code,
                     message,
                 } => {
+                    let mut failed_config_operation: Option<String> = None;
                     let rejected_start = if let Some(request_id) = request_id {
                         match self.pending_requests.remove(&request_id) {
                             None => {
@@ -1308,6 +1718,14 @@ impl App {
                                 }
                                 false
                             }
+                            Some(PendingRequest::Control(operation)) => {
+                                // A rejected settings edit keeps the modal open
+                                // so the operator can correct and retry.
+                                if operation.starts_with("config.") {
+                                    failed_config_operation = Some(operation);
+                                }
+                                false
+                            }
                             Some(_) => false,
                         }
                     } else {
@@ -1321,6 +1739,9 @@ impl App {
                         self.finish_task("Rejected");
                     }
                     self.error(format!("Backend {code}: {message}"));
+                    if let Some(operation) = failed_config_operation {
+                        self.apply_config_failure(&operation, &message);
+                    }
                 }
                 BackendEvent::ShutdownComplete { request_id } => {
                     if !matches!(
@@ -1684,6 +2105,297 @@ impl App {
         }
     }
 
+    // -- /config LLM settings screen --------------------------------------
+
+    /// Open the settings screen and ask the backend for the current values.
+    pub fn open_llm_settings(&mut self) {
+        if self.worker_active {
+            self.error("Administrative settings cannot change while a task is running.");
+            return;
+        }
+        if !self.backend_ready {
+            self.error("The Python backend is not ready.");
+            return;
+        }
+        self.llm_settings = Some(LlmSettings::loading());
+        if !self.request_control("config.read", serde_json::json!({})) {
+            self.fail_llm_settings();
+        }
+    }
+
+    pub fn close_llm_settings(&mut self) {
+        self.llm_settings = None;
+    }
+
+    /// Surface a failed control request inside the modal, which covers the
+    /// transcript that `request_control` wrote the specific reason to.
+    fn fail_llm_settings(&mut self) {
+        if let Some(settings) = self.llm_settings.as_mut() {
+            settings.loading = false;
+            settings.error =
+                "Request failed — press Esc and check the transcript for the reason.".to_owned();
+        }
+    }
+
+    /// Seeds the form from the chosen template. The backend owns the preset
+    /// table, so selecting `custom` blanks the fields there, not here.
+    pub fn select_llm_template(&mut self, provider: &str) {
+        let arguments = serde_json::json!({ "provider": provider });
+        if self.request_control("config.preset", arguments) {
+            if let Some(settings) = self.llm_settings.as_mut() {
+                settings.loading = true;
+                settings.error.clear();
+            }
+        } else {
+            self.fail_llm_settings();
+        }
+    }
+
+    /// Ask the provider for its model list. An empty key makes the backend
+    /// reuse the stored credential, so a refresh needs no retype.
+    pub fn fetch_llm_models(&mut self) {
+        let Some(settings) = self.llm_settings.as_ref() else {
+            return;
+        };
+        if settings.loading {
+            return;
+        }
+        if settings.base_url.trim().is_empty() {
+            if let Some(settings) = self.llm_settings.as_mut() {
+                settings.error = "Set an API request URL before fetching models.".to_owned();
+            }
+            return;
+        }
+        let arguments = serde_json::json!({
+            "base_url": settings.base_url,
+            "api_key": settings.api_key,
+        });
+        if self.request_control("config.models", arguments) {
+            if let Some(settings) = self.llm_settings.as_mut() {
+                settings.loading = true;
+                settings.error.clear();
+                settings.status = "Fetching models…".to_owned();
+            }
+        } else {
+            self.fail_llm_settings();
+        }
+    }
+
+    pub fn save_llm_settings(&mut self) {
+        let Some(settings) = self.llm_settings.as_ref() else {
+            return;
+        };
+        if settings.loading {
+            return;
+        }
+        let arguments = serde_json::json!({
+            "provider": settings.provider,
+            "website_url": settings.website_url,
+            "base_url": settings.base_url,
+            "model": settings.model,
+            "api_key": settings.api_key,
+        });
+        if self.request_control("config.write", arguments) {
+            if let Some(settings) = self.llm_settings.as_mut() {
+                settings.loading = true;
+                settings.error.clear();
+                settings.status = "Saving…".to_owned();
+            }
+        } else {
+            self.fail_llm_settings();
+        }
+    }
+
+    /// Enter on the focused row: open its list, or place the caret at the end
+    /// of a text field.
+    /// The first Enter: open the focused row for typing, or the template list.
+    ///
+    /// Opening the model row also refreshes the provider's model list, which is
+    /// what feeds the suggestions shown while typing.
+    pub fn begin_llm_edit(&mut self) {
+        let opened_text_row = match self.llm_settings.as_mut() {
+            Some(settings) => {
+                let is_model = settings.focus == LlmField::Model;
+                let opened = settings.begin_edit();
+                opened && is_model
+            }
+            None => false,
+        };
+        if opened_text_row {
+            self.fetch_llm_models();
+        }
+    }
+
+    /// The second Enter: close the row, keeping what was typed.
+    pub fn commit_llm_edit(&mut self) {
+        if let Some(settings) = self.llm_settings.as_mut() {
+            settings.end_edit(true);
+        }
+    }
+
+    /// Esc on an open row rolls the text back to what it held when it opened.
+    pub fn cancel_llm_edit(&mut self) {
+        if let Some(settings) = self.llm_settings.as_mut() {
+            settings.end_edit(false);
+        }
+    }
+
+    /// Move the open template list's highlight, wrapping around either end.
+    pub fn move_llm_template_list(&mut self, forward: bool) {
+        let Some(settings) = self.llm_settings.as_mut() else {
+            return;
+        };
+        let count = settings.template_labels().len();
+        if count == 0 {
+            return;
+        }
+        settings.list_index = if forward {
+            (settings.list_index + 1) % count
+        } else {
+            (settings.list_index + count - 1) % count
+        };
+    }
+
+    pub fn commit_llm_template_list(&mut self) {
+        let choice = self
+            .llm_settings
+            .as_mut()
+            .and_then(|settings| settings.close_template_list(true));
+        if let Some(provider) = choice {
+            self.select_llm_template(&provider);
+        }
+    }
+
+    pub fn close_llm_template_list(&mut self) {
+        if let Some(settings) = self.llm_settings.as_mut() {
+            settings.close_template_list(false);
+        }
+    }
+
+    /// Move the highlighted model suggestion while the model row is open.
+    pub fn move_llm_suggestion(&mut self, forward: bool) {
+        if let Some(settings) = self.llm_settings.as_mut() {
+            settings.move_suggestion(forward);
+        }
+    }
+
+    /// Walk the settings rows, wrapping at either end. A no-op while a row is
+    /// open, so an unconfirmed edit cannot be abandoned by changing rows.
+    pub fn move_llm_focus(&mut self, forward: bool) {
+        if let Some(settings) = self.llm_settings.as_mut() {
+            settings.error.clear();
+            settings.move_focus(forward);
+        }
+    }
+
+    fn apply_config_read(&mut self, result: &serde_json::Value) {
+        let Some(settings) = self.llm_settings.as_mut() else {
+            return;
+        };
+        settings.provider = result_text(result, "provider");
+        settings.website_url = result_text(result, "website_url");
+        settings.base_url = result_text(result, "base_url");
+        settings.model = result_text(result, "model");
+        settings.api_key_set = result
+            .get("api_key_set")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        settings.providers = result
+            .get("providers")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<Vec<ProviderEntry>>(value).ok())
+            .unwrap_or_default();
+        settings.loading = false;
+        settings.status.clear();
+        settings.error.clear();
+        let focus = settings.focus;
+        settings.focus_field(focus);
+    }
+
+    fn apply_config_preset(&mut self, result: &serde_json::Value) {
+        let Some(settings) = self.llm_settings.as_mut() else {
+            return;
+        };
+        settings.provider = result_text(result, "provider");
+        settings.website_url = result_text(result, "website_url");
+        settings.base_url = result_text(result, "base_url");
+        settings.model = result_text(result, "model");
+        // A new template invalidates any list fetched against the old endpoint.
+        settings.models.clear();
+        settings.template_list_open = false;
+        settings.list_index = 0;
+        settings.suggestion = None;
+        settings.loading = false;
+        settings.error.clear();
+    }
+
+    fn apply_config_models(&mut self, result: &serde_json::Value) {
+        let Some(settings) = self.llm_settings.as_mut() else {
+            return;
+        };
+        settings.loading = false;
+        let models = result
+            .get("models")
+            .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())
+            .unwrap_or_default();
+        if models.is_empty() {
+            // Nothing came back: fall back to the template's default rather
+            // than leaving the field unusable.
+            if settings.model.trim().is_empty() {
+                let fallback = settings
+                    .providers
+                    .iter()
+                    .find(|entry| entry.id == settings.provider)
+                    .map(|entry| entry.default_model.clone())
+                    .unwrap_or_default();
+                settings.model = fallback;
+            }
+            settings.models.clear();
+            settings.error =
+                "No models returned; keeping the template default. You can type a model id."
+                    .to_owned();
+            return;
+        }
+        // The list only feeds suggestions from here on; nothing is adopted
+        // automatically, so an in-progress model name is never clobbered.
+        settings.status = format!("{} models available.", models.len());
+        settings.models = models;
+        settings.error.clear();
+    }
+
+    fn apply_config_failure(&mut self, operation: &str, message: &str) {
+        let Some(settings) = self.llm_settings.as_mut() else {
+            return;
+        };
+        settings.loading = false;
+        settings.status.clear();
+        settings.error = format!("{operation} failed: {message}");
+    }
+
+    fn apply_config_write(&mut self, result: &serde_json::Value) {
+        // The header badge is only ever seeded from `ready`, so a successful
+        // save has to refresh it here or it keeps reporting the old provider.
+        if let Some(provider) = result.get("provider").and_then(serde_json::Value::as_str) {
+            self.provider = Some(provider.to_owned());
+        }
+        if let Some(model) = result.get("model").and_then(serde_json::Value::as_str) {
+            self.model = Some(model.to_owned());
+        }
+        if let Some(ready) = result
+            .get("config_ready")
+            .and_then(serde_json::Value::as_bool)
+        {
+            self.config_ready = Some(ready);
+        }
+        let message = result_text(result, "message");
+        self.llm_settings = None;
+        self.status(if message.is_empty() {
+            "Configuration saved.".to_owned()
+        } else {
+            message
+        });
+    }
+
     fn start_task(&mut self, command_line: String) {
         if self.worker_active {
             self.error("A VulnClaw command is already running.");
@@ -2043,6 +2755,15 @@ fn normalize_backend_command(command: String) -> Option<String> {
         return None;
     }
     Some(normalized.to_owned())
+}
+
+/// Read a string field from a `control_result` payload, defaulting to empty.
+fn result_text(result: &serde_json::Value, key: &str) -> String {
+    result
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn previous_char_boundary(text: &str, index: usize) -> usize {
