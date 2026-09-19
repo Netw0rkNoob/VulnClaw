@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import subprocess
 import time
 from contextlib import suppress
@@ -20,6 +19,7 @@ from vulnclaw.config.source_render import render_highlighted_source_block
 #          改为从 config/url_utils.py 导入纯 URL 工具函数。
 from vulnclaw.config.url_utils import infer_port_from_url
 from vulnclaw.mcp._probe_mixin import ProbeMixin
+from vulnclaw.mcp.fetch_request import prepare_fetch_request_kwargs
 from vulnclaw.mcp.registry import HealthStatus, MCPRegistry
 
 try:
@@ -51,7 +51,6 @@ _BENIGN_SHUTDOWN_KEYWORDS = (
     "generator didn't stop",
 )
 
-_FETCH_METHOD_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
 _FETCH_DEFAULT_TIMEOUT = 30.0
 _FETCH_MAX_TIMEOUT = 120.0
 _FETCH_DEFAULT_BODY_CHARS_LIMIT = 0
@@ -1474,38 +1473,11 @@ class MCPLifecycleManager(ProbeMixin):
             return f"[!] fetch 请求失败: {e}"
 
     def _prepare_fetch_request(self, args: dict) -> dict[str, Any]:
-        url = str(args.get("url", "") or "").strip()
-        if not url:
-            raise ValueError("fetch requires url")
-
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("fetch only supports absolute http/https URLs")
-
-        method = str(args.get("method", "GET") or "GET").strip().upper()
-        if not _FETCH_METHOD_RE.fullmatch(method):
-            raise ValueError(f"invalid HTTP method for fetch: {method!r}")
-
-        request_kwargs: dict[str, Any] = {
-            "method": method,
-            "url": url,
-            "headers": self._coerce_fetch_string_map(args.get("headers"), "headers"),
-        }
-
-        params = args.get("params")
-        if params is not None:
-            request_kwargs["params"] = params
-
-        cookies = self._coerce_fetch_string_map(args.get("cookies"), "cookies")
-        if cookies:
-            request_kwargs["cookies"] = cookies
-
-        body_kwargs, body_mode = self._fetch_body_kwargs(args)
-        request_kwargs.update(body_kwargs)
+        request_kwargs, body_mode = prepare_fetch_request_kwargs(args)
 
         return {
-            "method": method,
-            "url": url,
+            "method": request_kwargs["method"],
+            "url": request_kwargs["url"],
             "kwargs": request_kwargs,
             "body_mode": body_mode,
             "timeout": self._bounded_float(
@@ -1521,26 +1493,6 @@ class MCPLifecycleManager(ProbeMixin):
                 default=_FETCH_DEFAULT_BODY_CHARS_LIMIT,
             ),
         }
-
-    @staticmethod
-    def _coerce_fetch_string_map(value: Any, name: str) -> dict[str, str]:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError(f"fetch {name} must be an object")
-        return {str(key): str(item) for key, item in value.items()}
-
-    @staticmethod
-    def _fetch_body_kwargs(args: dict) -> tuple[dict[str, Any], str | None]:
-        if args.get("json") is not None:
-            return {"json": args["json"]}, "json"
-        if args.get("form") is not None:
-            return {"data": args["form"]}, "form"
-        if args.get("data") is not None:
-            return {"data": args["data"]}, "data"
-        if args.get("body") is not None:
-            return {"content": args["body"]}, "body"
-        return {}, None
 
     @staticmethod
     def _bounded_float(value: Any, *, lower: float, upper: float, default: float) -> float:
