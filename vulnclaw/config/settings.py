@@ -450,13 +450,16 @@ def _strip_defaults(raw: dict) -> None:
         raw["llm"].pop("api_key", None)
     if raw.get("llm", {}).get("api_keys") == []:
         raw["llm"].pop("api_keys", None)
-    # Don't strip base_url/model if provider is set — they may be provider-specific
-    # Only strip if still at OpenAI defaults
-    if raw.get("llm", {}).get("provider") == "openai":
-        if raw.get("llm", {}).get("base_url") == "https://api.openai.com/v1":
-            raw["llm"].pop("base_url", None)
-        if raw.get("llm", {}).get("model") == "gpt-4o":
-            raw["llm"].pop("model", None)
+    # Don't strip base_url/model if provider is set — they may be provider-specific.
+    # Only strip when still at the OpenAI defaults, read from the preset so the
+    # schema default and this stripper cannot drift apart.
+    llm = raw.get("llm", {})
+    if llm.get("provider") == LLMProvider.OPENAI.value:
+        default_preset = PROVIDER_PRESETS[LLMProvider.OPENAI]
+        if llm.get("base_url") == default_preset.get("base_url"):
+            llm.pop("base_url", None)
+        if llm.get("model") == default_preset.get("default_model"):
+            llm.pop("model", None)
 
 
 # ── Provider Management ─────────────────────────────────────────────
@@ -485,8 +488,14 @@ def apply_provider_preset(config: VulnClawConfig, provider_name: str) -> VulnCla
     config.llm.provider = provider.value
 
     # Auto-fill base_url and model only when switching providers
-    # (or when they still match the old provider's defaults)
-    old_preset = PROVIDER_PRESETS.get(LLMProvider(old_provider)) if old_provider else None
+    # (or when they still match the old provider's defaults).
+    # The outgoing provider may no longer be one this build knows — a preset can
+    # be retired, and the name may also have been hand-edited — so an unknown
+    # one simply has no preset to compare against.
+    try:
+        old_preset = PROVIDER_PRESETS.get(LLMProvider(old_provider)) if old_provider else None
+    except ValueError:
+        old_preset = None
 
     # Fill base_url: always fill from preset on provider switch
     if preset.get("base_url"):

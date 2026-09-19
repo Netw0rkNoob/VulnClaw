@@ -98,17 +98,17 @@ class TestWebServices:
         assert "custom" in ids
         openai = next(p for p in view.providers if p.id == "openai")
         assert openai.base_url == "https://api.openai.com/v1"
-        assert openai.default_model == "gpt-4o"
+        assert openai.default_model == "gpt-5.6-sol"
         assert openai.label == "OpenAI"
         anthropic = next(p for p in view.providers if p.id == "anthropic")
         assert anthropic.base_url == "https://api.anthropic.com/v1"
-        assert anthropic.default_model == "claude-sonnet-5"
+        assert anthropic.default_model == "claude-opus-5"
         assert anthropic.label == "Anthropic Claude"
         # Ollama is exposed so local models are selectable from the UI dropdown.
         assert "ollama" in ids
         ollama = next(p for p in view.providers if p.id == "ollama")
         assert ollama.base_url == "http://localhost:11434/v1"
-        assert ollama.default_model == "llama3.1"
+        assert ollama.default_model == "qwen3.5:9b"
 
     def test_web_provider_service_fetch_models_uses_saved_key(self, monkeypatch):
         import vulnclaw.web.services.provider_service as provider_service

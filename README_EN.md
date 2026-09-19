@@ -69,7 +69,7 @@ Suitable for authorized pentests, CTF competitions, security training, and red t
 - **Lightweight Correction Layer** — Records repeated calls, degraded tools, timing, and new observations; repeated reads of the same evidence range are suppressed and evidence-only stalls trigger a stall guard without restoring the old stage planner
 - **Evidence-Level Anti-Hallucination Gate** — Claims about flags/conclusions must appear verbatim in real tool output to be accepted; prevents fabricated flags
 - **Natural Language Driven** — Describe your goal in plain English, auto-identifies phases and tools
-- **14 LLM Providers** — OpenAI / Anthropic / MiniMax / DeepSeek / Zhipu / Moonshot / Qwen / SiliconFlow / Doubao / Baichuan / StepFun / SenseTime / Yi / local Ollama, one-command switch
+- **13 LLM Providers** — OpenAI / Anthropic / MiniMax / DeepSeek / Zhipu / Moonshot / Qwen / SiliconFlow / Doubao / StepFun / SenseTime / OpenRouter / local Ollama, one-command switch
 - **MCP Toolchain** — 4 MCP services: `fetch` / `memory` run locally out-of-the-box, `chrome-devtools` / `burp` connect to external MCP servers for browser automation and HTTP interception
 - **Enhanced fetch request tool** — Defaults to GET, returns the full response body, and supports HTTP/HTTPS, custom method/headers/params/cookies/body/data/form/json, timeout/redirect/TLS controls; TLS verification is off by default for CTF/lab HTTPS targets
 - **Native Traffic Evidence Store** — In-scope request/response pairs land in an append-only JSONL index under `evidence/traffic/`. Built-in `traffic_list` / `traffic_view` / `traffic_repeat` / `traffic_sitemap` tools read and replay the store
@@ -563,20 +563,19 @@ vulnclaw config provider minimax   # one-command switch
 
 | Provider | Command | Default Model |
 |----------|---------|---------------|
-| OpenAI | `provider openai` | gpt-4o |
-| Anthropic Claude | `provider anthropic` | claude-sonnet-5 |
+| OpenAI | `provider openai` | gpt-5.6-sol |
+| Anthropic Claude | `provider anthropic` | claude-opus-5 |
 | MiniMax | `provider minimax` | MiniMax-M3 |
 | DeepSeek | `provider deepseek` | deepseek-v4-pro |
-| Zhipu GLM | `provider zhipu` | glm-4.7 |
-| Kimi | `provider moonshot` | kimi-k2.6 |
-| Qwen | `provider qwen` | qwen3-max |
-| SiliconFlow | `provider siliconflow` | DeepSeek-V4-Flash |
-| Doubao | `provider doubao` | Doubao-Seed-2.0-Pro |
-| Baichuan | `provider baichuan` | Baichuan4-Turbo |
-| StepFun | `provider stepfun` | step-3.5-flash |
-| SenseTime | `provider sensetime` | SenseNova-6.7-Flash-Lite |
-| Yi | `provider yi` | yi-lightning |
-| Ollama (local) | `provider ollama` | llama3.1 |
+| Zhipu GLM | `provider zhipu` | glm-5.3 |
+| Kimi | `provider moonshot` | kimi-k3 |
+| Qwen | `provider qwen` | qwen3.8-max |
+| SiliconFlow | `provider siliconflow` | deepseek-ai/DeepSeek-V4-Flash |
+| Doubao | `provider doubao` | doubao-seed-evolving |
+| StepFun | `provider stepfun` | step-3.7-flash |
+| SenseTime | `provider sensetime` | SenseNova-V6.5-Pro |
+| OpenRouter | `provider openrouter` | anthropic/claude-opus-5 |
+| Ollama (local) | `provider ollama` | qwen3.5:9b |
 | Custom | `provider custom` | manual |
 
 ### CLI Configuration

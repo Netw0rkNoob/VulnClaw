@@ -13,7 +13,7 @@ class TestLLMConfig:
         from vulnclaw.config.schema import LLMConfig
 
         config = LLMConfig()
-        assert config.model == "gpt-4o"
+        assert config.model == "gpt-5.6-sol"
         assert config.api_key == ""
         assert config.base_url == "https://api.openai.com/v1"
         assert config.temperature == 0.1  # Updated default for pentest use
@@ -235,7 +235,7 @@ class TestVulnClawConfig:
         from vulnclaw.config.schema import VulnClawConfig
 
         config = VulnClawConfig()
-        assert config.llm.model == "gpt-4o"
+        assert config.llm.model == "gpt-5.6-sol"
         assert isinstance(config.mcp.servers, dict)
         assert config.session.reasoning_state_enabled is True
         assert config.session.reflexion_enabled is True
@@ -300,7 +300,7 @@ class TestVulnClawConfig:
         assert LLMProvider("openrouter") is LLMProvider.OPENROUTER
         preset = PROVIDER_PRESETS[LLMProvider.OPENROUTER]
         assert preset["base_url"] == "https://openrouter.ai/api/v1"
-        assert preset["default_model"] == "anthropic/claude-sonnet-5"
+        assert preset["default_model"] == "anthropic/claude-opus-5"
         assert preset["label"] == "OpenRouter"
 
     def test_ollama_preset_points_at_local_openai_endpoint(self):
@@ -314,7 +314,7 @@ class TestVulnClawConfig:
         assert preset["base_url"] == "http://localhost:11434/v1"
         # Default must be a tool-capable model — the agent drives everything
         # through function calls.
-        assert preset["default_model"] == "llama3.1"
+        assert preset["default_model"] == "qwen3.5:9b"
         assert preset["label"]
 
     def test_llm_provider_enum(self):
@@ -397,7 +397,24 @@ class TestSettingsLoad:
         apply_provider_preset(config, "anthropic")
         assert config.llm.provider == "anthropic"
         assert config.llm.base_url == "https://api.anthropic.com/v1"
-        assert config.llm.model == "claude-sonnet-5"
+        assert config.llm.model == "claude-opus-5"
+
+    def test_switching_away_from_a_retired_provider_does_not_crash(self):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_provider_preset
+
+        # A config saved while a since-removed preset was selectable must still
+        # be switchable away from: the outgoing name has no preset to compare
+        # against, which must not raise.
+        config = VulnClawConfig()
+        config.llm.provider = "yi"
+        config.llm.model = "yi-lightning"
+
+        apply_provider_preset(config, "deepseek")
+
+        assert config.llm.provider == "deepseek"
+        assert config.llm.base_url == "https://api.deepseek.com"
+        assert config.llm.model == "deepseek-v4-pro"
 
     def test_list_providers(self):
         from vulnclaw.config.settings import list_providers
