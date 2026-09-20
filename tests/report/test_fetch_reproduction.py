@@ -4,6 +4,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import parse_qs, urlsplit
@@ -18,6 +19,21 @@ from vulnclaw.report.solve_report import (
     generate_solve_report,
     render_solve_report,
 )
+
+
+def _curl_config(arguments):
+    """Transport parsed bash arguments without Windows' native argv code page."""
+    escapes = str.maketrans({"\\": "\\\\", '"': '\\"', "\t": "\\t", "\r": "\\r", "\n": "\\n", "\v": "\\v"})
+    lines = []
+    options = iter(arguments[:-1])
+    for option in options:
+        if option in {"-k", "-i"}:
+            lines.append(option)
+        else:
+            assert option in {"-X", "-H", "--data-raw"}
+            lines.append(f'{option} "{next(options).translate(escapes)}"')
+    lines.append(f'url = "{arguments[-1].translate(escapes)}"')
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 @pytest.fixture
@@ -59,7 +75,7 @@ def receiver():
     {"method": "POST", "data": {"name": "a b", "enabled": True}},
     {"method": "POST", "body": "name=demo&count=2",
      "headers": {"Content-Type": "application/x-www-form-urlencoded"}},
-    {"method": "POST", "data": "@literal\r\n你好 ' $(not-a-command)",
+    {"method": "POST", "data": "@literal\\path\r\n你好\t' $(not-a-command)",
      "headers": {"Content-Type": "text/plain", "X-Repro": "synthetic"}},
     {"method": "POST", "body": ""},
     {"method": "GET", "body": "get-with-body"},
@@ -85,9 +101,16 @@ async def test_fetch_report_replays_recorded_request(receiver, arguments, tmp_pa
     assert request.request_packet() in report
     assert "response-only" in request.body
 
+    arguments = shlex.split(request.curl_command())[1:]
+    config = None
+    if sys.platform == "win32":
+        # Git's curl can replace Unicode argv with '?'. Keep the rendered values
+        # unchanged and supply them as UTF-8 bytes through curl's config reader.
+        config = _curl_config(arguments)
+        arguments = ["--config", "-"]
     completed = subprocess.run(
-        [curl, *shlex.split(request.curl_command())[1:], "--noproxy", "*", "--max-time", "5"],
-        capture_output=True, timeout=10,
+        [curl, "--disable", *arguments, "--noproxy", "*", "--max-time", "5"],
+        input=config, capture_output=True, timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
     from_curl = received[-1]
