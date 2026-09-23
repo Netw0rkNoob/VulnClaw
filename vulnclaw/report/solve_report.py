@@ -10,14 +10,17 @@ so the report stays grounded in recorded tool output.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
+
 from vulnclaw.agent.agent_state import AgentState, clip_text, extract_flags, one_line
 from vulnclaw.i18n import _
+from vulnclaw.mcp.fetch_request import prepare_fetch_request_kwargs
 
 _HTTP_PROBE_SECTION_RE = re.compile(
     r"^\[(?P<index>\d+)\]\s+(?P<method>[A-Z]+)\s+(?P<label>.*?)\s+"
@@ -27,6 +30,7 @@ _FETCH_REQUEST_RE = re.compile(r"^Request:\s+(?P<method>[A-Z]+)\s+(?P<url>\S+)",
 _FETCH_STATUS_RE = re.compile(r"^Status:\s+(?P<status>\d{3})", re.MULTILINE)
 _FETCH_BODY_RE = re.compile(r"^Body \([^)]*\):\s*(?P<body>.*)", re.MULTILINE | re.DOTALL)
 _SOURCE_SQL_PREFIX = "Source SQL:"
+_AUTH_HEADERS = {"authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "x-auth-token"}
 
 
 @dataclass
@@ -37,9 +41,12 @@ class ReproductionRequest:
     url: str
     status: int = 0
     label: str = ""
-    body: str = ""
+    body: str = ""  # Response body; keep it separate from the outgoing request.
     evidence_id: str = ""
     tool: str = ""
+    request_headers: dict[str, str] = field(default_factory=dict)
+    request_body: str | None = None
+    replay_note: str = ""
 
     @property
     def flags(self) -> list[str]:
@@ -53,21 +60,27 @@ class ReproductionRequest:
         if parsed.query:
             path = f"{path}?{parsed.query}"
         host = parsed.netloc or "(host)"
-        return "\n".join(
-            [
-                f"{self.method or 'GET'} {path} HTTP/1.1",
-                f"Host: {host}",
-                "User-Agent: VulnClaw-replay/1.0",
-                "Accept: */*",
-                "Connection: close",
-            ]
-        )
+        headers = httpx.Headers({
+            "Host": host, "User-Agent": "VulnClaw-replay/1.0",
+            "Accept": "*/*", "Connection": "close",
+        })
+        headers.update(self.request_headers)
+        lines = [f"{self.method or 'GET'} {path} HTTP/1.1"]
+        lines.extend(f"{name}: {value}" for name, value in headers.items())
+        return "\r\n".join(lines) + "\r\n\r\n" + (self.request_body or "")
 
     def curl_command(self) -> str:
         method = (self.method or "GET").upper()
         parts = ["curl", "-k", "-i"]
-        if method != "GET":
+        if method != "GET" or self.request_body is not None:
             parts.extend(["-X", method])
+        for name, value in self.request_headers.items():
+            parts.extend(["-H", _shell_quote(f"{name}: {value}")])
+        if self.request_body is not None:
+            if "content-type" not in {name.lower() for name in self.request_headers}:
+                parts.extend(["-H", _shell_quote("Content-Type:")])
+            # Unlike --data/--data-binary, a leading @ remains literal data.
+            parts.extend(["--data-raw", _shell_quote(self.request_body)])
         parts.append(_shell_quote(self.url))
         return " ".join(parts)
 
@@ -93,7 +106,7 @@ def generate_solve_report(
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(render_solve_report(state), encoding="utf-8")
+    output.write_text(render_solve_report(state), encoding="utf-8", newline="\n")
     return output
 
 
@@ -140,6 +153,7 @@ def render_solve_report(state: AgentState) -> str:
                     f"- Evidence: `{request.evidence_id}` ({request.tool})",
                     f"- URL: `{request.url}`",
                     f"- Status: `{request.status or 'unknown'}`",
+                    *([f"- Replay note: {request.replay_note}"] if request.replay_note else []),
                     "",
                     "Raw HTTP request:",
                     "",
@@ -200,8 +214,40 @@ def extract_reproduction_requests(state: AgentState) -> list[ReproductionRequest
         if evidence.tool == "fetch" or "Request:" in content:
             request = _parse_fetch_response(content, evidence.id, evidence.tool)
             if request is not None:
+                if evidence.tool == "fetch":
+                    _restore_fetch_request(request, evidence.arguments)
                 requests.append(request)
     return requests
+
+
+def _restore_fetch_request(request: ReproductionRequest, arguments: dict[str, Any]) -> None:
+    """Rebuild explicitly recorded inputs using the same encoder as fetch."""
+    if not arguments:
+        request.replay_note = "Original fetch arguments were not recorded; request headers and body may be incomplete."
+        return  # Older evidence can still provide the method, URL and response.
+    try:
+        kwargs, body_mode = prepare_fetch_request_kwargs({
+            **arguments, "method": request.method, "url": request.url,
+        })
+        prepared = httpx.Request(**kwargs)
+        if "transfer-encoding" in prepared.headers:
+            raise ValueError("Transfer-coded bodies need a separate wire representation")
+        body = prepared.read().decode("utf-8") if body_mode is not None else None
+        if body is not None and "\x00" in body:
+            raise ValueError("NUL bytes cannot be passed as a shell argument")
+    except (TypeError, ValueError, httpx.HTTPError):
+        request.replay_note = "Recorded request arguments could not be reconstructed; this example is incomplete."
+        return
+    request.url = str(prepared.url)
+    request.request_body = body
+    request.request_headers = dict(prepared.headers.items())
+    redacted = False
+    for name in request.request_headers:
+        if name.lower() in _AUTH_HEADERS:
+            request.request_headers[name] = "<REDACTED>"
+            redacted = True
+    if redacted:
+        request.replay_note = "Authentication headers are redacted; replace <REDACTED> locally before replaying."
 
 
 def _parse_http_probe_batch(
