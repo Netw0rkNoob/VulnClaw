@@ -602,3 +602,377 @@ fn header_centres_the_live_cluster_between_brand_and_badge() {
     assert!(idle.contains("VulnClaw"));
     assert!(idle.contains("provider: DeepSeek"));
 }
+
+fn settings_screen() -> vulnclaw_tui::app::LlmSettings {
+    use vulnclaw_tui::app::{LlmField, LlmSettings, ProviderEntry};
+
+    LlmSettings {
+        provider: "deepseek".into(),
+        website_url: "https://www.deepseek.com/".into(),
+        base_url: "https://api.deepseek.com".into(),
+        api_key: String::new(),
+        api_key_set: true,
+        model: "deepseek-v4-pro".into(),
+        providers: vec![
+            ProviderEntry {
+                id: "deepseek".into(),
+                label: "DeepSeek".into(),
+                website_url: "https://www.deepseek.com/".into(),
+                base_url: "https://api.deepseek.com".into(),
+                default_model: "deepseek-v4-pro".into(),
+            },
+            ProviderEntry {
+                id: "custom".into(),
+                label: "自定义".into(),
+                website_url: String::new(),
+                base_url: String::new(),
+                default_model: String::new(),
+            },
+        ],
+        focus: LlmField::Provider,
+        ..LlmSettings::default()
+    }
+}
+
+#[test]
+fn settings_modal_renders_every_row_and_never_leaks_the_api_key() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.llm_settings = Some(settings_screen());
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
+
+    let rendered = rendered_text(&terminal);
+    for label in [
+        "Template",
+        "Website URL",
+        "API request URL",
+        "API key",
+        "Model",
+    ] {
+        assert!(rendered.contains(label), "missing row: {label}");
+    }
+    assert!(rendered.contains("https://api.deepseek.com"));
+    assert!(rendered.contains("deepseek-v4-pro"));
+    // A stored key is shown as presence only — the value never reaches the UI.
+    assert!(rendered.contains("(saved)"));
+    // Idle hints advertise the confirm step, not a fetch shortcut.
+    assert!(rendered.contains("Enter edit"));
+}
+
+#[test]
+fn settings_modal_shows_the_open_template_list_under_its_row() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    let mut settings = settings_screen();
+    settings.template_list_open = true;
+    app.llm_settings = Some(settings);
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
+
+    let rendered = rendered_text(&terminal);
+    assert!(rendered.contains("▾"));
+    // Both templates are offered under the focused row.
+    assert!(rendered.contains("DeepSeek"));
+    // The CJK label is measured in cells, so TestBackend pads its second
+    // column; match the glyph rather than the contiguous string.
+    assert!(rendered.contains('自'));
+    assert!(rendered.contains("choose template"));
+}
+
+#[test]
+fn settings_modal_suggests_models_while_the_model_row_is_open() {
+    use vulnclaw_tui::app::LlmField;
+
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    let mut settings = settings_screen();
+    settings.focus_field(LlmField::Model);
+    settings.begin_edit();
+    settings.models = vec![
+        "deepseek-chat".into(),
+        "deepseek-v4-pro".into(),
+        "unrelated-model".into(),
+    ];
+    settings.model = "deepseek".into();
+    settings.move_cursor_to_edge(true);
+    app.llm_settings = Some(settings);
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
+
+    let rendered = rendered_text(&terminal);
+    // The open row is marked, and only the matching models are suggested.
+    assert!(rendered.contains('✎'));
+    assert!(rendered.contains("deepseek-chat"));
+    assert!(!rendered.contains("unrelated-model"));
+    assert!(rendered.contains("pick suggestion"));
+
+    // ↓ highlights the first suggestion row; before that nothing is picked out.
+    let suggestion_style = |terminal: &Terminal<TestBackend>| {
+        let buffer = terminal.backend().buffer();
+        for y in 0..buffer.area.height {
+            let row: String = (0..buffer.area.width)
+                .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                .collect();
+            if let Some(start) = row.find("deepseek-chat") {
+                let x = u16::try_from(start).unwrap();
+                return buffer.cell((x, y)).unwrap().style();
+            }
+        }
+        panic!("suggestion row not rendered");
+    };
+    // Unselected rows inherit the modal's own background.
+    assert_eq!(
+        suggestion_style(&terminal).bg,
+        Some(vulnclaw_tui::theme::PANEL)
+    );
+
+    let mut settings = app.llm_settings.take().unwrap();
+    settings.move_suggestion(true);
+    app.llm_settings = Some(settings);
+    terminal.draw(|frame| render(frame, &app)).unwrap();
+    assert_eq!(
+        suggestion_style(&terminal).bg,
+        Some(vulnclaw_tui::theme::GOLD)
+    );
+}
+
+#[test]
+fn settings_modal_hides_a_rows_text_until_enter_opens_it() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    let mut settings = settings_screen();
+    settings.focus_field(vulnclaw_tui::app::LlmField::BaseUrl);
+    app.llm_settings = Some(settings);
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
+
+    // No caret is placed while the row is only selected, so whichever cursor
+    // the frame reports is not the settings screen's.
+    assert!(rendered_text(&terminal).contains("› API request URL"));
+    let unopened = terminal.get_cursor_position().unwrap();
+
+    let mut settings = app.llm_settings.take().unwrap();
+    settings.begin_edit();
+    app.llm_settings = Some(settings);
+    terminal.draw(|frame| render(frame, &app)).unwrap();
+
+    assert!(rendered_text(&terminal).contains("✎ API request URL"));
+    let opened = terminal.get_cursor_position().unwrap();
+    assert_eq!(opened.y, 8);
+    assert_ne!(unopened.y, opened.y);
+}
+
+#[test]
+fn settings_modal_stays_inside_a_small_terminal() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.llm_settings = Some(settings_screen());
+    for (width, height) in [(1, 1), (10, 3), (30, 8), (40, 12)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        // Rendering must never panic, however little room it is given.
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+    }
+}
+
+#[test]
+fn settings_modal_places_the_caret_on_the_focused_row() {
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    let mut settings = settings_screen();
+    settings.focus_field(vulnclaw_tui::app::LlmField::BaseUrl);
+    settings.begin_edit();
+    app.llm_settings = Some(settings);
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
+
+    // The modal draws after the composer and claims the frame's single cursor.
+    // Geometry: 100-wide terminal -> 92-wide modal at x=4, border -> inner.x=5,
+    // then the 2-column marker and the 18-column label before the value.
+    let position = terminal.get_cursor_position().unwrap();
+    assert_eq!(position.y, 8);
+    assert_eq!(
+        usize::from(position.x),
+        5 + 2 + 18 + "https://api.deepseek.com".len()
+    );
+}
+
+/// Draws the settings screen with `count` models and `selected` highlighted.
+fn settings_terminal(count: usize, selected: usize) -> Terminal<TestBackend> {
+    use vulnclaw_tui::app::LlmField;
+
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    let mut settings = settings_screen();
+    settings.focus_field(LlmField::Model);
+    settings.begin_edit();
+    settings.models = (0..count).map(|i| format!("model-{i:02}")).collect();
+    settings.model = String::new();
+    settings.move_cursor_to_edge(true);
+    settings.suggestion = Some(selected);
+    app.llm_settings = Some(settings);
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
+    terminal
+}
+
+/// Reports every suggestion row the modal actually painted: the visible label
+/// and whether the row is the highlighted one.
+fn render_suggestions(count: usize, selected: usize) -> Vec<(String, bool)> {
+    let terminal = settings_terminal(count, selected);
+    let buffer = terminal.backend().buffer();
+    let mut rows = Vec::new();
+    for y in 0..buffer.area.height {
+        let row: String = (0..buffer.area.width)
+            .map(|x| buffer.cell((x, y)).unwrap().symbol())
+            .collect();
+        if let Some(start) = row.find("model-") {
+            // Column, not byte offset: the modal draws box-drawing glyphs, which
+            // are multi-byte, to the left of every row.
+            let label = row[start..start + 8].to_owned();
+            let highlighted = (0..buffer.area.width).any(|x| {
+                buffer.cell((x, y)).unwrap().style().bg == Some(vulnclaw_tui::theme::GOLD)
+            });
+            rows.push((label, highlighted));
+        }
+    }
+    rows
+}
+
+#[test]
+fn a_long_suggestion_list_scrolls_without_growing_the_window() {
+    // The window is the same height whatever the selection...
+    let top = render_suggestions(20, 0);
+    assert_eq!(top.len(), 6, "the window keeps its six rows");
+    assert_eq!(top[0].0, "model-00");
+    assert_eq!(top[5].0, "model-05");
+
+    // ...and it scrolls to follow the highlight instead of capping the list.
+    let scrolled = render_suggestions(20, 9);
+    assert_eq!(scrolled.len(), 6, "still six rows after scrolling");
+    assert_eq!(scrolled[0].0, "model-04");
+    assert_eq!(scrolled[5].0, "model-09");
+
+    // The highlight travels with the selection, on whichever row it lands.
+    assert!(
+        top[0].1,
+        "the first entry is highlighted at the top of the list"
+    );
+    assert!(scrolled[5].1, "the highlight followed the window down");
+    assert!(!scrolled[0].1);
+
+    // The very last entry is reachable and sits at the bottom of the window.
+    let end = render_suggestions(20, 19);
+    assert_eq!(end.len(), 6);
+    assert_eq!(end[0].0, "model-14");
+    assert_eq!(end[5].0, "model-19");
+    assert!(end[5].1);
+}
+
+#[test]
+fn a_long_template_list_scrolls_too() {
+    use vulnclaw_tui::app::ProviderEntry;
+
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    let mut settings = settings_screen();
+    settings.providers = (0..20)
+        .map(|i| ProviderEntry {
+            id: format!("p{i:02}"),
+            label: format!("provider-{i:02}"),
+            ..ProviderEntry::default()
+        })
+        .collect();
+    settings.template_list_open = true;
+    settings.list_index = 19;
+    app.llm_settings = Some(settings);
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
+
+    let rendered = rendered_text(&terminal);
+    // The selection sits at the end of a list longer than the window, so the
+    // window must have scrolled to it — an unwindowed render would have capped
+    // the list at the first entries and made the tail unreachable.
+    assert!(
+        rendered.contains("provider-19"),
+        "the selection must be visible"
+    );
+    assert!(
+        !rendered.contains("provider-00"),
+        "the window must have scrolled past the head"
+    );
+}
+
+#[test]
+fn a_window_that_hides_models_says_how_many_remain_below() {
+    let terminal = settings_terminal(20, 0);
+    assert_eq!(
+        render_suggestions(20, 0).len(),
+        6,
+        "the window keeps six rows"
+    );
+
+    // The hint closes the window rather than taking one of its rows.
+    let rendered = rendered_text(&terminal);
+    assert!(rendered.contains("… 14 more"), "{rendered}");
+
+    let last_row = (0..28u16)
+        .find(|&y| row_text(&terminal, y).contains("model-05"))
+        .expect("the last suggestion row must render");
+    let hint_row = row_text(&terminal, last_row + 1);
+    assert!(hint_row.contains("… 14 more"), "{hint_row:?}");
+    assert!(!hint_row.contains("model-"), "the hint is not a list row");
+
+    // A provider-sized catalogue reports its real remainder.
+    assert!(rendered_text(&settings_terminal(445, 0)).contains("… 439 more"));
+}
+
+#[test]
+fn the_remainder_counts_down_as_the_selection_scrolls() {
+    fn hint(selected: usize) -> Option<String> {
+        rendered_text(&settings_terminal(20, selected))
+            .split('…')
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next().map(str::to_owned))
+    }
+
+    // Each window reports only what is still below it, so the number shrinks as
+    // the highlight moves down instead of sticking at the size of the list.
+    assert_eq!(hint(0).as_deref(), Some("14"));
+    assert_eq!(hint(5).as_deref(), Some("14"), "still the first window");
+    assert_eq!(hint(6).as_deref(), Some("13"), "the window scrolled by one");
+    assert_eq!(hint(13).as_deref(), Some("6"));
+    assert_eq!(hint(18).as_deref(), Some("1"));
+    assert_eq!(
+        hint(19).as_deref(),
+        None,
+        "the last entry leaves nothing below"
+    );
+}
+
+#[test]
+fn the_remainder_hint_disappears_at_the_last_entry() {
+    // Only the final entry pulls the window all the way to the end of the list.
+    let rendered = rendered_text(&settings_terminal(20, 19));
+    assert!(!rendered.contains('…'), "{rendered}");
+    assert!(rendered.contains("model-19"), "the selection stays visible");
+
+    // A provider-sized catalogue behaves the same way at its end.
+    assert!(!rendered_text(&settings_terminal(445, 444)).contains('…'));
+}
+
+#[test]
+fn a_list_that_fits_its_window_shows_no_remainder_hint() {
+    for count in [1usize, 5, 6] {
+        let rendered = rendered_text(&settings_terminal(count, 0));
+        assert!(
+            !rendered.contains('…'),
+            "a {count}-entry list fits its window and needs no hint"
+        );
+    }
+}

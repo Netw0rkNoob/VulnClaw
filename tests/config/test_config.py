@@ -13,7 +13,7 @@ class TestLLMConfig:
         from vulnclaw.config.schema import LLMConfig
 
         config = LLMConfig()
-        assert config.model == "gpt-4o"
+        assert config.model == "gpt-5.6-sol"
         assert config.api_key == ""
         assert config.base_url == "https://api.openai.com/v1"
         assert config.temperature == 0.1  # Updated default for pentest use
@@ -235,7 +235,7 @@ class TestVulnClawConfig:
         from vulnclaw.config.schema import VulnClawConfig
 
         config = VulnClawConfig()
-        assert config.llm.model == "gpt-4o"
+        assert config.llm.model == "gpt-5.6-sol"
         assert isinstance(config.mcp.servers, dict)
         assert config.session.reasoning_state_enabled is True
         assert config.session.reflexion_enabled is True
@@ -300,7 +300,7 @@ class TestVulnClawConfig:
         assert LLMProvider("openrouter") is LLMProvider.OPENROUTER
         preset = PROVIDER_PRESETS[LLMProvider.OPENROUTER]
         assert preset["base_url"] == "https://openrouter.ai/api/v1"
-        assert preset["default_model"] == "anthropic/claude-sonnet-5"
+        assert preset["default_model"] == "anthropic/claude-opus-5"
         assert preset["label"] == "OpenRouter"
 
     def test_ollama_preset_points_at_local_openai_endpoint(self):
@@ -314,7 +314,7 @@ class TestVulnClawConfig:
         assert preset["base_url"] == "http://localhost:11434/v1"
         # Default must be a tool-capable model — the agent drives everything
         # through function calls.
-        assert preset["default_model"] == "llama3.1"
+        assert preset["default_model"] == "qwen3.5:9b"
         assert preset["label"]
 
     def test_llm_provider_enum(self):
@@ -397,7 +397,24 @@ class TestSettingsLoad:
         apply_provider_preset(config, "anthropic")
         assert config.llm.provider == "anthropic"
         assert config.llm.base_url == "https://api.anthropic.com/v1"
-        assert config.llm.model == "claude-sonnet-5"
+        assert config.llm.model == "claude-opus-5"
+
+    def test_switching_away_from_a_retired_provider_does_not_crash(self):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_provider_preset
+
+        # A config saved while a since-removed preset was selectable must still
+        # be switchable away from: the outgoing name has no preset to compare
+        # against, which must not raise.
+        config = VulnClawConfig()
+        config.llm.provider = "yi"
+        config.llm.model = "yi-lightning"
+
+        apply_provider_preset(config, "deepseek")
+
+        assert config.llm.provider == "deepseek"
+        assert config.llm.base_url == "https://api.deepseek.com"
+        assert config.llm.model == "deepseek-v4-pro"
 
     def test_list_providers(self):
         from vulnclaw.config.settings import list_providers
@@ -410,6 +427,114 @@ class TestSettingsLoad:
             assert "provider" in p
             assert "base_url" in p
             assert "default_model" in p
+
+    def test_every_preset_carries_a_website_url(self):
+        """The TUI settings screen shows each template's official site; only
+        ``custom`` legitimately has none, since it fronts no vendor."""
+        from vulnclaw.config.schema import PROVIDER_PRESETS, LLMProvider
+
+        for provider, preset in PROVIDER_PRESETS.items():
+            assert "website_url" in preset, f"Missing website_url: {provider.value}"
+            if provider is LLMProvider.CUSTOM:
+                assert preset["website_url"] == ""
+            else:
+                assert preset["website_url"].startswith("https://"), provider.value
+
+    def test_apply_provider_preset_seeds_website_url(self):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_provider_preset
+
+        config = VulnClawConfig()
+        apply_provider_preset(config, "deepseek")
+        assert config.llm.website_url == "https://www.deepseek.com/"
+
+    def test_list_providers_exposes_website_url(self):
+        from vulnclaw.config.settings import list_providers
+
+        for entry in list_providers():
+            assert "website_url" in entry
+
+    def test_provider_form_values_seeds_from_the_chosen_template(self):
+        from vulnclaw.config.settings import provider_form_values
+
+        values = provider_form_values("DeepSeek")
+        assert values == {
+            "provider": "deepseek",
+            "website_url": "https://www.deepseek.com/",
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-v4-pro",
+        }
+
+    def test_provider_form_values_blanks_preset_fields_for_custom(self):
+        """Choosing ``custom`` must clear the preset-derived fields so the
+        operator starts from an empty form rather than the previous vendor's."""
+        from vulnclaw.config.settings import provider_form_values
+
+        values = provider_form_values("custom")
+        assert values["provider"] == "custom"
+        assert values["website_url"] == ""
+        assert values["base_url"] == ""
+        assert values["model"] == ""
+
+    def test_provider_form_values_rejects_an_unknown_template(self):
+        import pytest
+
+        from vulnclaw.config.settings import provider_form_values
+
+        with pytest.raises(ValueError, match="unknown provider"):
+            provider_form_values("not-a-vendor")
+
+    def test_apply_llm_form_falls_back_to_the_preset_for_blank_fields(self):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_llm_form
+
+        config = apply_llm_form(
+            VulnClawConfig(), provider="deepseek", base_url="", model="", website_url=""
+        )
+        assert config.llm.provider == "deepseek"
+        assert config.llm.base_url == "https://api.deepseek.com"
+        assert config.llm.model == "deepseek-v4-pro"
+
+    def test_apply_llm_form_normalizes_the_base_url(self):
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_llm_form
+
+        config = apply_llm_form(
+            VulnClawConfig(),
+            provider="custom",
+            base_url="  https://llm.example.test/v1/  ",
+            model=" my-model ",
+            website_url=" https://example.test/ ",
+        )
+        assert config.llm.base_url == "https://llm.example.test/v1"
+        assert config.llm.model == "my-model"
+        assert config.llm.website_url == "https://example.test/"
+
+    def test_apply_llm_form_requires_a_base_url_for_custom(self):
+        import pytest
+
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_llm_form
+
+        # custom has no preset to fall back on, so a blank base URL cannot save.
+        with pytest.raises(ValueError, match="base URL is required"):
+            apply_llm_form(
+                VulnClawConfig(), provider="custom", base_url="", model="m", website_url=""
+            )
+
+    def test_apply_llm_form_rejects_a_malformed_base_url(self):
+        import pytest
+
+        from vulnclaw.config.schema import VulnClawConfig
+        from vulnclaw.config.settings import apply_llm_form
+
+        with pytest.raises(ValueError, match="http or https"):
+            apply_llm_form(
+                VulnClawConfig(),
+                provider="custom",
+                base_url="ftp://example.test",
+                model="m",
+            )
 
     def test_env_var_override(self, monkeypatch):
         """Test that environment variables override config values."""

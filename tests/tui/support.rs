@@ -39,7 +39,7 @@ for line in sys.stdin:
             "backend": {"pid": os.getpid(), "version": "test", "protocol_version": 1},
             "capabilities": {
                 "commands": ["scan", "run", "recon"],
-                "control_operations": ["example.inspect", "session.permission.set", "session.scope.reset", "session.scope.update"],
+                "control_operations": ["config.models", "config.preset", "config.read", "config.write", "example.inspect", "session.permission.set", "session.scope.reset", "session.scope.update"],
                 "cancellation": True,
                 "authoritative_state": True,
             },
@@ -82,17 +82,64 @@ for line in sys.stdin:
             }), flush=True)
     elif msg["type"] == "control":
         operation = msg["payload"]["operation"]
+        arguments = msg["payload"]["arguments"]
         is_permission = operation == "session.permission.set"
-        result = (
-            {"message": "permission updated", "mode": msg["payload"]["arguments"]["mode"]}
-            if is_permission else {"message": "scope updated"}
-        )
-        control_state = (
-            state(current_task is not None, current_task, "running")
-            if is_permission else state(False, None, "idle", target="scope.test") | {
+        # Sentinel provider so tests can exercise the rejected-write path.
+        if operation == "config.write" and arguments.get("provider") == "reject":
+            print(json.dumps(base | {
+                "type": "error",
+                "request_id": msg["request_id"],
+                "code": "invalid_control",
+                "message": "rejected",
+            }), flush=True)
+            continue
+        if operation == "config.read":
+            result = {
+                "provider": "deepseek",
+                "website_url": "https://www.deepseek.com/",
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-pro",
+                "api_key_set": True,
+                "providers": [
+                    {"id": "deepseek", "label": "DeepSeek",
+                     "website_url": "https://www.deepseek.com/",
+                     "base_url": "https://api.deepseek.com",
+                     "default_model": "deepseek-v4-pro"},
+                    {"id": "custom", "label": "Custom", "website_url": "",
+                     "base_url": "", "default_model": ""},
+                ],
+            }
+            control_state = state()
+        elif operation == "config.preset":
+            result = (
+                {"provider": "custom", "website_url": "", "base_url": "", "model": ""}
+                if arguments["provider"] == "custom"
+                else {"provider": "deepseek", "website_url": "https://www.deepseek.com/",
+                      "base_url": "https://api.deepseek.com", "model": "deepseek-v4-pro"}
+            )
+            control_state = state()
+        elif operation == "config.models":
+            result = {
+                "models": ["deepseek-chat", "deepseek-v4-pro"],
+                "used_saved_key": not arguments["api_key"],
+            }
+            control_state = state()
+        elif operation == "config.write":
+            result = {
+                "message": "Saved " + arguments["provider"] + "/" + arguments["model"],
+                "provider": arguments["provider"],
+                "model": arguments["model"],
+                "config_ready": True,
+            }
+            control_state = state()
+        elif is_permission:
+            result = {"message": "permission updated", "mode": arguments["mode"]}
+            control_state = state(current_task is not None, current_task, "running")
+        else:
+            result = {"message": "scope updated"}
+            control_state = state(False, None, "idle", target="scope.test") | {
                 "task_constraints": {"allowed_ports": [443]}
             }
-        )
         print(json.dumps(base | {
             "type": "control_result",
             "request_id": msg["request_id"],
