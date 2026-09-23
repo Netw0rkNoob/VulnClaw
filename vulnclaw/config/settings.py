@@ -98,7 +98,20 @@ def make_openai_client(api_key: str, base_url: str, timeout: float | None = None
     }
     if timeout is not None:
         kwargs["timeout"] = timeout
-    return OpenAI(**kwargs)
+    try:
+        return OpenAI(**kwargs)
+    except TypeError as exc:
+        if "proxies" in str(exc):
+            import httpx
+            import openai as _openai
+
+            raise RuntimeError(
+                f"openai {_openai.__version__} 与 httpx {httpx.__version__} 不兼容："
+                "openai <1.55.3 构造默认 HTTP 客户端时会传 httpx 0.28 已删除的 "
+                "proxies 参数。请执行: pip install -U openai httpx"
+                "（要求 openai>=1.66，或把 httpx 降到 <0.28）"
+            ) from exc
+        raise
 
 
 # ── Load / Save ────────────────────────────────────────────────────

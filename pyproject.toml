@@ -29,7 +29,11 @@ dependencies = [
     "rich>=13.0.0",
     "prompt_toolkit>=3.0.0",
     "httpx>=0.27.0",
-    "openai>=1.30.0",
+    # openai 1.55.3 修复了「向 httpx>=0.28 传已删除的 proxies= 参数」的兼容问题；
+    # 更老的 openai 与 httpx 0.28 共存时，构造客户端即抛
+    # TypeError: Client.__init__() got an unexpected keyword argument 'proxies'。
+    # 另一方面 vulnclaw 官方包基于 openai 2.x 构建，这里下限一并抬高到 1.66+。
+    "openai>=1.66.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "jsonschema>=4.20.0",
