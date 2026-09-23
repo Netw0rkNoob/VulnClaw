@@ -929,9 +929,9 @@ def _run_repl() -> None:
                                     current_target = result.target
                                 if result.phase:
                                     current_phase = result.phase
-                                # 注释掉: 流式输出已通过 TerminalStreamSink 实时显示，无需重复打印
-                                # if result.output:
-                                #     _print_agent_output(result.output, config)
+                                # 流式输出已由 TerminalStreamSink 实时显示；仅补印 sink 未显示的错误
+                                if result.output and result.output.startswith("[!]"):
+                                    _print_agent_output(result.output, config)
 
                         await _run_repl_agent_call(agent, call=call, after_result=after_result)
 

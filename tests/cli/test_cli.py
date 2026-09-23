@@ -777,6 +777,61 @@ class TestCLI:
         assert result == "hello"
         assert observed == ["call", "after:hello"]
 
+    def _patch_repl_chat(self, monkeypatch):
+        """Patch the classic REPL so a fake ``AgentCore.chat`` drives it."""
+        import vulnclaw.cli.main as cli_main
+        import vulnclaw.mcp.lifecycle as lifecycle_mod
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        config.llm.api_key = "test-key"
+        monkeypatch.setattr(cli_main, "load_config", lambda: config)
+        monkeypatch.setattr(
+            lifecycle_mod.MCPLifecycleManager, "start_enabled_servers", lambda self: 0
+        )
+        monkeypatch.setattr(lifecycle_mod.MCPLifecycleManager, "stop_all", lambda self: None)
+
+    def test_repl_chat_surfaces_llm_error_before_streaming(self, runner, monkeypatch):
+        """Single-turn chat errors raised before the first token must reach the user."""
+        import vulnclaw.agent.core as agent_core
+        from vulnclaw.agent.runtime_state import AgentResult
+        from vulnclaw.cli.main import app
+
+        self._patch_repl_chat(monkeypatch)
+
+        async def fake_chat(self, user_input, target=None, *, stream_sink=None, **kwargs):
+            # Mirrors AgentCore.chat() when call_llm raises before any token
+            # streams: the error lands in result.output, the sink saw nothing.
+            return AgentResult(output="[!] Agent 错误: boom", target=target)
+
+        monkeypatch.setattr(agent_core.AgentCore, "chat", fake_chat)
+
+        result = runner.invoke(app, ["repl"], input="hey\nexit\n")
+
+        assert result.exit_code == 0
+        assert "[!] Agent 错误: boom" in result.output
+
+    def test_repl_chat_does_not_reprint_streamed_output(self, runner, monkeypatch):
+        """The chat error fix must not duplicate output already streamed to the terminal."""
+        import vulnclaw.agent.core as agent_core
+        from vulnclaw.agent.runtime_state import AgentResult
+        from vulnclaw.cli.main import app
+
+        self._patch_repl_chat(monkeypatch)
+
+        async def fake_chat(self, user_input, target=None, *, stream_sink=None, **kwargs):
+            stream_sink.on_status("Thinking...")
+            stream_sink.on_content_token("streamed answer")
+            stream_sink.on_stream_end()
+            return AgentResult(output="streamed answer", target=target)
+
+        monkeypatch.setattr(agent_core.AgentCore, "chat", fake_chat)
+
+        result = runner.invoke(app, ["repl"], input="hey\nexit\n")
+
+        assert result.exit_code == 0
+        assert result.output.count("streamed answer") == 1
+
     def test_cli_kb_info(self, runner):
         from vulnclaw.cli.main import app
 
