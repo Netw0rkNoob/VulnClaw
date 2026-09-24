@@ -75,6 +75,8 @@ class ReproductionRequest:
         if method != "GET" or self.request_body is not None:
             parts.extend(["-X", method])
         for name, value in self.request_headers.items():
+            if name.lower() == "content-length":
+                continue  # curl computes the length, including after users edit the body.
             parts.extend(["-H", _shell_quote(f"{name}: {value}")])
         if self.request_body is not None:
             if "content-type" not in {name.lower() for name in self.request_headers}:
@@ -161,7 +163,7 @@ def render_solve_report(state: AgentState) -> str:
                     request.request_packet(),
                     "```",
                     "",
-                    "curl:",
+                    "curl (Bash / POSIX shell):",
                     "",
                     "```bash",
                     request.curl_command(),
@@ -230,6 +232,15 @@ def _restore_fetch_request(request: ReproductionRequest, arguments: dict[str, An
             **arguments, "method": request.method, "url": request.url,
         })
         prepared = httpx.Request(**kwargs)
+        # Request construction does not perform the transport's header validation.
+        # Check encoded headers too, including the Cookie header added by HTTPX.
+        if any(
+            control in part
+            for name, value in prepared.headers.raw
+            for part in (name, value)
+            for control in (b"\r", b"\n", b"\x00")
+        ):
+            raise ValueError("Control characters cannot be exported in HTTP headers")
         if "transfer-encoding" in prepared.headers:
             raise ValueError("Transfer-coded bodies need a separate wire representation")
         body = prepared.read().decode("utf-8") if body_mode is not None else None
