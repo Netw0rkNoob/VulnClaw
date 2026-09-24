@@ -179,3 +179,73 @@ def test_report_marks_explicit_authentication_values_for_local_replacement():
     assert "<REDACTED>" in request.curl_command()
     assert "<REDACTED>" in request.request_packet()
     assert "Authentication headers" in report
+
+
+@pytest.mark.parametrize("replacement", ["a longer body", "x", "", "你好", "O'Reilly\r\nnext"])
+def test_edited_curl_body_uses_its_actual_length(receiver, replacement):
+    curl = shutil.which("curl.exe") or shutil.which("curl")
+    if curl is None:
+        pytest.skip("curl is required for the report replay integration check")
+    address, received = receiver
+    url = f"http://{address[0]}:{address[1]}/echo"
+    state = AgentState(origin=url, goal="Edit an exported request")
+    state.remember_tool_result(
+        tool="fetch",
+        arguments={"url": url, "method": "POST", "body": "original"},
+        output=f"Request: POST {url}\nStatus: 200\nBody (2):\nok",
+    )
+    request, = extract_reproduction_requests(state)
+    packet_before = request.request_packet()
+    arguments = shlex.split(request.curl_command())[1:]
+    arguments[arguments.index("--data-raw") + 1] = replacement
+    config = None
+    if sys.platform == "win32":
+        config = _curl_config(arguments)
+        arguments = ["--config", "-"]
+    result = subprocess.run(
+        [curl, "--disable", *arguments, "--noproxy", "*", "--max-time", "2"],
+        input=config, capture_output=True, timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    _, _, headers, body = received[-1]
+    assert body == replacement.encode("utf-8")
+    assert int({k.lower(): v for k, v in headers.items()}["content-length"]) == len(body)
+    # Generating an editable command must not mutate the raw recorded example.
+    assert request.request_packet() == packet_before
+    assert "content-length: 8\r\n" in packet_before
+    assert packet_before.endswith("\r\n\r\noriginal")
+
+
+@pytest.mark.parametrize("control", ["\r", "\n", "\r\n", "\x00"])
+@pytest.mark.parametrize("location", ["name", "value", "cookie"])
+def test_invalid_fetch_headers_are_not_exported(control, location):
+    bad = f"before{control}X-Injected: yes"
+    arguments = {"url": "https://example.test/", "method": "POST", "body": "original"}
+    if location == "name":
+        arguments["headers"] = {bad: "value"}
+    elif location == "value":
+        arguments["headers"] = {"X-Bad": bad}
+    else:
+        arguments["cookies"] = {"session": bad}
+    state = AgentState(origin=arguments["url"], goal="Read malformed saved evidence")
+    state.remember_tool_result(
+        tool="fetch", arguments=arguments,
+        output="Request: POST https://example.test/\nStatus: 200\nBody (13):\nresponse-only",
+    )
+    request, = extract_reproduction_requests(state)
+    assert "incomplete" in request.replay_note
+    assert request.body == "response-only"
+    assert request.request_headers == {}
+    assert request.request_body is None
+    report = render_solve_report(state)
+    assert "response-only" in report
+    assert "X-Injected" not in report
+
+
+def test_report_identifies_the_curl_shell():
+    state = AgentState(origin="https://example.test/", goal="Export a request")
+    state.remember_tool_result(
+        tool="fetch", arguments={"url": state.origin},
+        output="Request: GET https://example.test/\nStatus: 200\nBody (2):\nok",
+    )
+    assert "curl (Bash / POSIX shell):" in render_solve_report(state)
