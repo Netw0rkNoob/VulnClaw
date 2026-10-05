@@ -28,7 +28,17 @@ fn main() -> io::Result<()> {
             execute!(terminal_stdout, EnableBracketedPaste)?;
             let backend = CrosstermBackend::new(terminal_stdout);
             let mut terminal = Terminal::new(backend)?;
-            run(&mut terminal)
+            let run_result = run(&mut terminal);
+            if run_result.is_err() {
+                // Fatal-console path (#298): ratatui's `Terminal` Drop calls
+                // eprintln! when it fails to restore the cursor, and on the
+                // already-severed console pipe that print panics inside std
+                // itself and aborts the process (the stdio.rs:1166 panic
+                // captured in the panic log). The process is exiting anyway,
+                // so skip Drop entirely and let main's own exit path report.
+                std::mem::forget(terminal);
+            }
+            run_result
         })(),
         Err(error) => Err(error),
     };
