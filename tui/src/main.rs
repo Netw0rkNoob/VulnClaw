@@ -133,6 +133,17 @@ fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> io::Result
                     Event::Resize(width, height) => {
                         app.cancel_layout_gesture();
                         app.terminal_size = Rect::new(0, 0, width, height);
+                        // When the hosting console resizes between maximized
+                        // and windowed/fullscreen, the console host itself is
+                        // reflowing the entire scrollback buffer at the same
+                        // moment we would be pushing a full repaint into it.
+                        // Backing off one frame keeps our heaviest writes
+                        // (large transcripts) out of that window and away
+                        // from the conhost reflow path (#298 event-log
+                        // evidence: conhost itself crashes with 0xc0000409
+                        // during these transitions; we cannot fix conhost,
+                        // but we can stop racing it).
+                        std::thread::sleep(Duration::from_millis(75));
                     }
                     _ => {}
                 },
