@@ -15,6 +15,7 @@ pub mod subagents;
 pub mod theme;
 pub mod ui;
 pub mod views;
+pub mod windows_clipboard;
 
 pub use app::App;
 pub use protocol::AppEvent;

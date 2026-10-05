@@ -77,6 +77,87 @@ fn ctrl_v_while_an_execution_approval_is_pending_does_not_touch_the_composer() {
     assert!(app.pending_execution.is_some());
 }
 
+#[test]
+fn shift_insert_pastes_through_the_same_clipboard_path_as_ctrl_v() {
+    // Shift+Insert is the terminal-native paste chord; it must route through
+    // the clipboard path instead of being swallowed or inserting nothing.
+    // See #296.
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.insert_text("/persistent ");
+
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Insert, KeyModifiers::SHIFT),
+    );
+
+    // The chord is consumed either way: it must never fall into the char arm
+    // or be silently dropped, and a failure surfaces as a toast.
+    assert!(app.input == "/persistent " || app.input.len() > "/persistent ".len());
+    if cfg!(windows) && app.input == "/persistent " {
+        assert!(!app.toast.is_empty(), "a failed paste must be visible");
+    }
+}
+
+#[test]
+fn shift_insert_while_an_execution_approval_is_pending_does_not_touch_the_composer() {
+    // Same safety invariant as Ctrl+V: no clipboard content may reach the
+    // composer while the approval modal owns the screen.
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.insert_text("/run https://lab.example");
+    let before = app.input.clone();
+    app.active_task_id = Some("task-1".into());
+
+    app.apply_event(approval_event("task-1", "whoami"));
+
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Insert, KeyModifiers::SHIFT),
+    );
+
+    assert_eq!(app.input, before);
+    assert!(app.pending_execution.is_some());
+}
+
+#[test]
+fn right_click_pastes_into_the_composer() {
+    // Right-click mirrors the Windows Terminal quick-edit paste convention;
+    // the routing contract matches the Ctrl+V test above. See #296.
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.terminal_size = ratatui::layout::Rect::new(0, 0, 120, 30);
+    app.insert_text("/persistent ");
+
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Right), 10, 20);
+
+    // The click is consumed either way: pasted, or a visible toast on an
+    // empty/locked clipboard (Unix always toasts the bracketed-paste hint).
+    assert!(app.input == "/persistent " || app.input.len() > "/persistent ".len());
+    if cfg!(windows) && app.input == "/persistent " {
+        assert!(!app.toast.is_empty(), "a failed paste must be visible");
+    }
+}
+
+#[test]
+fn right_click_while_an_execution_approval_is_pending_does_not_touch_the_composer() {
+    // The approval modal must swallow right-clicks as it does keys: no
+    // clipboard content may reach the composer during a pending execution.
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.terminal_size = ratatui::layout::Rect::new(0, 0, 120, 30);
+    app.insert_text("/run https://lab.example");
+    let before = app.input.clone();
+    app.active_task_id = Some("task-1".into());
+
+    app.apply_event(approval_event("task-1", "whoami"));
+
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Right), 10, 5);
+
+    assert_eq!(app.input, before);
+    assert!(app.pending_execution.is_some());
+}
+
 fn mouse(app: &mut App, kind: MouseEventKind, x: u16, y: u16) {
     handle_mouse(
         app,

@@ -71,33 +71,14 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
-/// CREATE_NO_WINDOW process-creation flag: the child runs detached from any
-/// console window. `-WindowStyle Hidden` must NOT be used for children spawned
-/// from the TUI: powershell.exe attaches to the *shared* console of the parent
-/// and hides that window, making the whole TUI disappear while it runs.
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
 /// Write text to the system clipboard without pulling in a third-party crate.
-/// Windows: persist to a temp UTF-8 file and use the built-in `Set-Clipboard`
-/// (handles Unicode correctly). Unix: emit an OSC 52 sequence to the terminal.
+/// Windows: Win32 clipboard API via FFI (microseconds; the previous
+/// powershell.exe detour paid a 1–3 s .NET startup on every copy). Unix:
+/// emit an OSC 52 sequence to the terminal.
 fn copy_to_clipboard(text: &str) -> bool {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        use std::process::Command;
-        let tmp = std::env::temp_dir().join(format!("vulnclaw-cb-{}.txt", std::process::id()));
-        if std::fs::write(&tmp, text.as_bytes()).is_err() {
-            return false;
-        }
-        let path = tmp.to_string_lossy().replace('\'', "''");
-        let ps = format!("Set-Clipboard -LiteralPath '{}'", path);
-        let status = Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
-        let _ = std::fs::remove_file(&tmp);
-        matches!(status, Ok(s) if s.success())
+        crate::windows_clipboard::write(text)
     }
     #[cfg(not(windows))]
     {
@@ -110,60 +91,23 @@ fn copy_to_clipboard(text: &str) -> bool {
     }
 }
 
-/// Read text from the system clipboard. Windows only: Ctrl+V needs a
-/// deterministic paste path there because crossterm 0.28 parses bracketed
-/// paste on Unix only (`main.rs` gates `EnableBracketedPaste` on unix), so
-/// `Event::Paste` never fires on Windows and pasting depended on the
-/// terminal synthesizing keystrokes — which conhost and several embedded
-/// terminals do not do. Uses `Get-Content -Raw` against `Get-Clipboard` so
-/// Unicode and multi-line payloads survive; returns `None` when anything
-/// fails so callers can show a toast instead of pasting garbage.
-#[cfg(windows)]
+/// Read text from the system clipboard. Windows: the Win32 clipboard API
+/// directly (the previous powershell.exe detour cost 1–3 s of .NET startup
+/// per paste, which felt broken interactively). Returns `None` on Unix:
+/// bracketed paste already delivers `Event::Paste` there and crossterm 0.28
+/// does not parse it on Windows. Callers surface a toast on `None` so the
+/// failure is visible rather than silent. See #296.
 fn read_from_clipboard() -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", "-"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            // Pipe the script via stdin (-Command -) so a clipboard payload
-            // containing quotes can never alter the command line itself.
-            if let Some(stdin) = child.stdin.as_mut() {
-                let _ = stdin.write_all(b"Get-Clipboard -Raw");
-            }
-            drop(child.stdin.take());
-            child.wait_with_output()
-        })
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8(output.stdout).ok()?;
-    // PowerShell prints CRLF; the composer filters \r anyway, but trimming the
-    // trailing newline stops a lone CRLF (an "empty" clipboard) from pasting
-    // as a blank line event.
-    let trimmed = text.trim_end_matches(['\r', '\n']);
-    Some(trimmed.to_owned())
+    crate::windows_clipboard::read()
 }
 
-/// Read the system clipboard for a Ctrl+V paste. On Unix this returns `None`:
-/// bracketed paste already delivers `Event::Paste` there, and terminals that
-/// synthesize Ctrl+V as a plain 'v' keystroke keep working through the
-/// ordinary char arm. Callers surface a toast on `None` so the failure is
-/// visible rather than silent.
-#[cfg(windows)]
+/// Read the system clipboard for a paste trigger. On Unix this returns
+/// `None`: bracketed paste already delivers `Event::Paste` there, and
+/// terminals that synthesize Ctrl+V as a plain 'v' keystroke keep working
+/// through the ordinary char arm. Callers surface a toast on `None` so the
+/// failure is visible rather than silent.
 pub fn read_clipboard_text() -> Option<String> {
     read_from_clipboard()
-}
-
-#[cfg(not(windows))]
-pub fn read_clipboard_text() -> Option<String> {
-    None
 }
 
 /// Paste the system clipboard into the composer at the cursor. Returns false
