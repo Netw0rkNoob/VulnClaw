@@ -3,6 +3,23 @@
 ---
 
 <details open>
+<summary><strong>v0.4.1</strong> — Windows TUI 粘贴/闪退修复 + REPL LLM 错误显示</summary>
+
+- **修复 Windows TUI 无法粘贴** — Windows 无 bracketed paste（crossterm 0.28 仅在 Unix 解析该序列），`Ctrl+V` 此前落入空分支被静默丢弃；现在 `Ctrl+V` / `Shift+Insert` / 鼠标右键三个触发器均直接读取系统剪贴板粘贴到输入框（#296）。
+- **剪贴板访问改为 Win32 API 直调** — TUI 的复制/粘贴不再通过 powershell.exe 子进程（每次需付 1-3 秒 .NET 冷启动），改为 FFI 直调 `OpenClipboard`/`GetClipboardData`/`SetClipboardData`，微秒级完成且零新增依赖；同时消除复制路径的临时文件落盘（#296）。
+- **修复剪贴板子进程隐藏 TUI 窗口的问题** — 从 TUI 内 spawn powershell.exe 时 `-WindowStyle Hidden` 会隐藏 TUI 自身的共享控制台窗口（表现为按粘贴键整个窗口"消失"）；全部剪贴板子进程改用 `CREATE_NO_WINDOW` 创建标志（#296）。
+- **修复 Windows 最大化/全屏切换闪退** — 控制台缓冲区重建/ConPTY 管道瞬断期间的 size/draw/poll/read 错误不再直接退出进程：瞬时错误按 75ms 退避重试（连续 40 次上限），单帧渲染 panic 仅跳过该帧；致命路径跳过 ratatui Terminal Drop 的 stderr 打印并改为写 `%TEMP%\vulnclaw-tui-panic.log` 后干净退出；resize 后退避一帧避免与 conhost 内部重排竞态（#298）。
+- **新增 TUI `/config` LLM 设置交互界面** — provider 模板、模型、API key 等字段可在 TUI 内直接编辑并保存（#291）。
+- **修复单轮 REPL 聊天不显示 LLM 错误** — 单轮对话中 LLM 调用失败此前静默无输出，现在错误信息直接展示（#292）。
+- **修复报告重放示例的请求字段** — fetch 重放示例保留完整请求字段，覆盖请求体时同步更新 Content-Length（#283、#287）。
+- **修复 docker 构建缺 protocol/ 目录** — hatchling force-include 在镜像构建中可正确解析（#285）。
+- **修复 openai<1.55.3 + httpx>=0.28 组合的 proxies TypeError** — 依赖组合守卫（#289）。
+
+</details>
+
+---
+
+<details open>
 <summary><strong>v0.4.0</strong> — 安全审批三档模式 + 双语 UI + TUI 容器布局 + 知识库 BM25</summary>
 
 - **新增执行审批三档模式** — `safety.permission_mode` 支持 `ask`（默认，每条命令 y/N 确认）、`auto_review`（只读命令白名单免确认、高风险命令仍需确认）、`full_access`（全部免确认）；TUI 内置同步的阻塞式执行审批弹窗与倒计时；模型执行前先做风险自评；执行门禁与子进程 spawn 全面加固。可通过 `vulnclaw config set safety.permission_mode <mode>`、REPL `/mode` 命令或 `VULNCLAW_SAFETY_PERMISSION_MODE` 环境变量切换。

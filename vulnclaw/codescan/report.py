@@ -215,7 +215,7 @@ def format_sarif(result: ScanResult) -> str:
                         "driver": {
                             "name": "VulnClaw",
                             "informationUri": "https://github.com/Netw0rkNoob/VulnClaw",
-                            "version": "0.4.0",
+                            "version": "0.4.1",
                             "rules": rules,
                         }
                     },
