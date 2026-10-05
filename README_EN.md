@@ -295,7 +295,7 @@ The Rust workbench has configurable containers: Status on the left, Findings and
 - An empty secondary sidebar collapses automatically. Drag a view to the workbench's right edge for an orange docking preview, then release to reopen it. The primary sidebar always keeps at least one view.
 - Layout changes save automatically to `VULNCLAW_HOME/tui/layout.json` (default `~/.vulnclaw/tui/layout.json`). The command palette grows the input area automatically. Small terminals show the required dimensions and restore the layout when enlarged.
 
-Native text selection while mouse capture is active depends on your terminal's modifier keys; `Ctrl+Y` copies an individual view.
+Native text selection while mouse capture is active depends on your terminal's modifier keys; `Ctrl+Y` copies an individual view. On Windows terminals `Ctrl+V` reads the system clipboard directly into the composer (the platform has no bracketed paste, so pasting never depends on the terminal synthesizing keystrokes); Unix terminals paste via bracketed paste.
 
 Common menus:
 - **Menu 3** — Set testing scope (host/port/path/allowed actions/blocked actions)

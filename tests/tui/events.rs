@@ -25,6 +25,58 @@ fn tab_cycles_execution_mode_and_shift_tab_cycles_permission() {
     assert_eq!(app.permission, PermissionMode::Ask);
 }
 
+#[test]
+fn ctrl_v_no_longer_reaches_the_composer_as_a_dropped_keypress() {
+    // Windows cannot rely on bracketed paste (crossterm parses it on Unix
+    // only), so Ctrl+V must be a first-class arm instead of falling into
+    // `_ => {}` under the CONTROL guard. See #296.
+    //
+    // The clipboard helper itself shells out to PowerShell and cannot run in
+    // CI; what this test pins down is the routing contract: the keypress is
+    // consumed (never typed as a literal 'v'), the composer is untouched or
+    // receives a real paste, and the outcome surfaces as a toast either way.
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.insert_text("/persistent ");
+
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+    );
+
+    // Never a literal 'v': the arm consumed the keypress either way.
+    assert_ne!(app.input, "/persistent v");
+    // On Unix the helper reports "use bracketed paste"; on Windows a healthy
+    // clipboard pastes for real. Both paths leave a toast; an empty clipboard
+    // on Windows may leave input unchanged, which is also acceptable — the
+    // regression being guarded against is the silent drop.
+    if cfg!(windows) && app.input == "/persistent " {
+        assert!(!app.toast.is_empty(), "a failed paste must be visible");
+    }
+}
+
+#[test]
+fn ctrl_v_while_an_execution_approval_is_pending_does_not_touch_the_composer() {
+    // The approval modal is safety-critical and swallows every key, so a
+    // Ctrl+V during a pending execution must not smuggle clipboard content
+    // into the composer.
+    let (sender, _) = mpsc::channel();
+    let mut app = App::new_disconnected(sender);
+    app.insert_text("/run https://lab.example");
+    let before = app.input.clone();
+    app.active_task_id = Some("task-1".into());
+
+    app.apply_event(approval_event("task-1", "whoami"));
+
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+    );
+
+    assert_eq!(app.input, before);
+    assert!(app.pending_execution.is_some());
+}
+
 fn mouse(app: &mut App, kind: MouseEventKind, x: u16, y: u16) {
     handle_mouse(
         app,

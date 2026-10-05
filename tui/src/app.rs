@@ -108,6 +108,91 @@ fn copy_to_clipboard(text: &str) -> bool {
     }
 }
 
+/// Read text from the system clipboard. Windows only: Ctrl+V needs a
+/// deterministic paste path there because crossterm 0.28 parses bracketed
+/// paste on Unix only (`main.rs` gates `EnableBracketedPaste` on unix), so
+/// `Event::Paste` never fires on Windows and pasting depended on the
+/// terminal synthesizing keystrokes — which conhost and several embedded
+/// terminals do not do. Uses `Get-Content -Raw` against `Get-Clipboard` so
+/// Unicode and multi-line payloads survive; returns `None` when anything
+/// fails so callers can show a toast instead of pasting garbage.
+#[cfg(windows)]
+fn read_from_clipboard() -> Option<String> {
+    use std::process::Command;
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            "-",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            // Pipe the script via stdin (-Command -) so a clipboard payload
+            // containing quotes can never alter the command line itself.
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(b"Get-Clipboard -Raw");
+            }
+            drop(child.stdin.take());
+            child.wait_with_output()
+        })
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    // PowerShell prints CRLF; the composer filters \r anyway, but trimming the
+    // trailing newline stops a lone CRLF (an "empty" clipboard) from pasting
+    // as a blank line event.
+    let trimmed = text.trim_end_matches(['\r', '\n']);
+    Some(trimmed.to_owned())
+}
+
+/// Read the system clipboard for a Ctrl+V paste. On Unix this returns `None`:
+/// bracketed paste already delivers `Event::Paste` there, and terminals that
+/// synthesize Ctrl+V as a plain 'v' keystroke keep working through the
+/// ordinary char arm. Callers surface a toast on `None` so the failure is
+/// visible rather than silent.
+#[cfg(windows)]
+pub fn read_clipboard_text() -> Option<String> {
+    read_from_clipboard()
+}
+
+#[cfg(not(windows))]
+pub fn read_clipboard_text() -> Option<String> {
+    None
+}
+
+/// Paste the system clipboard into the composer at the cursor. Returns false
+/// when the clipboard is unavailable so the caller can surface a toast.
+pub fn paste_clipboard_into_composer(app: &mut App) -> bool {
+    match read_clipboard_text() {
+        Some(text) => {
+            app.insert_text(&text);
+            app.toast = format!("Pasted {} chars", text.chars().count());
+            true
+        }
+        None => {
+            // On Unix, bracketed paste already handles `Event::Paste`; a
+            // second Ctrl+V path would need an OSC 52 round-trip that most
+            // terminals do not answer. Point the user at the working path
+            // instead of failing silently.
+            if cfg!(not(windows)) {
+                app.toast = "Use terminal paste (bracketed paste enabled)".into();
+            } else {
+                app.toast = "Paste failed: clipboard unavailable".into();
+            }
+            false
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExecutionMode {
     Plan,
