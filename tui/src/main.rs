@@ -18,6 +18,7 @@ use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use vulnclaw_tui::{events, ui, App, AppEvent};
 
 fn main() -> io::Result<()> {
+    install_panic_hook();
     enable_raw_mode()?;
     let result = (|| {
         let mut terminal_stdout = stdout();
@@ -39,11 +40,33 @@ fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> io::Result
     let (sender, receiver) = mpsc::channel::<AppEvent>();
     let mut app = App::new(sender);
     app.load_layout(vulnclaw_tui::sessions::client_dir().join("layout.json"));
+    // Windows recreates the console buffer when the window toggles between
+    // maximized/restored or enters/leaves fullscreen. During that moment a
+    // size query, console write, or event read can fail exactly once; with a
+    // full transcript each frame writes far more bytes, so the race window
+    // against the recreation widens and a propagated error was killing the
+    // whole TUI with no message (#298). Treat transient I/O failures as
+    // retryable instead of fatal, with a cap so a permanently broken console
+    // still terminates.
+    const MAX_CONSECUTIVE_FAILURES: u32 = 40; // ~3s at the 75ms frame budget
+    let mut consecutive_failures = 0u32;
     while app.running {
         while let Ok(event) = receiver.try_recv() {
             app.apply_event(event);
         }
-        let size = terminal.size()?;
+        // Size first: on a resize race the freshly queried size is the one
+        // the console can actually accept for this frame.
+        let size = match terminal.size() {
+            Ok(size) => size,
+            Err(error) => {
+                consecutive_failures += 1;
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(error);
+                }
+                std::thread::sleep(Duration::from_millis(75));
+                continue;
+            }
+        };
         let area = Rect::new(0, 0, size.width, size.height);
         if area != app.terminal_size
             || app.pending_execution.is_some()
@@ -54,7 +77,35 @@ fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> io::Result
         }
         app.terminal_size = area;
         app.refresh_view_scrolls();
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+        // A panic inside one frame's draw (a rare layout geometry edge case
+        // under resize) must not take the process down: skip the frame and
+        // keep running. The alternate screen hides stderr, so the payload is
+        // persisted to %TEMP%\vulnclaw-tui-panic.log by the hook; the panic
+        // loop is bounded by the same consecutive-failure cap.
+        let draw_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Map to () inside the closure: CompletedFrame borrows the
+            // terminal's buffer and cannot escape the FnMut body.
+            terminal.draw(|frame| ui::draw(frame, &app)).map(|_| ())
+        }));
+        match draw_result {
+            Ok(Ok(())) => consecutive_failures = 0,
+            Ok(Err(error)) => {
+                consecutive_failures += 1;
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(error);
+                }
+                std::thread::sleep(Duration::from_millis(75));
+                continue;
+            }
+            Err(_payload) => {
+                consecutive_failures += 1;
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(io::Error::other("draw panicked repeatedly during resize"));
+                }
+                std::thread::sleep(Duration::from_millis(75));
+                continue;
+            }
+        }
         if event::poll(Duration::from_millis(75))? {
             match event::read()? {
                 Event::Key(key) => events::handle_key(&mut app, key),
@@ -72,4 +123,41 @@ fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> io::Result
     // tears this process down; only leaving the TUI does.
     app.shutdown_backend();
     Ok(())
+}
+
+/// Persist panics where the user can find them after the alternate screen is
+/// gone. The default hook prints to stderr, which the alternate screen and
+/// the hidden PowerShell window both swallow; the log keeps the payload
+/// diagnosable (#298).
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_string());
+        let location = info
+            .location()
+            .map(|l| format!(" at {}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_default();
+        let line = format!(
+            "[unix:{:?}] panic{}: {}\n",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            location,
+            message,
+        );
+        let path = std::env::temp_dir().join("vulnclaw-tui-panic.log");
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| {
+                use std::io::Write;
+                file.write_all(line.as_bytes())
+            });
+    }));
 }
