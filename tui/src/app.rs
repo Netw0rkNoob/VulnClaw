@@ -71,12 +71,20 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+/// CREATE_NO_WINDOW process-creation flag: the child runs detached from any
+/// console window. `-WindowStyle Hidden` must NOT be used for children spawned
+/// from the TUI: powershell.exe attaches to the *shared* console of the parent
+/// and hides that window, making the whole TUI disappear while it runs.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Write text to the system clipboard without pulling in a third-party crate.
 /// Windows: persist to a temp UTF-8 file and use the built-in `Set-Clipboard`
 /// (handles Unicode correctly). Unix: emit an OSC 52 sequence to the terminal.
 fn copy_to_clipboard(text: &str) -> bool {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
         let tmp = std::env::temp_dir().join(format!("vulnclaw-cb-{}.txt", std::process::id()));
         if std::fs::write(&tmp, text.as_bytes()).is_err() {
@@ -85,14 +93,8 @@ fn copy_to_clipboard(text: &str) -> bool {
         let path = tmp.to_string_lossy().replace('\'', "''");
         let ps = format!("Set-Clipboard -LiteralPath '{}'", path);
         let status = Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                &ps,
-            ])
+            .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+            .creation_flags(CREATE_NO_WINDOW)
             .status();
         let _ = std::fs::remove_file(&tmp);
         matches!(status, Ok(s) if s.success())
@@ -118,19 +120,14 @@ fn copy_to_clipboard(text: &str) -> bool {
 /// fails so callers can show a toast instead of pasting garbage.
 #[cfg(windows)]
 fn read_from_clipboard() -> Option<String> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
     let output = Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            "-",
-        ])
+        .args(["-NoProfile", "-NonInteractive", "-Command", "-"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .and_then(|mut child| {
             use std::io::Write;
