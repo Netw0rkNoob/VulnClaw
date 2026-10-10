@@ -1552,6 +1552,7 @@ def solve(
 
     async def _run():
         async def runner(agent, shared_config):
+            on_event = None
             if stream:
                 from vulnclaw.cli._helpers import JsonlStreamSink
 
@@ -1568,6 +1569,7 @@ def solve(
                         sink._emit({"type": "status", "status": "goal reached"})
             else:
                 sink = TerminalStreamSink(console, shared_config.session.show_thinking)
+                on_event = _make_solve_event_printer(console)
             result = await agent.solve(
                 task_prompt,
                 target=target,

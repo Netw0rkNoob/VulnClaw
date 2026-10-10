@@ -1,6 +1,7 @@
 """VulnClaw CLI module tests for main.py."""
 
 import io
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -385,6 +386,88 @@ class TestCLI:
         result = runner.invoke(app, ["run", "https://example.com"])
         assert result.exit_code == 0
         assert called == [("run", "https://example.com")]
+
+    def test_solve_without_stream_binds_on_event(self, runner, monkeypatch):
+        """Regression: bare `vulnclaw solve` (no --stream) must not hit
+        UnboundLocalError: on_event referenced before assignment."""
+        import vulnclaw.cli.main as cli_main
+        from vulnclaw.cli.main import app
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        config.llm.api_key = "test-key"
+        monkeypatch.setattr(cli_main, "load_config", lambda: config)
+
+        solve_kwargs: list[dict] = []
+
+        class DummyAgent:
+            def __init__(self, agent_config):
+                self.config = agent_config
+                self.context = SimpleNamespace(
+                    state=SimpleNamespace(
+                        agent_state=SimpleNamespace(
+                            get_summary=lambda: {"completed": False, "steps": 0}
+                        )
+                    )
+                )
+
+            async def solve(self, prompt, **kwargs):
+                solve_kwargs.append(kwargs)
+                return []
+
+        async def fake_orchestrated(*, command, target, resume, snapshot, runner):
+            await runner(DummyAgent(config), config)
+            return type("RunResult", (), {"summary": {"findings_count": 0}})()
+
+        monkeypatch.setattr(cli_main, "_run_cli_orchestrated_task", fake_orchestrated)
+
+        result = runner.invoke(app, ["solve", "https://example.com"])
+
+        assert result.exit_code == 0, result.exception
+        assert solve_kwargs, "agent.solve was never called"
+        # on_event must be a callable (the terminal event printer), not missing
+        assert callable(solve_kwargs[0].get("on_event"))
+        assert solve_kwargs[0]["stream_sink"] is not None
+
+    def test_solve_with_stream_emits_events_without_unbound_local(self, runner, monkeypatch):
+        """--stream path keeps its JSONL on_event and still binds the name."""
+        import vulnclaw.cli.main as cli_main
+        from vulnclaw.cli.main import app
+        from vulnclaw.config.schema import VulnClawConfig
+
+        config = VulnClawConfig()
+        config.llm.api_key = "test-key"
+        monkeypatch.setattr(cli_main, "load_config", lambda: config)
+
+        solve_kwargs: list[dict] = []
+
+        class DummyAgent:
+            def __init__(self, agent_config):
+                self.config = agent_config
+                self.context = SimpleNamespace(
+                    state=SimpleNamespace(
+                        agent_state=SimpleNamespace(
+                            get_summary=lambda: {"completed": True, "steps": 1}
+                        )
+                    )
+                )
+
+            async def solve(self, prompt, **kwargs):
+                solve_kwargs.append(kwargs)
+                kwargs["on_event"]("agent_step", {"step": 1})
+                kwargs["on_event"]("completed", {})
+                return []
+
+        async def fake_orchestrated(*, command, target, resume, snapshot, runner):
+            await runner(DummyAgent(config), config)
+            return type("RunResult", (), {"summary": {"findings_count": 0}})()
+
+        monkeypatch.setattr(cli_main, "_run_cli_orchestrated_task", fake_orchestrated)
+
+        result = runner.invoke(app, ["solve", "https://example.com", "--stream"])
+
+        assert result.exit_code == 0, result.exception
+        assert solve_kwargs and callable(solve_kwargs[0].get("on_event"))
 
     def test_run_generates_report_after_completion(self, runner, monkeypatch):
         import vulnclaw.cli.main as cli_main
