@@ -1568,6 +1568,7 @@ def solve(
                         sink._emit({"type": "status", "status": "goal reached"})
             else:
                 sink = TerminalStreamSink(console, shared_config.session.show_thinking)
+                on_event = None
             result = await agent.solve(
                 task_prompt,
                 target=target,

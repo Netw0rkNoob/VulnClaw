@@ -418,6 +418,15 @@ def _overlay_env(config: VulnClawConfig) -> VulnClawConfig:
         config.safety.trusted_commands = [
             item.strip() for item in v.split(",") if item.strip()
         ]
+    # Host pentest toolchain mode: env var wins; unset + kali-rolling
+    # auto-enables; otherwise the persisted config value stands.
+    from vulnclaw.agent.tool_catalog import env_override, is_kali_rolling
+
+    toolchain_override = env_override()
+    if toolchain_override is not None:
+        config.safety.shell_tool_catalog = toolchain_override
+    elif is_kali_rolling():
+        config.safety.shell_tool_catalog = True
 
     # ── Model-driven sub-agents ──────────────────────────────────────
     if v := os.environ.get("VULNCLAW_SUBAGENT_ENABLED"):

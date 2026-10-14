@@ -1463,6 +1463,7 @@ def build_openai_tools(
     *,
     active_role: str | None = None,
     include_subagent_tool: bool = True,
+    config: Any = None,
 ) -> list[dict[str, Any]]:
     """Build OpenAI function calling schema from MCP tools + built-in tools."""
     tools: list[dict[str, Any]] = []
@@ -1472,7 +1473,7 @@ def build_openai_tools(
         if role_allows_tool(active_role, name):
             tools.append(tool)
 
-    append_builtin_tool_schemas(append_tool)
+    append_builtin_tool_schemas(append_tool, config=config)
 
     if include_subagent_tool:
         from vulnclaw.agent.subagent.integration import tool_schemas
