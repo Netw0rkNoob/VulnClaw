@@ -69,7 +69,7 @@ Suitable for authorized pentests, CTF competitions, security training, and red t
 - **Lightweight Correction Layer** — Records repeated calls, degraded tools, timing, and new observations; repeated reads of the same evidence range are suppressed and evidence-only stalls trigger a stall guard without restoring the old stage planner
 - **Evidence-Level Anti-Hallucination Gate** — Claims about flags/conclusions must appear verbatim in real tool output to be accepted; prevents fabricated flags
 - **Natural Language Driven** — Describe your goal in plain English, auto-identifies phases and tools
-- **13 LLM Providers** — OpenAI / Anthropic / MiniMax / DeepSeek / Zhipu / Moonshot / Qwen / SiliconFlow / Doubao / StepFun / SenseTime / OpenRouter / local Ollama, one-command switch
+- **14 LLM Providers** — OpenAI / Anthropic / MiniMax / DeepSeek / Zhipu / Moonshot / Qwen / SiliconFlow / Doubao / StepFun / SenseTime / OpenRouter / Cheaper Inference / local Ollama, one-command switch
 - **MCP Toolchain** — 4 MCP services: `fetch` / `memory` run locally out-of-the-box, `chrome-devtools` / `burp` connect to external MCP servers for browser automation and HTTP interception
 - **Enhanced fetch request tool** — Defaults to GET, returns the full response body, and supports HTTP/HTTPS, custom method/headers/params/cookies/body/data/form/json, timeout/redirect/TLS controls; TLS verification is off by default for CTF/lab HTTPS targets
 - **Native Traffic Evidence Store** — In-scope request/response pairs land in an append-only JSONL index under `evidence/traffic/`. Built-in `traffic_list` / `traffic_view` / `traffic_repeat` / `traffic_sitemap` tools read and replay the store
@@ -575,6 +575,7 @@ vulnclaw config provider minimax   # one-command switch
 | StepFun | `provider stepfun` | step-3.7-flash |
 | SenseTime | `provider sensetime` | SenseNova-V6.5-Pro |
 | OpenRouter | `provider openrouter` | anthropic/claude-opus-5 |
+| Cheaper Inference | `provider cheaperinference` | gpt-5.4-mini |
 | Ollama (local) | `provider ollama` | qwen3.5:9b |
 | Custom | `provider custom` | manual |
 
