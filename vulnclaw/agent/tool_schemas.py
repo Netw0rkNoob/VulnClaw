@@ -13,14 +13,43 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from vulnclaw.agent.tool_catalog import toolchain_enabled
+
+_SHELL_COMMAND_DESCRIPTION = (
+    "Run a local shell command when local verification or exact request fidelity is "
+    "useful. Good uses include php -r serialization checks, curl requests with raw "
+    "cookies/headers, rg/Select-String over saved files, and small one-off scripts. "
+    "Set workdir when the command depends on files. Raw stdout/stderr are saved as "
+    "evidence; large active-context observations are bounded high-signal previews."
+)
+
+_SHELL_COMMAND_DESCRIPTION_TOOLCHAIN = (
+    "Run a local shell command. The host has a full pentest toolchain (see the "
+    "system prompt catalog) — prefer it over hand-rolled HTTP for recon/exploit/"
+    "cracking, passing targets and flags as arguments. Also useful when local "
+    "verification or exact request fidelity matters: php -r serialization checks, "
+    "curl requests with raw cookies/headers, rg/Select-String over saved files, and "
+    "small one-off scripts. Set workdir when the command depends on files. Raw "
+    "stdout/stderr are saved as evidence; large active-context observations are "
+    "bounded high-signal previews."
+)
+
 
 def append_builtin_tool_schemas(
     append_tool: Callable[[dict[str, Any]], None],
+    *,
+    config: Any = None,
 ) -> None:
     """通过 ``append_tool`` 注册全部内置工具的 OpenAI function schema。
 
     ``append_tool`` 由调用方提供,负责角色过滤与去重收集。本函数只声明静态 schema。
+    ``config`` 用于解析 host-toolchain 模式开关;关闭时 schema 与历史完全一致。
     """
+    shell_description = (
+        _SHELL_COMMAND_DESCRIPTION_TOOLCHAIN
+        if toolchain_enabled(config)
+        else _SHELL_COMMAND_DESCRIPTION
+    )
     append_tool(
         {
             "type": "function",
@@ -254,13 +283,7 @@ def append_builtin_tool_schemas(
             "type": "function",
             "function": {
                 "name": "shell_command",
-                "description": (
-                    "Run a local shell command when local verification or exact request fidelity is "
-                    "useful. Good uses include php -r serialization checks, curl requests with raw "
-                    "cookies/headers, rg/Select-String over saved files, and small one-off scripts. "
-                    "Set workdir when the command depends on files. Raw stdout/stderr are saved as "
-                    "evidence; large active-context observations are bounded high-signal previews."
-                ),
+                "description": shell_description,
                 "parameters": {
                     "type": "object",
                     "properties": {

@@ -747,6 +747,7 @@ class AgentCore:
             self.mcp_manager,
             active_role=self.active_role,
             include_subagent_tool=include_subagent_tool,
+            config=self.config,
         )
 
     # ── Python code executor ─────────────────────────────────────────
