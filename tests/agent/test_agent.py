@@ -64,7 +64,7 @@ class TestVulnerabilityFinding:
         # A bare finding (no evidence/vuln_type/remediation) is quarantined at intake
         # for ANY severity: title prefixed, lifecycle set to needs_manual_review.
         assert "Test Vuln" in finding.title
-        assert finding.title.startswith("[未验证]")
+        assert finding.title.startswith(("[未验证]", "[Unverified]"))
         assert finding.severity == "Medium"
         assert finding.vuln_type == ""
         assert finding.cve is None
@@ -1177,41 +1177,8 @@ class TestAgentCore:
         assert agent._is_completion_signal("渗透测试已完成") is True
         assert agent._is_completion_signal("继续扫描") is False
 
-    def test_parse_findings(self):
-        agent = self._make_agent()
-        response = "[Critical] RCE found in /api/exec\n[High] SQL Injection in login"
-        agent._finding_parser.parse(response)
-        assert len(agent.session_state.findings) >= 1
-        assert agent.session_state.findings[0].severity == "Critical"
-        # Bare explicit-tag findings are quarantined at intake (needs_manual_review,
-        # evidence_level bumped L1 → L2) until an evidence chain is attached.
-        assert agent.session_state.findings[0].evidence_level == "L2"
-        assert agent.session_state.findings[0].lifecycle_status == "needs_manual_review"
 
-    def test_parse_high_confidence_pattern_needs_manual_review(self):
-        agent = self._make_agent()
-        agent.context.state.add_note("访问 https://example.com/admin/exec 后 whoami 返回 www-data")
-        response = "发现远程代码执行漏洞，命令执行成功，whoami"
-        agent._finding_parser.parse(response)
 
-        review_items = [
-            f for f in agent.session_state.findings if f.lifecycle_status == "needs_manual_review"
-        ]
-        assert review_items
-        assert review_items[0].evidence_level == "L2"
-
-    def test_confirmed_fact_verified_finding_carries_location_and_verified_at(self):
-        agent = self._make_agent()
-        agent.context.state.add_confirmed_fact("命令执行成功")
-        agent.context.state.add_note("发现入口 https://example.com/admin/exec")
-        agent._finding_parser.parse("访问 https://example.com/admin/exec 后确认命令执行成功")
-
-        verified = [f for f in agent.session_state.findings if f.verification_status == "verified"]
-        assert verified
-        assert "https://example.com/admin/exec" in (verified[0].evidence or "")
-        assert verified[0].verified_at is not None
-        assert verified[0].evidence_level == "L4"
-        assert verified[0].lifecycle_status == "verified"
 
     def test_phase_detection_from_output(self):
         from vulnclaw.agent.context import PentestPhase

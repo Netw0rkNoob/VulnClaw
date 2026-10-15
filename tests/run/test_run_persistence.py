@@ -429,3 +429,158 @@ async def test_no_import_legacy_resume_does_not_create_run_copy(tmp_path, monkey
     assert agent.session_state.step_records[0].action == "probe"
     assert not (tmp_path / "runs").exists()
     assert not (tmp_path / "targets" / parse_target(raw_target).state_key / "index.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fresh_session", [False, True])
+async def test_merge_save_keeps_appended_finding_evidence_for_restored_assessment(
+    tmp_path, monkeypatch, fresh_session
+):
+    """Append evidence -> save -> restore -> assess must keep the full set.
+
+    A structured submission extends an existing finding's snapshots in memory;
+    the default merge-save path must not collapse that back to the last
+    persisted snapshot when the session is reloaded for reporting.
+    """
+    from types import SimpleNamespace
+
+    import vulnclaw.target_state.store as store
+    from vulnclaw.findings.evidence import load_snapshots
+    from vulnclaw.findings.intake import submit_finding
+    from vulnclaw.findings.types import EvidenceReview
+    from vulnclaw.findings.verification import verify_findings
+
+    monkeypatch.setattr(store, "TARGETS_DIR", tmp_path / "targets")
+    target = "https://lab.test"
+    config = VulnClawConfig()
+    config.session.output_dir = tmp_path
+    config.session.auto_save = False
+    state = SessionState(target=target)
+    agent = SimpleNamespace(
+        config=config, context=SimpleNamespace(state=state), session_state=state
+    )
+
+    def record(output):
+        return state.agent_state.remember_tool_result(
+            tool="fetch", arguments={"url": "https://lab.test/login"},
+            output=output, target=target,
+        ).id
+
+    def submit(evidence_id):
+        submit_finding(agent, {
+            "title": "Login injection candidate", "vuln_type": "SQLi",
+            "severity": "High", "description": "An actual request produced an error.",
+            "endpoint": "https://lab.test/login", "evidence_ids": [evidence_id],
+        })
+
+    first = record("first weak observation")
+    submit(first)
+    assert len(state.findings[0].evidence_snapshots) == 1
+    store.save_target_state(target, state, command="test", checkpoint_reason="test")
+
+    # The default merge-save path (auto-save) persists an appended snapshot.
+    if fresh_session:
+        state = SessionState(target=target, task_id="next-session")
+        agent.context.state = state
+        agent.session_state = state
+    second = record("second reproduction observation")
+    submit(second)
+    assert len(state.findings[0].evidence_snapshots) == (1 if fresh_session else 2)
+    store.save_target_state(target, state, command="test", checkpoint_reason="test")
+
+    restored = store.hydrate_session_from_target_state(target)
+    assert restored is not None
+    finding = restored.findings[0]
+    assert len(finding.evidence_snapshots) == 2
+    assert sorted(snapshot.content for snapshot in load_snapshots(finding).values()) == [
+        "first weak observation",
+        "second reproduction observation",
+    ]
+    assert len({ref.evidence_id for ref in finding.evidence_snapshots}) == 2
+    assert [ref.source_id for ref in finding.evidence_snapshots] == [first, second]
+    # Repeated saves keep the aliases stable and do not duplicate snapshots.
+    expected_refs = finding.evidence_snapshots
+    store.save_target_state(target, state, command="test")
+    assert store.hydrate_session_from_target_state(target).findings[0].evidence_snapshots == expected_refs
+
+    if fresh_session:
+        # Previously saved records may already contain colliding session-local
+        # IDs. Loading them recovers both immutable snapshots as well.
+        old_data = restored.model_dump(mode="json")
+        old_data["findings"][0]["evidence_snapshots"][1]["evidence_id"] = first
+        restored = SessionState.model_validate(old_data)
+        assert len(load_snapshots(restored.findings[0])) == 2
+
+    # The restored evidence set reaches the independent assessment intact.
+    captured = {}
+
+    def review(_config, _finding, snapshots):
+        captured.update(snapshots)
+        return EvidenceReview(
+            confidence="low", reason="Both observations were reviewed",
+            observations=[{"evidence_id": first, "quote": "first weak observation"}],
+        )
+
+    monkeypatch.setattr("vulnclaw.findings.verification._review_with_llm", review)
+    view = await verify_findings(restored, config=config, poc_verify=False)
+    assert set(captured) == {ref.evidence_id for ref in restored.findings[0].evidence_snapshots}
+    assert len(captured) == 2
+    assert view.findings[0].assessment.method == "evidence_review"
+
+
+@pytest.mark.parametrize(("previous", "outcome"), [
+    ("verified", "rejected"), ("rejected", "verified"),
+    ("verified", "suspected_low"), ("rejected", "suspected_high"),
+])
+async def test_merge_save_keeps_latest_current_assessment(
+    tmp_path, monkeypatch, previous, outcome,
+):
+    from unittest.mock import AsyncMock
+
+    import vulnclaw.target_state.store as store
+    from vulnclaw.config.domain_models import VulnerabilityFinding
+    from vulnclaw.findings.types import FindingAssessment
+    from vulnclaw.findings.verification import verify_findings
+
+    monkeypatch.setattr(store, "TARGETS_DIR", tmp_path / "targets")
+    config = VulnClawConfig()
+    config.session.output_dir = tmp_path
+    state = SessionState(target="https://lab.test")
+    finding = VulnerabilityFinding(
+        title="Candidate", vuln_type="sql_injection", submission_id="submission",
+        evidence="Recorded observation",
+    )
+    old_assessment = FindingAssessment(
+        outcome=previous, method="poc", reason="Previous controlled test",
+        assessed_at="2026-10-12T09:00:00+00:00",
+    )
+    finding.verification_history.append(old_assessment)
+    if previous == "verified":
+        finding.mark_verified(old_assessment.reason)
+    else:
+        finding.mark_rejected(old_assessment.reason)
+    state.add_finding(finding)
+    store.save_target_state(state.target, state, command="initial")
+    stale_state = state.model_copy(deep=True)
+
+    conclusive = outcome in {"verified", "rejected"}
+    assessment = FindingAssessment(
+        outcome=outcome, method="poc" if conclusive else "evidence_review",
+        reason="Current assessment", assessed_at="2026-10-12T10:00:00+00:00",
+    )
+    monkeypatch.setattr("vulnclaw.findings.verification.assess_finding",
+                        AsyncMock(return_value=assessment))
+    await verify_findings(state, config=config, poc_verify=True)
+    store.save_target_state(state.target, state, command="reassessed")
+    # A later save from a stale session must not undo the newer verdict.
+    store.save_target_state(state.target, stale_state, command="stale")
+
+    restored = store.hydrate_session_from_target_state(state.target).findings[0]
+    expected = assessment
+    assert restored.assessment.outcome == expected.outcome
+    assert restored.verification_status == (expected.outcome if conclusive else "pending")
+    assert restored.lifecycle_status == (expected.outcome if conclusive else "needs_manual_review")
+    assert restored.verified == (expected.outcome == "verified")
+    assert restored.verification_note == expected.reason
+    assert restored.verified_at == (expected.assessed_at if conclusive else None)
+    assert len(restored.verification_history) == 2

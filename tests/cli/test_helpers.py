@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from rich.console import Console
@@ -373,47 +374,19 @@ def test_print_agent_output_handles_visible_and_reasoning_only_text(monkeypatch)
     assert "secret" not in rendered
 
 
-def test_generate_report_selects_session_target_state_then_empty_session(
-    monkeypatch, tmp_path
-):
-    import vulnclaw.report.generator as report_generator
-    import vulnclaw.target_state.store as target_store
+async def test_generate_report_delegates_to_shared_application_service(monkeypatch, tmp_path):
+    from vulnclaw import report_service
 
-    calls: list[tuple] = []
-    saved_state = object()
-    current_session = SimpleNamespace(findings=[object()], executed_steps=[], notes=[])
-
-    def fake_generate(session, output_path=None, report_format="markdown"):
-        calls.append(("session", session, output_path, report_format))
-        return tmp_path / "session.md"
-
-    def fake_generate_saved(state, output_path=None):
-        calls.append(("saved", state, output_path))
-        return tmp_path / "saved.md"
-
-    monkeypatch.setattr(report_generator, "generate_report", fake_generate)
-    monkeypatch.setattr(
-        report_generator, "generate_report_from_target_state", fake_generate_saved
+    session = SimpleNamespace(findings=[], executed_steps=[], notes=[])
+    generate = AsyncMock(return_value=tmp_path / "report.html")
+    monkeypatch.setattr(report_service, "generate_report_for_target", generate)
+    path = await helpers._generate_report_for_target(
+        "example.com", current_session=session, report_format="html", output_path="report.html",
     )
-    monkeypatch.setattr(target_store, "load_target_state", lambda target: saved_state)
-
-    assert helpers._generate_report_for_target(
-        "example.com",
-        current_session=current_session,
-        report_format="json",
-        output_path="custom.json",
-    ).endswith("session.md")
-    assert helpers._generate_report_for_target(
-        "example.com", output_path="saved.md"
-    ).endswith("saved.md")
-
-    monkeypatch.setattr(target_store, "load_target_state", lambda target: None)
-    assert helpers._generate_report_for_target("new.example").endswith("session.md")
-
-    assert calls[0] == ("session", current_session, "custom.json", "json")
-    assert calls[1] == ("saved", saved_state, "saved.md")
-    assert calls[2][0] == "session"
-    assert calls[2][1].target == "new.example"
+    assert path.endswith("report.html")
+    generate.assert_awaited_once_with(
+        "example.com", current_session=session, report_format="html", output_path="report.html",
+    )
 
 
 def test_constraint_compatibility_falls_back_to_legacy_signature(monkeypatch):
@@ -463,7 +436,7 @@ def test_manual_rejects_invalid_render_format():
         render_manual("html")
 
 
-def test_run_stream_emits_progress_and_verified_claims(monkeypatch):
+def test_run_stream_emits_progress_without_registering_completion_claims(monkeypatch):
     import vulnclaw.cli.main as cli_main
     from vulnclaw.config.schema import VulnClawConfig
 
@@ -477,10 +450,7 @@ def test_run_stream_emits_progress_and_verified_claims(monkeypatch):
         "completed": True,
         "steps": 4,
         "evidence": 2,
-        "verified_claims": [
-            {"id": "claim-1", "claim": "SQL injection confirmed"},
-            "non-dict claims are ignored",
-        ],
+        "verified_claims": 1,
     }
 
     class FakeAgent:
@@ -531,11 +501,4 @@ def test_run_stream_emits_progress_and_verified_claims(monkeypatch):
     assert any(event.get("message") == "turn 4" for event in events)
     assert any(event.get("status") == "goal reached" for event in events)
     complete = next(event for event in events if event["type"] == "complete")
-    assert complete["result"]["findings"] == [
-        {
-            "id": "claim-1",
-            "severity": "high",
-            "title": "SQL injection confirmed",
-            "target": "example.com",
-        }
-    ]
+    assert complete["result"]["findings"] == []

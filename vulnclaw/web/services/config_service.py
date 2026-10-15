@@ -34,6 +34,7 @@ def get_public_config() -> ConfigView:
         persistent_rounds_per_cycle=config.session.persistent_rounds_per_cycle,
         persistent_max_cycles=config.session.persistent_max_cycles,
         show_thinking=config.session.show_thinking,
+        poc_verify_enabled=config.session.poc_verify_enabled,
         python_execute_enabled=config.safety.enable_python_execute,
         python_execute_mode=config.safety.python_execute_mode,
         python_execute_max_lines=config.safety.python_execute_max_lines,
@@ -81,6 +82,8 @@ def update_public_config(payload: ConfigUpdateRequest) -> ConfigView:
         config.session.persistent_max_cycles = payload.persistent_max_cycles
     if payload.show_thinking is not None:
         config.session.show_thinking = payload.show_thinking
+    if payload.poc_verify_enabled is not None:
+        config.session.poc_verify_enabled = payload.poc_verify_enabled
     if payload.python_execute_enabled is not None:
         config.safety.enable_python_execute = payload.python_execute_enabled
     if payload.python_execute_mode is not None:

@@ -239,6 +239,9 @@ def _merge_config(base: VulnClawConfig, raw: dict[str, Any]) -> VulnClawConfig:
     raw_session = raw.get("session")
     if isinstance(raw_session, dict):
         session = dict(raw_session)
+        if "report_poc_verify_enabled" in session:
+            previous = session.pop("report_poc_verify_enabled")
+            session.setdefault("poc_verify_enabled", previous)
         if "context_auto_compact" not in session and "solve_auto_compact" in session:
             session["context_auto_compact"] = session["solve_auto_compact"]
         if (
@@ -387,8 +390,6 @@ def _overlay_env(config: VulnClawConfig) -> VulnClawConfig:
     if v := os.environ.get("VULNCLAW_SESSION_PLUGIN_MAX_REQUESTS_PER_TARGET"):
         with suppress(ValueError):
             config.session.plugin_max_requests_per_target = int(v)
-    if v := os.environ.get("VULNCLAW_SESSION_EVIDENCE_MIN_REPORT_LEVEL"):
-        config.session.evidence_min_report_level = v
 
     # ── Safety ───────────────────────────────────────────────────────
     if v := os.environ.get("VULNCLAW_SAFETY_PYTHON_EXECUTE_ENABLED"):

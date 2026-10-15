@@ -118,7 +118,7 @@ def _build_target_view(raw: dict) -> TargetView:
             item.model_dump(mode="json") if hasattr(item, "model_dump") else item
             for item in getattr(session, "constraint_violation_events", [])
         ],
-        raw=raw,
+        raw={**raw, "findings": session.model_dump(mode="json")["findings"]},
     )
 
 

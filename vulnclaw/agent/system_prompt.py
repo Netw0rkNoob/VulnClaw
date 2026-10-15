@@ -36,6 +36,13 @@ def build_dynamic_system_prompt(
         enable_personnel_dim=enable_personnel_dim,
     )
 
+    prompt += (
+        "\n\nRecord candidate vulnerabilities only with submit_finding. "
+        "Cite existing evidence ids returned by real tools. Include an explicit endpoint "
+        "or code location when available. Ordinary prose, examples and FINAL do not "
+        "record or verify vulnerabilities. Independent finding audits own verification."
+    )
+
     if auto_mode:
         prompt += "\n\n" + get_auto_pentest_instruction()
 

@@ -4,7 +4,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from vulnclaw.agent.context import SessionState, VulnerabilityFinding
+from vulnclaw.agent.context import SessionState
+from vulnclaw.findings.intake import submit_finding
+
+
+@pytest.fixture(autouse=True)
+def isolate_team_evidence(tmp_path, monkeypatch):
+    monkeypatch.setattr(FakeAgent, 'output_dir', tmp_path, raising=False)
 
 
 class FakeAgent:
@@ -14,6 +20,7 @@ class FakeAgent:
 
     def __init__(self, *, delay: float = 0) -> None:
         self.session_state = SessionState(target="https://example.com")
+        self.context = SimpleNamespace(state=self.session_state)
         self.config = SimpleNamespace(
             llm=SimpleNamespace(
                 provider="openai",
@@ -22,7 +29,7 @@ class FakeAgent:
                 temperature=0.1,
                 reasoning_effort="high",
             ),
-            session=SimpleNamespace(solve_max_steps=40),
+            session=SimpleNamespace(solve_max_steps=40, output_dir=self.output_dir),
         )
         self.active_role: str | None = None
         self.calls: list[tuple[str | None, str, int]] = []
@@ -51,18 +58,19 @@ class FakeAgent:
         if self.delay:
             await asyncio.sleep(self.delay)
         self.calls.append((self.active_role, goal or prompt, max_steps))
-        self.session_state.add_finding(
-            VulnerabilityFinding(
-                title=f"{self.active_role} finding",
-                severity="Info",
-                vuln_type="team-test",
-                evidence=goal or prompt,
-            )
+        record = self.session_state.agent_state.remember_tool_result(
+            tool='fetch', arguments={'url': f'https://example.com/{self.active_role}'},
+            output=goal or prompt, target=self.session_state.target,
         )
+        submit_finding(self, {
+            'title': f'{self.active_role} finding', 'severity': 'Info', 'vuln_type': 'team-test',
+            'description': goal or prompt, 'endpoint': f'https://example.com/{self.active_role}',
+            'evidence_ids': [record.id],
+        })
         self.session_state.notes.append(f"{self.active_role} note")
         self.session_state.agent_state.record_verified_claim(
             f"{self.active_role} research fact",
-            evidence_ids=[],
+            evidence_ids=[record.id],
         )
         FakeAgent.active_solves -= 1
         return SimpleNamespace(completed=False, reason="worker done", steps=1)

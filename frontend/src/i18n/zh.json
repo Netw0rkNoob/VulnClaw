@@ -565,5 +565,13 @@
   "shell.quick_actions": "快捷操作",
   "home.scan_start_aria": "开始扫描",
   "home.excluded_hosts": "排除主机",
-  "home.excluded_hosts_help": "跳过的主机或 IP（黑名单/blocklist）。用逗号或换行分隔。"
+  "home.excluded_hosts_help": "跳过的主机或 IP（黑名单/blocklist）。用逗号或换行分隔。",
+  "risk.audit_findings": "审计漏洞",
+  "risk.auditing": "正在审计…",
+  "risk.audit_failed": "漏洞审计失败",
+  "risk.audit_completed": "已审计 {total} 条：已验证 {verified} 条，未完成 {incomplete} 条。",
+  "risk.poc_verify": "使用 PoC 审计",
+  "risk.poc_verify_hint": "独立审查已保存证据；开启 PoC 后尝试复现，沿用执行审批与目标范围。",
+  "settings.poc_verify": "漏洞审计默认尝试 PoC",
+  "settings.poc_verify_hint": "任务结束及历史补审计时使用此默认值；关闭时审查已保存证据。PoC 执行仍需审批。"
 }

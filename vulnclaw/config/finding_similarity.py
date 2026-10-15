@@ -276,6 +276,16 @@ def finding_similarity(a: "VulnerabilityFinding", b: "VulnerabilityFinding") -> 
     Returns:
         [0.0, 1.0] 之间的综合相似度。
     """
+    if a.submission_id or b.submission_id:
+        # Structured locations are authoritative; prose similarity cannot merge
+        # separate endpoints, methods or owning targets.
+        if (a.target, a.endpoint, a.method, a.code_location) != (
+            b.target, b.endpoint, b.method, b.code_location,
+        ):
+            return 0.0
+        if normalize_vuln_type(a.vuln_type) == normalize_vuln_type(b.vuln_type):
+            return 1.0
+        return 0.0
     type_sim = _vuln_type_similarity(a.vuln_type, b.vuln_type)
 
     loc_a, loc_b = _extract_location(a), _extract_location(b)

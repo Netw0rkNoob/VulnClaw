@@ -37,7 +37,12 @@ def _curl_config(arguments):
 
 
 @pytest.fixture
-def receiver():
+def receiver(monkeypatch):
+    # Loopback fetches must reach the local receiver, never an ambient proxy
+    # (an operator's HTTP_PROXY would otherwise 502 the 127.0.0.1 request).
+    for var in ("http_proxy", "https_proxy", "all_proxy",
+                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(var, raising=False)
     received = []
 
     class Handler(BaseHTTPRequestHandler):

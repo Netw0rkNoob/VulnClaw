@@ -120,6 +120,7 @@ class TestBuiltinToolSchemaSet:
     # The exact set of built-in tools the schema factory must expose. Intel and
     # traffic tools are appended elsewhere, so this pins only the built-in core.
     EXPECTED = {
+        "submit_finding",
         "load_skill_reference",
         "memory_search",
         "evidence_list",

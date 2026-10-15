@@ -91,7 +91,6 @@ class TestSessionConfig:
         assert config.plugin_runtime_enabled is True
         assert config.plugin_default_timeout == 10
         assert config.plugin_max_requests_per_target == 30
-        assert config.evidence_min_report_level == "L4"
         assert config.context_hot_max_messages == 48
         assert config.context_hot_max_tokens == 32000
         assert config.memory_search_max_chars == 6000
@@ -567,7 +566,6 @@ class TestSettingsLoad:
         monkeypatch.setenv("VULNCLAW_SESSION_ESCALATION_MAX_LEVEL", "2")
         monkeypatch.setenv("VULNCLAW_SESSION_PLUGIN_RUNTIME_ENABLED", "false")
         monkeypatch.setenv("VULNCLAW_SESSION_PLUGIN_MAX_REQUESTS_PER_TARGET", "7")
-        monkeypatch.setenv("VULNCLAW_SESSION_EVIDENCE_MIN_REPORT_LEVEL", "L2")
 
         config = load_config()
 
@@ -577,7 +575,6 @@ class TestSettingsLoad:
         assert config.session.escalation_max_level == 2
         assert config.session.plugin_runtime_enabled is False
         assert config.session.plugin_max_requests_per_target == 7
-        assert config.session.evidence_min_report_level == "L2"
 
     def test_env_var_api_keys_list(self, monkeypatch):
         """VULNCLAW_LLM_API_KEYS (comma-separated) populates the key list."""

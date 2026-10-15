@@ -2,6 +2,7 @@
 
 import io
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from typer.testing import CliRunner
@@ -353,7 +354,7 @@ class TestCLI:
         )
         monkeypatch.setattr(lifecycle_mod.MCPLifecycleManager, "stop_all", lambda self: None)
         monkeypatch.setattr(
-            cli_main, "_generate_report_for_target", lambda target, **kwargs: "C:/tmp/report.md"
+            cli_main, "_generate_report_for_target", AsyncMock(side_effect=lambda target, **kwargs: "C:/tmp/report.md")
         )
 
         result = runner.invoke(
@@ -471,15 +472,17 @@ class TestCLI:
 
     def test_run_generates_report_after_completion(self, runner, monkeypatch):
         import vulnclaw.cli.main as cli_main
+        from vulnclaw.agent.context import SessionState
         from vulnclaw.cli.main import app
         from vulnclaw.config.schema import VulnClawConfig
 
+        audited = SessionState(target="https://example.com")
         config = VulnClawConfig()
         config.llm.api_key = "test-key"
         monkeypatch.setattr(cli_main, "load_config", lambda: config)
 
         async def fake_orchestrated(*, command, target, resume, snapshot, runner):
-            return type("RunResult", (), {"summary": {"findings_count": 2}})()
+            return type("RunResult", (), {"summary": {"findings_count": 2}, "audited_session": audited})()
 
         monkeypatch.setattr(cli_main, "_run_cli_orchestrated_task", fake_orchestrated)
 
@@ -489,25 +492,27 @@ class TestCLI:
             report_calls.append((target, kwargs))
             return "/tmp/vulnclaw-output/report.md"
 
-        monkeypatch.setattr(cli_main, "_generate_report_for_target", fake_generate_report)
+        monkeypatch.setattr(cli_main, "_generate_report_for_target", AsyncMock(side_effect=fake_generate_report))
 
         result = runner.invoke(app, ["run", "https://example.com"])
 
         assert result.exit_code == 0
-        assert report_calls == [("https://example.com", {"output_path": None})]
+        assert report_calls == [("https://example.com", {"output_path": None, "current_session": audited})]
         assert "report.md" in result.output
 
     def test_run_passes_output_flag_to_report_generation(self, runner, monkeypatch):
         import vulnclaw.cli.main as cli_main
+        from vulnclaw.agent.context import SessionState
         from vulnclaw.cli.main import app
         from vulnclaw.config.schema import VulnClawConfig
 
+        audited = SessionState(target="https://example.com")
         config = VulnClawConfig()
         config.llm.api_key = "test-key"
         monkeypatch.setattr(cli_main, "load_config", lambda: config)
 
         async def fake_orchestrated(*, command, target, resume, snapshot, runner):
-            return type("RunResult", (), {"summary": {"findings_count": 0}})()
+            return type("RunResult", (), {"summary": {"findings_count": 0}, "audited_session": audited})()
 
         monkeypatch.setattr(cli_main, "_run_cli_orchestrated_task", fake_orchestrated)
 
@@ -517,7 +522,7 @@ class TestCLI:
             report_calls.append((target, kwargs))
             return "/custom/path/report.md"
 
-        monkeypatch.setattr(cli_main, "_generate_report_for_target", fake_generate_report)
+        monkeypatch.setattr(cli_main, "_generate_report_for_target", AsyncMock(side_effect=fake_generate_report))
 
         result = runner.invoke(
             app, ["run", "https://example.com", "--output", "/custom/path/report.md"]
@@ -525,7 +530,7 @@ class TestCLI:
 
         assert result.exit_code == 0
         assert report_calls == [
-            ("https://example.com", {"output_path": "/custom/path/report.md"})
+            ("https://example.com", {"output_path": "/custom/path/report.md", "current_session": audited})
         ]
         assert "/custom/path/report.md" in result.output
 
@@ -578,7 +583,7 @@ class TestCLI:
         monkeypatch.setattr(
             cli_main,
             "_generate_report_for_target",
-            lambda target, **kwargs: "/tmp/report.md",
+            AsyncMock(side_effect=lambda target, **kwargs: "/tmp/report.md"),
         )
 
         result = runner.invoke(app, ["run", "https://example.com", "--engine", "team"])
@@ -779,7 +784,7 @@ class TestCLI:
         monkeypatch.setattr(cli_main, "apply_target_state_to_agent", fake_apply)
         monkeypatch.setattr(agent_core.AgentCore, "persistent_pentest", fake_persistent_pentest)
         monkeypatch.setattr(
-            cli_main, "_generate_report_for_target", lambda target, **kwargs: "C:/tmp/final.md"
+            cli_main, "_generate_report_for_target", AsyncMock(side_effect=lambda target, **kwargs: "C:/tmp/final.md")
         )
 
         result = runner.invoke(

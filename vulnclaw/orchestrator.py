@@ -35,6 +35,7 @@ class OrchestratorRunResult:
     run_context: RunContext | None = None
     status: str = "completed"
     exit_code: int = 0
+    audited_session: SessionState | None = None
 
 
 async def run_agent_task(
@@ -160,8 +161,23 @@ async def run_agent_task(
 
     status = "completed"
     exit_code = 0
+    audited_session = None
     try:
         await runner(agent)
+        from vulnclaw.findings.types import require_assessed
+        from vulnclaw.findings.verification import verify_findings
+
+        # Persistent cycles already audit before their summaries and reports.
+        # Do not immediately retry an incomplete audit from the final cycle.
+        if command == "persistent":
+            try:
+                require_assessed(agent.session_state)
+            except ValueError:
+                audited_session = await verify_findings(agent.session_state, config=agent.config)
+            else:
+                audited_session = agent.session_state.model_copy(deep=True)
+        else:
+            audited_session = await verify_findings(agent.session_state, config=agent.config)
         checkpoint("run_complete")
         if run_context is not None:
             mark_run_status(run_context, "completed", exit_code=0)
@@ -201,6 +217,7 @@ async def run_agent_task(
         run_context=run_context,
         status=status,
         exit_code=exit_code,
+        audited_session=audited_session,
     )
 
 

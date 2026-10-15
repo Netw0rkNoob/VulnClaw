@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol, runtime_che
 
 if TYPE_CHECKING:
     from vulnclaw.agent.context import ContextManager, PentestPhase, SessionState
-    from vulnclaw.agent.finding_parser import FindingParser
     from vulnclaw.agent.llm_client import StreamSink
+    from vulnclaw.agent.response_observations import ResponseObservationParser
     from vulnclaw.agent.runtime_state import AgentResult, RuntimeState
     from vulnclaw.agent.subagent.models import SubagentContext
     from vulnclaw.config.schema import VulnClawConfig
@@ -53,7 +53,7 @@ class AgentContext(Protocol):
     config: VulnClawConfig
     mcp_manager: Any
     active_role: str | None
-    _finding_parser: FindingParser
+    _observation_parser: ResponseObservationParser
     _kb_retriever: Any
     _kb_context_cache: dict[Any, str]
     _subagent_ctx: SubagentContext

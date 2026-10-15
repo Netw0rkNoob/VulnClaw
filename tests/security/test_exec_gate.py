@@ -344,20 +344,6 @@ class TestVisualization:
         assert channel.view.cwd == "/tmp/x\\n\\u001b[31m"
 
 
-class TestSyncBridge:
-    def test_confirm_sync_without_hook_refuses(self):
-        gate = ExecutionGate()
-        assert gate.confirm_sync(GateRequest(kind="poc", display="x")) is False
-
-    def test_confirm_sync_uses_hook_decision(self):
-        gate = ExecutionGate()
-        gate.sync_confirm_hook = lambda view: view.display_escaped.endswith("yes-marker")
-        assert gate.confirm_sync(GateRequest(kind="poc", display="code yes-marker")) is True
-        assert gate.confirm_sync(GateRequest(kind="poc", display="no")) is False
-
-    def test_full_access_confirm_sync_needs_no_hook(self):
-        gate = ExecutionGate(mode="full_access")
-        assert gate.confirm_sync(GateRequest(kind="poc", display="print(1)")) is True
 
 
 class TestSingleton:

@@ -395,6 +395,17 @@
         "status": { "type": "string" },
         "exit_code": { "type": "integer" },
         "summary": { "type": "object" },
+        "report": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["path", "findings_json", "findings_sarif"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "findings_json": { "type": "string", "minLength": 1 },
+            "findings_sarif": { "type": "string", "minLength": 1 }
+          }
+        },
+        "report_error": { "type": ["string", "null"] },
         "run": {
           "type": ["object", "null"],
           "additionalProperties": false,

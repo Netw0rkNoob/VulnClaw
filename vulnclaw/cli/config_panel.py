@@ -82,12 +82,6 @@ SESSION_FIELDS = (
         ("markdown", "html"),
     ),
     FieldSpec(
-        "session.poc_language",
-        "tui.config_panel.session_poc_language",
-        CHOICE,
-        ("python", "bash"),
-    ),
-    FieldSpec(
         "session.engine",
         "tui.config_panel.session_engine",
         CHOICE,

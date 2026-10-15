@@ -136,83 +136,6 @@ def owner_ids(session: Any, evidence_ids: list[str]) -> set[str]:
     return owners
 
 
-def sync_verified_findings(
-    agent: AgentContext,
-    final_text: str,
-    evidence_ids: list[str],
-) -> list[str]:
-    """Promote pending findings explicitly named by an evidence-gated FINAL."""
-
-    session = getattr(getattr(agent, "context", None), "state", None)
-    if session is None or not evidence_ids:
-        return []
-    text = final_text.lower()
-    state = getattr(session, "agent_state", None)
-    cited_records = [
-        state.get_evidence(evidence_id)
-        for evidence_id in evidence_ids
-        if state is not None
-    ]
-    cited_records = [record for record in cited_records if record is not None]
-    if not cited_records:
-        return []
-    evidence_text = "\n".join(
-        (
-            f"{record.tool} {record.summary} {record.content} "
-            f"{json.dumps(record.arguments, ensure_ascii=False, sort_keys=True)}"
-        ).lower()
-        for record in cited_records
-    )
-    aliases = {
-        "sqli": ("sqli", "sql injection", "sql注入", "sql 注入"),
-        "xss": ("xss", "cross-site scripting", "跨站脚本"),
-        "rce": ("rce", "remote code execution", "远程代码执行"),
-        "idor": ("idor", "broken object level authorization", "越权"),
-        "ssrf": ("ssrf", "server-side request forgery", "服务端请求伪造"),
-        "csrf": ("csrf", "cross-site request forgery", "跨站请求伪造"),
-    }
-    owners = owner_ids(session, evidence_ids)
-    promoted: list[str] = []
-    for finding in getattr(session, "findings", []) or []:
-        if getattr(finding, "verified", False) or str(
-            getattr(finding, "verification_status", "")
-        ).lower() in {"verified", "rejected"}:
-            continue
-        haystack = f"{finding.title} {finding.vuln_type}".lower()
-        matching_aliases = [
-            names
-            for names in aliases.values()
-            if any(alias in haystack for alias in names)
-        ]
-        named_in_final = any(
-            any(alias in text for alias in names) for names in matching_aliases
-        )
-        named_in_evidence = any(
-            any(alias in evidence_text for alias in names)
-            for names in matching_aliases
-        )
-        endpoint = str(getattr(finding, "endpoint", "") or "").strip().lower()
-        if not (
-            matching_aliases
-            and named_in_final
-            and named_in_evidence
-            and (not endpoint or endpoint in text)
-            and (not endpoint or endpoint in evidence_text)
-        ):
-            continue
-        provenance = (
-            f"; subagent_tasks={','.join(sorted(owners))}" if owners else ""
-        )
-        finding.mark_verified(
-            note=(
-                f"Evidence-gated FINAL cites {', '.join(evidence_ids)}"
-                f"{provenance}"
-            ),
-            evidence_level="L4",
-        )
-        promoted.append(str(getattr(finding, "finding_id", "") or finding.title))
-    return promoted
-
 
 async def finalize_parent(agent: AgentContext, state: AgentState) -> str:
     if not state.completed:
@@ -225,12 +148,6 @@ async def finalize_parent(agent: AgentContext, state: AgentState) -> str:
             "parent completion withheld: sub-agent task handles are still running: "
             + ", ".join(unreleased)
         )
-    evidence_ids = (
-        list(state.verified_claims[-1].evidence_ids)
-        if state.verified_claims
-        else []
-    )
-    sync_verified_findings(agent, state.final_answer, evidence_ids)
     return ""
 
 

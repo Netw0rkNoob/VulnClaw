@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tests.reporting_fixtures import assessed_snapshot
 from vulnclaw.agent.context import EvidenceRef, SessionState, VulnerabilityFinding
 from vulnclaw.i18n import current_lang, init_i18n
 from vulnclaw.report.generator import generate_report
@@ -17,19 +18,19 @@ from vulnclaw.traffic import (
 )
 
 
-def test_verified_finding_inlines_http_capture(tmp_path):
+async def test_verified_finding_inlines_http_capture(tmp_path):
     # Assertions below check for the Chinese heading text explicitly, so pin the
     # active UI language regardless of the ambient LANG/VULNCLAW_LANG env vars
     # (mirrors the explicit-language convention in tests/test_phase_i18n.py).
     previous_lang = current_lang()
     init_i18n(lang="zh")
     try:
-        _run_http_capture_inlining_assertions(tmp_path)
+        await _run_http_capture_inlining_assertions(tmp_path)
     finally:
         init_i18n(lang=previous_lang)
 
 
-def _run_http_capture_inlining_assertions(tmp_path):
+async def _run_http_capture_inlining_assertions(tmp_path):
     # Capture a request/response into the run's evidence/traffic store.
     run_dir = tmp_path / "run"
     store = TrafficStore(run_dir / "evidence" / "traffic")
@@ -63,7 +64,7 @@ def _run_http_capture_inlining_assertions(tmp_path):
     session = SessionState(target="http://app.test")
     session.add_finding(finding)
 
-    report_path = generate_report(session, output_path=str(run_dir / "report.md"))
+    report_path = await generate_report(assessed_snapshot(session), output_path=str(run_dir / "report.md"))
     text = report_path.read_text(encoding="utf-8")
 
     assert "抓包复现证据" in text
@@ -73,7 +74,7 @@ def _run_http_capture_inlining_assertions(tmp_path):
     assert "SQL syntax error near" in text
 
 
-def test_verified_finding_inlines_http_capture_english(tmp_path):
+async def test_verified_finding_inlines_http_capture_english(tmp_path):
     """Same as above under the English UI language: the heading and body
 
     translate, but the raw request/response bytes (not translated content)
@@ -113,7 +114,7 @@ def test_verified_finding_inlines_http_capture_english(tmp_path):
         session = SessionState(target="http://app.test")
         session.add_finding(finding)
 
-        report_path = generate_report(session, output_path=str(run_dir / "report.md"))
+        report_path = await generate_report(assessed_snapshot(session), output_path=str(run_dir / "report.md"))
         text = report_path.read_text(encoding="utf-8")
 
         assert "Captured-traffic reproduction evidence" in text
@@ -181,7 +182,7 @@ def test_write_resolver_never_falls_back_to_stale_store(tmp_path, monkeypatch):
     assert writer.entries() == []  # fresh run starts empty, not mixed with old.test
 
 
-def test_report_without_captures_is_unaffected(tmp_path):
+async def test_report_without_captures_is_unaffected(tmp_path):
     run_dir = tmp_path / "run"
     finding = VulnerabilityFinding(
         title="Reflected XSS",
@@ -194,7 +195,7 @@ def test_report_without_captures_is_unaffected(tmp_path):
     session = SessionState(target="http://app.test")
     session.add_finding(finding)
 
-    report_path = generate_report(session, output_path=str(run_dir / "report.md"))
+    report_path = await generate_report(assessed_snapshot(session), output_path=str(run_dir / "report.md"))
     text = report_path.read_text(encoding="utf-8")
     assert "Reflected XSS" in text
     assert "```http" not in text

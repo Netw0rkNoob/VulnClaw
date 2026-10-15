@@ -565,5 +565,13 @@
   "shell.quick_actions": "Quick actions",
   "home.scan_start_aria": "Start scan",
   "home.excluded_hosts": "Excluded hosts",
-  "home.excluded_hosts_help": "Hosts or IPs to skip (blocklist). Separate with commas or new lines."
+  "home.excluded_hosts_help": "Hosts or IPs to skip (blocklist). Separate with commas or new lines.",
+  "risk.audit_findings": "Audit findings",
+  "risk.auditing": "Auditing…",
+  "risk.audit_failed": "Finding audit failed",
+  "risk.audit_completed": "Audited {total}: {verified} verified, {incomplete} incomplete.",
+  "risk.poc_verify": "Audit with PoC",
+  "risk.poc_verify_hint": "Review saved evidence independently. PoC replay uses the existing execution approval and target scope checks.",
+  "settings.poc_verify": "Attempt PoC during finding audits by default",
+  "settings.poc_verify_hint": "Used after tasks and when historical data needs an audit. When disabled, review saved evidence. PoC execution still requires approval."
 }

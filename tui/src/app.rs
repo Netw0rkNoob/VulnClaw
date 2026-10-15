@@ -644,7 +644,7 @@ const LOCAL_SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/config", "configure the LLM provider"),
     ("/clear", "clear the transcript"),
     ("/help", "list available commands"),
-    ("/run ", "run a task through the Python backend"),
+    ("/run ", "run a task and export an audited report"),
     ("/recon ", "run a task through the Python backend"),
     ("/scan ", "run a task through the Python backend"),
     ("/exploit ", "run a task through the Python backend"),
@@ -895,7 +895,7 @@ impl App {
                     .join(", ")
             };
             self.status(format!(
-                "Backend tasks: {backend}. Local commands: /scope, /report, /config, /clear, /help. Ctrl+C aborts a running command."
+                "Backend tasks: {backend}. /run saves an audited report and shows export paths on completion. Local commands: /scope, /report, /config, /clear, /help. Ctrl+C aborts a running command."
             ));
         } else if command == "/clear" {
             self.transcript.clear();
@@ -904,7 +904,7 @@ impl App {
             self.status("Transcript cleared. Findings remain available in the inspector.");
         } else if command == "/report" {
             self.status(
-                "Use vulnclaw report <result.json> [--pdf] to write the report; the TUI shows findings live.",
+                "/run automatically saves an audited report, findings JSON and SARIF, and shows their paths on completion. Use vulnclaw report <session.json> [--pdf] for a separate export.",
             );
         } else if command == "/config" {
             self.open_llm_settings();
@@ -1614,6 +1614,21 @@ impl App {
                     } else {
                         format!("VulnClaw task completed. Run: {run_name}")
                     });
+                    if let Some(report) = result.get("report").filter(|report| report.is_object()) {
+                        for (label, key) in [
+                            ("Report", "path"),
+                            ("Findings JSON", "findings_json"),
+                            ("SARIF", "findings_sarif"),
+                        ] {
+                            self.status(format!("{label}: {}", result_text(report, key)));
+                        }
+                    }
+                    if let Some(error) = result
+                        .get("report_error")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        self.error(format!("Task completed, but report export failed: {error}"));
+                    }
                 }
                 BackendEvent::TaskCancelled {
                     request_id,

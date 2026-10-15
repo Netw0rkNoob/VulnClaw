@@ -307,6 +307,18 @@ class JsonlStreamSink:
         self._status_printed = False
 
 
+def stream_session_findings(session: Any) -> list[dict[str, Any]]:
+    """Project registered candidates into the streaming finding payload."""
+    internal = {
+        "finding_id", "submission_id", "evidence_snapshots", "verification_history",
+        "assessment", "previous_verification",
+    }
+    return [
+        {**finding.model_dump(mode="json", exclude=internal), "id": finding.finding_id}
+        for finding in getattr(session, "findings", [])[:50]
+    ]
+
+
 def emit_complete_event(
     stream: Any,
     *,
@@ -398,7 +410,7 @@ def _make_solve_event_printer(target_console: Console) -> Any:
     return on_event
 
 
-def _generate_report_for_target(
+async def _generate_report_for_target(
     target: str,
     *,
     current_session: Any = None,
@@ -407,24 +419,11 @@ def _generate_report_for_target(
 ) -> str:
     """Generate a report for a target using the best available source data."""
 
-    from vulnclaw.agent.context import SessionState
-    from vulnclaw.report.generator import generate_report, generate_report_from_target_state
-    from vulnclaw.target_state.store import load_target_state
+    from vulnclaw.report_service import generate_report_for_target
 
-    if current_session is not None and (
-        current_session.findings or current_session.executed_steps or current_session.notes
-    ):
-        path = generate_report(current_session, output_path, report_format=report_format)
-        return str(path)
-
-    state = load_target_state(target)
-    if state:
-        path = generate_report_from_target_state(state, output_path=output_path)
-        return str(path)
-
-    session = SessionState(target=target)
-    path = generate_report(session, output_path, report_format=report_format)
-    return str(path)
+    return str(await generate_report_for_target(
+        target, current_session=current_session, report_format=report_format, output_path=output_path,
+    ))
 
 
 def _append_cli_constraints(

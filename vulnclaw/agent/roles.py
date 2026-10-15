@@ -35,6 +35,7 @@ ROLE_REGISTRY: dict[str, AgentRole] = {
             "load_skill_reference",
             "memory_search",
             "evidence_*",
+            "submit_finding",
             "vault_*",
             "source_extract",
             "space_search",
@@ -68,6 +69,7 @@ ROLE_REGISTRY: dict[str, AgentRole] = {
             "load_skill_reference",
             "memory_search",
             "evidence_*",
+            "submit_finding",
             "vault_*",
             "source_extract",
             "runtime_diff_probe",
@@ -96,6 +98,7 @@ ROLE_REGISTRY: dict[str, AgentRole] = {
             "load_skill_reference",
             "memory_search",
             "evidence_*",
+            "submit_finding",
             "vault_*",
             "source_extract",
             "runtime_diff_probe",
@@ -154,7 +157,7 @@ SUBAGENT_ROLE_REGISTRY: dict[str, AgentRole] = {
             "fresh leaf agents, compare their returned evidence, and synthesize. "
             "Do not execute target-facing tools yourself."
         ),
-        allowed_tool_globs=("agent_run", "evidence_*"),
+        allowed_tool_globs=("agent_run", "evidence_*", "submit_finding"),
         goal_template=(
             "Coordination objective: {objective}\n"
             "Done when: {done_when}\n"
@@ -175,6 +178,7 @@ SUBAGENT_ROLE_REGISTRY: dict[str, AgentRole] = {
         allowed_tool_globs=(
             "load_skill_reference",
             "evidence_*",
+            "submit_finding",
             "vault_*",
             "source_extract",
             "runtime_diff_probe",

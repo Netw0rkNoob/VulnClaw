@@ -1217,6 +1217,11 @@ async def execute_mcp_tool(agent: AgentContext, tool_name: str, args: dict[str, 
                 )
             return f"[constraint_violation] {tool_violation}"
 
+    if tool_name == "submit_finding":
+        from vulnclaw.findings.intake import submit_finding
+
+        return submit_finding(agent, args)
+
     if tool_name in {"agent_run", "agent_job"}:
         from vulnclaw.agent.subagent.integration import (
             execute_agent_job,

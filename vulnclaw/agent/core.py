@@ -25,7 +25,6 @@ from vulnclaw.agent.builtin_tools import (
 from vulnclaw.agent.context import ContextManager, PentestPhase, SessionState, TaskConstraints
 from vulnclaw.agent.ctf_mode import detect_flag_claim
 from vulnclaw.agent.experience_context import build_experience_context
-from vulnclaw.agent.finding_parser import FindingParser
 from vulnclaw.agent.input_analysis import (
     detect_phase,
     detect_target,
@@ -40,6 +39,7 @@ from vulnclaw.agent.loop_controller import persistent_pentest as run_persistent_
 from vulnclaw.agent.memory import MemoryStore
 from vulnclaw.agent.prompt_context import build_round_context, generate_attack_summary
 from vulnclaw.agent.recon_tracker import update_recon_dimension_completion
+from vulnclaw.agent.response_observations import ResponseObservationParser
 from vulnclaw.agent.roles import role_prompt_block
 from vulnclaw.agent.runtime_state import AgentResult, PersistentCycleResult, RuntimeState
 from vulnclaw.agent.skill_context import apply_skill_selection
@@ -91,7 +91,7 @@ class AgentCore:
         self._kb_retriever: Any = None
         self._kb_context_cache: dict[Any, str] = {}
         self._experience_store: Any = None
-        self._finding_parser = FindingParser(self.context, self.runtime)
+        self._observation_parser = ResponseObservationParser(self.context, self.runtime)
         self._report_kb_status()
 
     def _child_factory(self) -> "AgentCore":
@@ -247,7 +247,7 @@ class AgentCore:
                 kw in user_lower for kw in social_engineering_keywords
             )
         # Re-bind finding parser to the new runtime object
-        self._finding_parser = FindingParser(self.context, self.runtime)
+        self._observation_parser = ResponseObservationParser(self.context, self.runtime)
 
         # 跨周期恢复反思记忆（persistent 模式）：保留失败路径/历史/归因，重置本周期 stuck 计数
         self._restore_reflexion_history()
@@ -520,7 +520,7 @@ class AgentCore:
             self.context.add_assistant_message(response_text)
 
             # Parse any structured findings from the response
-            self._finding_parser.parse(response_text)
+            self._observation_parser.parse(response_text)
 
             # Auto-save session when enabled
             self._maybe_auto_save_session()

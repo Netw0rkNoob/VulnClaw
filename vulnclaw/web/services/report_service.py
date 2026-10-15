@@ -5,10 +5,11 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from vulnclaw.config.settings import SESSIONS_DIR, ensure_dirs, load_config
 from vulnclaw.i18n import init_i18n
-from vulnclaw.report.generator import generate_report_from_target_state
+from vulnclaw.report_service import generate_report_for_target
 from vulnclaw.target_state.store import load_target_state
 from vulnclaw.web.schemas import ReportContentView
 
@@ -29,7 +30,7 @@ def _default_report_path(target: str, report_format: str) -> Path:
     safe_target = safe_target[:80] or "unknown"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     suffix = ".html" if report_format == "html" else ".md"
-    return SESSIONS_DIR / f"report_{timestamp}_{safe_target}{suffix}"
+    return SESSIONS_DIR / f"report_{timestamp}_{safe_target}_{uuid4().hex[:8]}{suffix}"
 
 
 def list_reports(limit: int = 50) -> list[dict[str, str | int]]:
@@ -44,7 +45,7 @@ def list_reports(limit: int = 50) -> list[dict[str, str | int]]:
     return items[:limit]
 
 
-def generate_target_report(
+async def generate_target_report(
     target: str,
     output_path: str | None = None,
     report_format: str = "markdown",
@@ -55,20 +56,22 @@ def generate_target_report(
     # the scan task path, this standalone endpoint has no ambient i18n state, so
     # initialize it from the saved config.session.language before generating —
     # otherwise the report always falls back to auto-detection (defaults to zh).
-    init_i18n(config=load_config())
+    config = load_config()
+    init_i18n(config=config)
     raw = load_target_state(target)
     if not raw:
         raise FileNotFoundError(f"Target state not found: {target}")
     normalized_format = "html" if report_format.lower() == "html" else "markdown"
-    path = generate_report_from_target_state(
-        raw,
-        report_format=normalized_format,
-        output_path=str(_default_report_path(target, normalized_format)),
+    destination = (
+        resolve_report_output_path(output_path, normalized_format)
+        if output_path else _default_report_path(target, normalized_format)
     )
-    if output_path:
-        destination = resolve_report_output_path(output_path, normalized_format)
-        destination.write_text(Path(path).read_text(encoding="utf-8"), encoding="utf-8")
-        return str(destination)
+    path = await generate_report_for_target(
+        target,
+        report_format=normalized_format,
+        output_path=str(destination),
+        config=config,
+    )
     return str(Path(path).resolve())
 
 

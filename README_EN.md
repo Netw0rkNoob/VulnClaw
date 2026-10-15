@@ -75,7 +75,7 @@ Suitable for authorized pentests, CTF competitions, security training, and red t
 - **Native Traffic Evidence Store** — In-scope request/response pairs land in an append-only JSONL index under `evidence/traffic/`. Built-in `traffic_list` / `traffic_view` / `traffic_repeat` / `traffic_sitemap` tools read and replay the store
 - **AI Agent Core** — OpenAI-compatible protocol + Tool Calling + autonomous pentest loop
 - **Structured Reasoning + Adaptive Reflection** — Facts/constraints/attack chains structured and injected into prompts; failures auto-classified with L0-L4 payload escalation
-- **Vulnerability Detection Plugin System** — Low-coupling plugin runtime + built-in read-only Web plugins, results auto-merged into reports (`vulnclaw plugins`)
+- **Vulnerability Detection Plugin System** — Low-coupling plugin runtime + built-in read-only Web plugins; `--session` saves plugin evidence for structured candidate submission (`vulnclaw plugins`)
 - **50 Specialized Skills** — CTF, Web, intranet, reversing, vulnerability validation, and authorized red-team knowledge; skills are exposed as optional reference indexes only, and full reference bodies are loaded only when the model explicitly calls `load_skill_reference`
 - **Encode/Decode & Crypto Tools** — 29 operations (Base64/Hex/URL/AES/JWT/Morse etc.), LLM calls them directly, no guessing
 - **Automatic Source Rendering** — `fetch` / `http_probe_batch` automatically prepend clean source before raw bodies when they see `highlight_file`, highlighted HTML source, or noisy HTML/JS bodies; `http_probe_batch` disables TLS verification by default and records full response headers so runtime clues such as `X-Powered-By` are not lost; built-in `source_extract` remains available for revisiting saved evidence and pinning dangerous sinks, forms, inputs, and endpoints
@@ -310,7 +310,31 @@ vulnclaw recon 192.168.1.100                   # recon only
 vulnclaw scan 192.168.1.100 --ports 80,443     # vuln scan
 vulnclaw exploit 192.168.1.100 --cve CVE-2024-1234 --cmd id  # exploit
 vulnclaw report session.json                   # generate report
+vulnclaw verify session.json --poc-verify      # audit with approved PoC verification
 ```
+
+> 📝 **Independent finding audits**: tasks and persistent cycles audit and save findings before completion,
+> even when reports are disabled. Report renderers consume those conclusions without verifying findings.
+> Complete results are reused while inputs remain unchanged; upstream services audit changed,
+> missing, or incomplete results before export. Run `vulnclaw verify session.json` or
+> `vulnclaw verify <target> --target` to explicitly reassess all candidates.
+> `verify --poc-verify/--no-poc-verify` overrides `session.poc_verify_enabled` (default false).
+> Disabled or unavailable PoC falls back to evidence review; incomplete audits remain suspected.
+> Historical session files are preserved, with audited copies saved in the output directory.
+> Old configuration and assessment fields migrate when loaded.
+
+Network weak-link observations remain in reconnaissance data. Plugin `--session`
+stores the actual analysis output and input arguments. These observations do not
+automatically create findings; the model cites saved evidence through `submit_finding`.
+Headless exit codes and `summary.json` use the current finding assessment, matching
+the JSON/SARIF inclusion rules.
+CLI `run/solve --stream` emits registered candidates with their recorded severity
+and verification status.
+
+The native TUI's `/run <target>` exports a report after execution and finding audits,
+using `session.report_format`, and displays the report, JSON and SARIF paths.
+Artifacts go under the run's `reports/` directory when a run directory is available.
+Export failures display their cause while preserving the completed task and saved audits.
 
 ### Mode 4: Persistent Pentesting
 
@@ -363,6 +387,12 @@ the source-checkout installation above for the full Web UI. If you see the
 **Fallback Web Shell** (no full scan UI),
 `frontend/dist/index.html` is missing. Build as above, restart `vulnclaw web`,
 and hard-refresh. API endpoints such as `/api/health` still work while the SPA is unbuilt.
+
+**Independent audit API**: `POST /api/findings/verify` accepts `target` and optional `poc_verify`,
+returning an audit summary and saved path. The risk-results page offers a separate audit action
+and PoC switch; settings control the global default. Report requests to `/api/reports/target`
+no longer accept PoC options. Upstream historical audits use the global default.
+`findings.json` version 1.2 uses `assessment`; reports, JSON and SARIF share those conclusions.
 
 > ⚠️ By default binds to localhost only. For remote access pass `--host 0.0.0.0 --allow-remote`.
 
@@ -418,7 +448,8 @@ FINAL passes evidence gate → accepted; otherwise the rejection is fed back and
 | **Skill reference index** | `skills/loader.py` + `resolver.py` | Task-aware optional references without forced workflow injection |
 | **MCP Orchestration** | `mcp/registry.py` + `lifecycle.py` + `router.py` | Service registry + lifecycle + tool routing |
 | **Config** | `config/schema.py` + `settings.py` | Pydantic + YAML + 14 provider presets + SubagentConfig |
-| **Report Generator** | `report/generator.py` + `poc_builder.py` | Markdown reports + PoC scripts |
+| **Finding Audits** | `findings/verification.py` + `finding_service.py` | Task completion and explicit audits, saved conclusions, historical audits |
+| **Report Generator** | `report_service.py` + `report/generator.py` | Export orchestration and Markdown/HTML/PDF/SARIF rendering of audited snapshots |
 | **Security KB** | `kb/store.py` + `retriever.py` + `ranking.py` | JSON storage + Chinese-aware BM25 retrieval + optional reranking |
 
 ---
@@ -654,7 +685,7 @@ VULNCLAW_SAFETY_PERMISSION_MODE=full_access vulnclaw solve <target>
 | `session.max_rounds` | 15 | Max rounds |
 | `session.output_dir` | ./vulnclaw-output | Report output directory |
 | `session.report_format` | markdown | Report format (markdown / html) |
-| `session.poc_language` | python | PoC language (python / bash) |
+| `session.poc_verify_enabled` | false | Attempt approved PoC during task and historical audits; off = saved-evidence review only |
 | `session.language` | auto | UI language (auto / zh / en), defaults to English |
 | `session.show_thinking` | false | Show LLM reasoning |
 | `session.persistent_rounds_per_cycle` | 100 | Rounds per cycle in persistent mode |

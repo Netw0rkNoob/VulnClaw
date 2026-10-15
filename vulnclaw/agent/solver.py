@@ -740,8 +740,8 @@ async def _solve_impl(
             agent.context.add_assistant_message(f"[solve step {step}]\n{cleaned}")
         if stall_guard_message:
             agent.context.add_user_message(stall_guard_message)
-        if hasattr(agent, "_finding_parser"):
-            agent._finding_parser.parse(cleaned)
+        if hasattr(agent, "_observation_parser"):
+            agent._observation_parser.parse(cleaned)
         if stop_for_stall:
             break
 

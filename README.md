@@ -71,7 +71,7 @@ VulnClaw 自动执行：
 - **原生流量证据存储** — 按运行内作用域过滤后以追加式 JSONL 索引 + 每请求原始报文落盘于 `evidence/traffic/`，内置 `traffic_list` / `traffic_view` / `traffic_repeat` / `traffic_sitemap` 工具直接读写
 - **AI Agent 核心** — OpenAI 兼容协议 + Tool Calling + 自主渗透循环
 - **结构化推理 + 自适应反思** — 已知事实/约束/攻击链结构化沉淀；失败自动归类并按 L0-L4 渐进升级 payload 绕过策略
-- **漏洞检测插件体系** — 低耦合插件运行时 + 内置只读 Web 插件，结果自动汇入报告链路（`vulnclaw plugins`）
+- **漏洞检测插件体系** — 低耦合插件运行时 + 内置只读 Web 插件；`--session` 保存插件证据，漏洞候选经结构化提交后进入报告链路（`vulnclaw plugins`）
 - **50 个专项 Skill** — 覆盖 CTF、Web、内网、逆向、漏洞验证与授权红队知识库；Skill 只作为参考资料索引暴露给模型，正文需要模型主动调用 `load_skill_reference` 按需读取，不再作为强制剧本注入上下文
 - **编解码/加解密工具** — 29 种操作（Base64/Hex/URL/AES/JWT/Morse 等），LLM 可精确调用，不再靠猜测
 - **源码自动还原** — `fetch` / `http_probe_batch` 遇到 `highlight_file`、HTML 高亮源码或混杂 HTML/JS body 时会自动在 raw body 前追加 clean source；`http_probe_batch` 默认关闭 TLS 校验并记录完整响应头，避免丢失 `X-Powered-By` 等运行时证据；内置 `source_extract` 仍可用于按需重读历史 evidence，并固定危险 sink、表单与 endpoint 信号
@@ -305,7 +305,25 @@ vulnclaw recon 192.168.1.100                   # 仅信息收集
 vulnclaw scan 192.168.1.100 --ports 80,443     # 漏洞扫描
 vulnclaw exploit 192.168.1.100 --cve CVE-2024-1234 --cmd id  # 漏洞利用
 vulnclaw report session.json                   # 生成报告
+vulnclaw verify session.json --poc-verify      # 独立审计并尝试 PoC（需执行审批）
 ```
+
+> 📝 **独立漏洞审计**：普通任务结束和持续任务每轮结束时先审计并保存结论，即使关闭报告也执行。
+> 报告模块只消费审计结果，按已验证 / 确认排除 / 高置信疑似 / 低置信疑似分类渲染。
+> 未变化的完整结论可复用；输入变化、缺少审计记录或上次未完成时由上游补审计。
+> `vulnclaw verify session.json` 或 `vulnclaw verify <target> --target` 可显式重新审计。
+> `verify --poc-verify/--no-poc-verify` 单次覆盖 `session.poc_verify_enabled`（默认 false）。
+> PoC 关闭或受限时回退证据审查；异常标注为未完成，不计入已验证漏洞。
+> 历史会话原文件保持不变，审计副本保存在输出目录；旧配置与字段在加载时迁移。
+
+网络扫描的薄弱环节保留在侦察数据中；插件的 `--session` 保存真实分析输出及输入参数。
+这些观察不会自动创建 finding，模型需引用保存的证据调用 `submit_finding`。
+非交互运行的退出码与 `summary.json` 使用当前漏洞审计结果，与 JSON/SARIF 口径一致。
+CLI `run/solve --stream` 的 finding 列表来自已登记候选，保留其严重度和验证状态。
+
+原生 TUI 的 `/run <target>` 完成任务和审计后直接生成报告，格式沿用
+`session.report_format`，并显示报告、JSON 和 SARIF 的保存路径。有运行目录时，
+产物位于其中的 `reports/`。报告导出失败会显示原因，已完成的任务和审计结果仍保留。
 
 ### 方式四：持续性渗透
 
@@ -358,6 +376,11 @@ PyPI wheel 不包含 React 构建产物或前端源码；完整 Web UI 需要按
 `frontend/dist/index.html`。按上式构建后重启 `vulnclaw web` 并强制刷新。
 未构建前端时，`/api/health` 等 API 仍可用。
 
+**独立审计接口**：`POST /api/findings/verify` 接收 `target` 和可选 `poc_verify`，
+返回审计摘要和保存位置。风险结果页提供独立审计按钮及 PoC 开关，设置页保存全局默认值。
+报告请求 `POST /api/reports/target` 不再接收 PoC 参数；历史补审计遵循全局配置。
+`findings.json` 使用 1.2 版本及 `assessment` 字段，JSON、SARIF 和报告共享同一审计结论。
+
 > ⚠️ 默认仅绑定本地回环地址。如需远程访问须显式指定 `--host 0.0.0.0 --allow-remote`。
 
 ---
@@ -409,7 +432,8 @@ FINAL 经过证据闸门校验 → 通过才结束，否则把拒绝原因返回
 | **Skill 参考索引** | `skills/loader.py` + `resolver.py` | 只解析相关参考资料，不注入强制流程 |
 | **MCP 编排** | `mcp/registry.py` + `lifecycle.py` + `router.py` | 服务注册 + 生命周期 + 工具路由 |
 | **配置管理** | `config/schema.py` + `settings.py` | Pydantic + YAML + 14 Provider 预设 |
-| **报告生成** | `report/generator.py` + `poc_builder.py` | Markdown 报告 + PoC 脚本 |
+| **漏洞审计** | `findings/verification.py` + `finding_service.py` | 任务结束与独立入口审计、保存结论、历史补审计 |
+| **报告生成** | `report_service.py` + `report/generator.py` | 编排已审计快照的导出，渲染 Markdown/HTML/PDF/SARIF |
 | **安全知识库** | `kb/store.py` + `retriever.py` + `ranking.py` | JSON 存储 + 中文感知 BM25 检索 + 可选重排序 |
 
 ---
@@ -630,7 +654,7 @@ VULNCLAW_SAFETY_PERMISSION_MODE=full_access vulnclaw solve <target>
 | `session.max_rounds` | 15 | 最大轮数 |
 | `session.output_dir` | ./vulnclaw-output | 报告输出目录 |
 | `session.report_format` | markdown | 报告格式（markdown / html） |
-| `session.poc_language` | python | PoC 生成语言（python / bash） |
+| `session.poc_verify_enabled` | false | 任务结束及历史补审计时尝试 PoC（经执行审批）；关闭时仅做独立证据审查 |
 | `session.language` | auto | 界面语言（auto / zh / en），默认英文 |
 | `session.show_thinking` | false | 显示 LLM 推理过程 |
 | `session.persistent_rounds_per_cycle` | 100 | 持续性渗透每周期轮数 |

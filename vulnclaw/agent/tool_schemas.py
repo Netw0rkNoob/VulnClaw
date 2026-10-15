@@ -21,6 +21,19 @@ def append_builtin_tool_schemas(
 
     ``append_tool`` 由调用方提供,负责角色过滤与去重收集。本函数只声明静态 schema。
     """
+    from vulnclaw.findings.types import FindingSubmission
+
+    append_tool({
+        "type": "function",
+        "function": {
+            "name": "submit_finding",
+            "description": "Submit an observed candidate vulnerability using existing evidence ids. "
+                           "This records a candidate, never a verified vulnerability. "
+                           "Do not submit examples, hypothetical findings or invented evidence.",
+            "parameters": FindingSubmission.model_json_schema(),
+        },
+    })
+
     append_tool(
         {
             "type": "function",

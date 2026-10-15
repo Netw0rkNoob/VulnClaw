@@ -271,14 +271,14 @@ def test_choice_field_opens_a_dropdown_and_commits(model):
 
 
 def test_dropdown_cancel_restores_the_previous_choice(model):
-    model.draft.session.poc_language = "python"
-    _focus(model, "session.poc_language")
+    model.draft.session.report_format = "markdown"
+    _focus(model, "session.report_format")
 
     model.activate()
     model.select_option(1)
     model.cancel_option()
 
-    assert model.draft.session.poc_language == "python"
+    assert model.draft.session.report_format == "markdown"
     assert model.dropdown_open is False
 
 

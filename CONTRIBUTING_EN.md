@@ -34,7 +34,7 @@ VulnClaw/
 |   |   |   `-- tooling.py      # Sub-agent tool registration & constraints
 |   |   |-- runtime_state.py     # Runtime loop state
 |   |   |-- loop_controller.py   # Auto / persistent main loop
-|   |   |-- finding_parser.py    # Finding extraction, evidence level classification
+|   |   |-- response_observations.py # Non-finding observation recording (never creates findings)
 |   |   |-- prompt_context.py    # Round context & attack summary
 |   |   |-- solver.py            # Model-led solve engine
 |   |   |-- team.py              # Role-based team planning & adaptive delegation
@@ -49,7 +49,8 @@ VulnClaw/
 |   |-- config/                  # Config schema, loading, saving, env override
 |   |-- kb/                      # Knowledge base storage, retrieval, update
 |   |-- mcp/                     # MCP lifecycle, registry, router
-|   |-- report/                  # Report generation, filtering, PoC building
+|   |-- findings/                # Structured submission, evidence snapshots, independent verification, PoC checks
+|   |-- report/                  # Report rendering, filtering, findings.json/SARIF output
 |   |-- skills/                  # Built-in markdown skills, loader, dispatcher
 |   |-- target_state/            # Target history, preview, diff, rollback, resume
 |   |-- web/                     # FastAPI backend, schemas, services, static frontend

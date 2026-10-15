@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, TextIO
 
 from vulnclaw.agent.streaming import TranscriptStreamSink
 from vulnclaw.config.domain_models import validate_action_constraints
+from vulnclaw.report_service import generate_report_for_run
 from vulnclaw.task_service import (
     SCOPE_FIELDS,
     TASK_COMMANDS,
@@ -718,6 +719,14 @@ async def _run_task(
             _approval_gate.uninstall_channel()
     result = execution.run
     run_context = result.run_context
+    report = None
+    report_error = None
+    if task.request.command == "run" and result.status == "completed":
+        sink.on_status("Generating report...")
+        try:
+            report = await generate_report_for_run(result, config=runtime.config)
+        except Exception as exc:  # Report failures preserve the completed task and saved audit.
+            report_error = str(exc) or type(exc).__name__
     action_result = execution.action_result
     if isinstance(action_result, dict) and isinstance(action_result.get("findings"), list):
         findings = action_result["findings"]
@@ -739,6 +748,8 @@ async def _run_task(
             else None
         ),
         "findings": findings,
+        "report": report,
+        "report_error": report_error,
     }
 
 
@@ -836,6 +847,8 @@ def _runtime_findings(runtime: Any) -> list[dict[str, Any]]:
         item = _model_dump(finding)
         if not isinstance(item, dict):
             continue
+        for field in ("submission_id", "evidence_snapshots", "verification_history", "assessment", "previous_verification"):
+            item.pop(field, None)
         item["id"] = item.pop("finding_id", item.get("id", ""))
         result.append(_json_safe(item))
     return result

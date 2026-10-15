@@ -18,8 +18,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from vulnclaw.findings.identity import canonical_endpoint, structured_finding_id
+from vulnclaw.findings.types import EvidenceSnapshotRef, FindingAssessment, replace_snapshot_refs
 from vulnclaw.i18n import I18nLoader, _
 
 # ──────────────────────────────────────────────────────────────
@@ -165,6 +167,11 @@ class VulnerabilityFinding(BaseModel):
     # ★ Typed evidence references into the per-run evidence/ tree (alongside the
     # free-text ``evidence`` blob, which is retained for backward compatibility).
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    submission_id: str = Field(default="", description="Application-owned structured submission id")
+    evidence_snapshots: list[EvidenceSnapshotRef] = Field(default_factory=list)
+    verification_history: list[FindingAssessment] = Field(default_factory=list)
+    assessment: FindingAssessment | None = None
+    previous_verification: dict[str, Any] = Field(default_factory=dict)
     # ★ Optional skill-loading provenance (reserved by the skill-loading PRD);
     # mapped into finding metadata / SARIF ``properties`` when present.
     skill_provenance: Optional[dict[str, Any]] = Field(default=None)
@@ -190,7 +197,30 @@ class VulnerabilityFinding(BaseModel):
     # ★ 漏洞唯一标识（用于去重）
     finding_id: str = Field(default="", description="漏洞唯一标识：vuln_type + target + location")
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_assessment(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "report_assessment" in value:
+            value = dict(value)
+            previous = value.pop("report_assessment")
+            value.setdefault("assessment", previous)
+        return value
+
     def model_post_init(self, *args, **kwargs) -> None:
+        # Also recover saved findings whose references reused IDs across sessions.
+        replace_snapshot_refs(self, self.evidence_snapshots)
+        if self.submission_id:
+            from vulnclaw.config.finding_similarity import normalize_vuln_type
+
+            self.vuln_type = normalize_vuln_type(self.vuln_type)
+            if self.endpoint:
+                self.endpoint = canonical_endpoint(self.endpoint)
+            if self.method:
+                self.method = self.method.upper()
+            self.finding_id = structured_finding_id(
+                self.vuln_type, self.target, self.endpoint or self.code_location or self.target,
+                self.method,
+            )
         # ★ Generate the dedup identity FIRST, from the caller-supplied fields —
         # before the intake quarantine below rewrites the description. Otherwise the
         # injected warning text (which contains "/vuln_type/…") is picked up as a
@@ -210,12 +240,16 @@ class VulnerabilityFinding(BaseModel):
         is_bare = not self.evidence and not self.vuln_type and not self.remediation
         is_terminal = self.verified or self.verification_status in ("verified", "rejected")
         if is_bare and not is_terminal:
-            if not self.title.startswith("[未验证]"):
-                self.title = f"[未验证] {self.title}"
-            if "缺少验证证据" not in self.description:
+            prefix = _("finding.quarantine.prefix")
+            if not self.title.startswith(("[未验证]", "[Unverified]")):
+                self.title = f"{prefix} {self.title}"
+            # Idempotency markers from both locales, so a finding stamped in one
+            # language is never re-stamped when revalidated in the other.
+            stamped = ("缺少验证证据" in self.description
+                       or "no actual test result was attached" in self.description)
+            if not stamped:
                 self.description = (
-                    "(⚠️ 此漏洞缺少验证证据/vuln_type/修复建议三字段，"
-                    "LLM 上报时未附实际测试结果。请补充证据后再作为正式漏洞。)"
+                    _("finding.quarantine.description")
                     + (f" {self.description}" if self.description else "")
                 )
             self.lifecycle_status = "needs_manual_review"
@@ -291,7 +325,7 @@ class VulnerabilityFinding(BaseModel):
             return self.vuln_type[:50]
         # Bare finding (no vuln_type, no location): fall back to a title-derived key
         # so distinct placeholders stay distinct in state / findings.json audit.
-        base_title = re.sub(r"^\[未验证\]\s*", "", self.title).strip()
+        base_title = re.sub(r"^\[(?:未验证|Unverified)\]\s*", "", self.title).strip()
         return base_title[:50]
 
     def mark_verified(self, note: str = "", evidence_level: str = "L4") -> None:

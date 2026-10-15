@@ -87,7 +87,7 @@ def test_all_prompt_phase_headings_follow_explicit_language(language, expected_n
         ),
     ],
 )
-def test_standard_and_cycle_report_phase_headings_follow_explicit_language(
+async def test_standard_and_cycle_report_phase_headings_follow_explicit_language(
     language, expected_headings, unexpected_heading, monkeypatch, tmp_path
 ):
     previous_lang = current_lang()
@@ -107,14 +107,10 @@ def test_standard_and_cycle_report_phase_headings_follow_explicit_language(
             session.advance_phase(phase)
         session.add_step("verified exploit", action="verify exploit", result="confirmed")
 
-        report_path = generate_report(session, str(tmp_path / "report.md"))
-        cycle_path = generate_persistent_cycle_report(
+        report_path = await generate_report(session, str(tmp_path / "report.md"))
+        cycle_path = await generate_persistent_cycle_report(
             session,
             cycle_num=1,
-            total_findings=0,
-            new_findings=0,
-            total_steps=1,
-            rounds_per_cycle=1,
             output_path=str(tmp_path / "cycle.md"),
         )
 

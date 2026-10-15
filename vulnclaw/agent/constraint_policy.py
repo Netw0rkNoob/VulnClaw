@@ -44,6 +44,7 @@ def validate_phase_transition(
 
 # 纯本地/知识类工具：不与目标交互，不纳入「动作范围」约束
 LOCAL_META_TOOLS = {
+    "submit_finding",
     "evidence_list",
     "evidence_search",
     "evidence_view",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import types
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -77,8 +78,25 @@ def _install_fake_run(
 
     monkeypatch.setattr(cli_main, "_run_cli_orchestrated_task", fake_orchestrated)
     monkeypatch.setattr(
-        cli_main, "_generate_report_for_target", lambda target, **kw: "/tmp/report.md"
+        cli_main, "_generate_report_for_target", AsyncMock(side_effect=lambda target, **kw:
+            _write_fake_assessed_report(kw['output_path'], findings))
     )
+
+
+def _write_fake_assessed_report(path, findings):
+    report = Path(path)
+    folder = report.parent / (report.stem + '.artifacts') / 'findings'
+    folder.mkdir(parents=True, exist_ok=True)
+    document = {
+        'verified': [{'title': 'Controlled result'} for f in findings if f.verified],
+        'findings': [
+            {'assessment': {'outcome': 'verified' if f.verified else
+                'rejected' if f.verification_status == 'rejected' else 'suspected_low'}}
+            for f in findings
+        ],
+    }
+    (folder / 'findings.json').write_text(json.dumps(document))
+    return str(report)
 
 
 # ── Non-interactive: no prompts, structured output ──────────────────
@@ -124,9 +142,9 @@ class TestNonInteractiveOutput:
 
         def capture_report(target, **kwargs):
             report_calls.append(kwargs.get("output_path"))
-            return kwargs.get("output_path") or "/tmp/report.md"
+            return _write_fake_assessed_report(kwargs['output_path'], [])
 
-        monkeypatch.setattr(cli_main, "_generate_report_for_target", capture_report)
+        monkeypatch.setattr(cli_main, "_generate_report_for_target", AsyncMock(side_effect=capture_report))
 
         runner.invoke(app, ["run", "https://example.com", "--non-interactive"])
         assert report_calls
@@ -143,15 +161,67 @@ class TestNonInteractiveOutput:
 
         def capture_report(target, **kwargs):
             report_calls.append(kwargs.get("output_path"))
-            return kwargs.get("output_path")
+            return _write_fake_assessed_report(kwargs['output_path'], [])
 
-        monkeypatch.setattr(cli_main, "_generate_report_for_target", capture_report)
+        monkeypatch.setattr(cli_main, "_generate_report_for_target", AsyncMock(side_effect=capture_report))
 
+        output = str(tmp_path / 'custom' / 'report.md')
         runner.invoke(
             app,
-            ["run", "t", "--non-interactive", "--output", "/custom/report.md"],
+            ["run", "t", "--non-interactive", "--output", output],
         )
-        assert report_calls == ["/custom/report.md"]
+        assert report_calls == [output]
+
+
+@pytest.mark.parametrize(('historical_verified', 'outcome', 'expected_exit'), [
+    (True, 'suspected_low', 0),
+    (False, 'verified', 2),
+])
+def test_exit_code_uses_the_current_assessment(
+    runner, monkeypatch, tmp_path, historical_verified, outcome, expected_exit,
+):
+    from types import SimpleNamespace
+
+    from vulnclaw.agent.context import SessionState
+    from vulnclaw.findings.intake import submit_finding
+    from vulnclaw.findings.types import FindingAssessment
+    from vulnclaw.report.generator import generate_report
+
+    config = VulnClawConfig()
+    config.session.output_dir = tmp_path
+    state = SessionState(target='https://lab.test')
+    record = state.agent_state.remember_tool_result(
+        tool='fetch', arguments={'url': state.target + '/cmd'},
+        output='recorded observation', target=state.target,
+    )
+    submit_finding(SimpleNamespace(config=config, context=SimpleNamespace(state=state),
+                                   session_state=state), {
+        'title': 'Candidate', 'description': 'Recorded observation', 'vuln_type': 'SQLi',
+        'severity': 'High', 'endpoint': state.target + '/cmd', 'evidence_ids': [record.id],
+    })
+    if historical_verified:
+        state.findings[0].mark_verified('Historical result')
+    _install_fake_run(monkeypatch, findings=[_Finding(verified=historical_verified)])
+    monkeypatch.setattr(cli_main, 'RUNS_DIR', tmp_path / 'runs')
+    monkeypatch.setattr('vulnclaw.findings.verification.assess_finding', AsyncMock(
+        return_value=FindingAssessment(
+            outcome=outcome, method='poc' if outcome == 'verified' else 'evidence_review',
+            reason='Current assessment', evidence_ids=[record.id],
+        ),
+    ))
+
+    async def report(target, output_path, current_session=None):
+        from vulnclaw.findings.verification import verify_findings
+
+        view = await verify_findings(state, config=config)
+        return str(await generate_report(view, output_path, llm_attack_summary='Summary'))
+
+    monkeypatch.setattr(cli_main, '_generate_report_for_target', report)
+    result = runner.invoke(app, ['run', state.target, '--non-interactive', '--fail-on', 'verified'])
+    assert result.exit_code == expected_exit, result.output
+    summary = json.loads(next((tmp_path / 'runs').glob('*/summary.json')).read_text())
+    assert summary['findings']['verified'] == int(outcome == 'verified')
+    assert summary['findings']['candidates'] == int(outcome == 'suspected_low')
 
 
 # ── Scan-mode presets applied to the engine ─────────────────────────

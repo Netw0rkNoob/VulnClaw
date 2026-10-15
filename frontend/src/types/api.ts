@@ -24,6 +24,7 @@ export interface ConfigView {
   persistent_rounds_per_cycle: number;
   persistent_max_cycles: number;
   show_thinking: boolean;
+  poc_verify_enabled: boolean;
   python_execute_enabled: boolean;
   python_execute_mode: string;
   python_execute_max_lines: number;
@@ -49,6 +50,7 @@ export interface ConfigUpdateRequest {
   persistent_rounds_per_cycle?: number;
   persistent_max_cycles?: number;
   show_thinking?: boolean;
+  poc_verify_enabled?: boolean;
   python_execute_enabled?: boolean;
   python_execute_mode?: string;
   python_execute_max_lines?: number;

@@ -1,4 +1,4 @@
-﻿"""Role-specialized team planning and adaptive delegation."""
+"""Role-specialized team planning and adaptive delegation."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 from vulnclaw.agent.agent_graph import AgentGraph, AgentOutcome, FanOutCaps
-from vulnclaw.agent.parallel_agents import merge_session_state
-from vulnclaw.agent.roles import ROLE_REGISTRY, get_role, tool_allowed_for_role
+from vulnclaw.agent.roles import ROLE_REGISTRY, get_role
+from vulnclaw.agent.subagent.merge import EvidenceCommitter
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +53,6 @@ class TeamRunResult:
 AgentFactory = Callable[[], Any]
 Planner = Callable[[Any, str, str, list[str]], TeamPlan | dict[str, Any]]
 Adviser = Callable[[Any, str, str, TeamStep, Any], TeamDecision | dict[str, Any]]
-
-
-def is_tool_allowed_for_role(role: str | None, tool_name: str) -> bool:
-    """Return whether ``tool_name`` may be exposed/executed for ``role``."""
-    return tool_allowed_for_role(tool_name, role)
 
 
 def validate_plan(raw: TeamPlan | dict[str, Any], *, fallback_goal: str) -> TeamPlan:
@@ -397,6 +392,7 @@ async def _run_team_step(
 ) -> Any:
     child = agent_factory()
     _seed_child_session(child, root_agent, step)
+    baseline = {record.fingerprint for record in child.session_state.agent_state.evidence}
     previous_role = getattr(child, "active_role", None)
     child.active_role = step.role
     # Record the dispatch so the run's agent graph shows who is working on what.
@@ -418,9 +414,10 @@ async def _run_team_step(
     finally:
         child.active_role = previous_role
         _graph_finish_step(root_agent, node_id, error=failure)
-    merge_session_state(root_agent.session_state, child.session_state)
-    _preserve_distinct_team_findings(root_agent.session_state, child.session_state)
-    _merge_agent_state(root_agent.session_state.agent_state, child.session_state.agent_state)
+    EvidenceCommitter().commit(
+        root_agent, child.session_state, task_id=node_id or f"team:{step.role}",
+        agent_type=step.role, baseline_fingerprints=baseline, include_session_state=True,
+    )
     return result
 
 
@@ -572,56 +569,3 @@ def _step_prompt(step: TeamStep) -> str:
 def _evidence_gate_completed(agent: Any) -> bool:
     agent_state = getattr(agent.session_state, "agent_state", None)
     return bool(getattr(agent_state, "completed", False))
-
-
-def _preserve_distinct_team_findings(parent: Any, child: Any) -> None:
-    """Keep distinct per-role findings that the generic de-duper collapsed."""
-    for finding in getattr(child, "findings", []):
-        if any(
-            existing.title == finding.title and existing.evidence == finding.evidence
-            for existing in parent.findings
-        ):
-            continue
-        preserved = copy.deepcopy(finding)
-        preserved.finding_id = (
-            f"{finding.finding_id or 'finding'}:team:{len(parent.findings) + 1}"
-        )
-        parent.findings.append(preserved)
-        if hasattr(parent, "_finding_ids_cache"):
-            parent._finding_ids_cache.add(preserved.finding_id)
-
-
-def _merge_agent_state(parent: Any, child: Any) -> None:
-    """Merge child AgentState additions without rewriting existing ids."""
-    if parent is child:
-        return
-
-    seen_evidence = {item.fingerprint for item in getattr(parent, "evidence", [])}
-    for item in getattr(child, "evidence", []):
-        if item.fingerprint not in seen_evidence:
-            parent.evidence.append(copy.deepcopy(item))
-            seen_evidence.add(item.fingerprint)
-
-    seen_claims = {item.claim for item in getattr(parent, "verified_claims", [])}
-    for item in getattr(child, "verified_claims", []):
-        if item.claim not in seen_claims:
-            parent.verified_claims.append(copy.deepcopy(item))
-            seen_claims.add(item.claim)
-
-    for tool_call in getattr(child, "tool_calls", []):
-        if tool_call not in parent.tool_calls:
-            parent.tool_calls.append(copy.deepcopy(tool_call))
-
-    for step in getattr(child, "steps", []):
-        if step not in parent.steps:
-            parent.steps.append(copy.deepcopy(step))
-
-    parent.pending_questions.extend(
-        question
-        for question in getattr(child, "pending_questions", [])
-        if question not in parent.pending_questions
-    )
-
-    # A worker's `completed` reflects its own step-scoped done_when (solver.solve
-    # overwrites the step goal), not the team's overall goal.
-    # Never let a subtask's local completion mark the shared root goal achieved.

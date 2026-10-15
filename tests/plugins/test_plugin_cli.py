@@ -29,7 +29,7 @@ def test_plugins_info_known_and_unknown():
     assert missing.exit_code == 1
 
 
-def test_plugins_run_with_inline_option_and_session_merge(tmp_path):
+def test_plugins_run_with_inline_option_records_session_evidence(tmp_path):
     session_file = tmp_path / "session.json"
     result = runner.invoke(
         app,
@@ -49,8 +49,12 @@ def test_plugins_run_with_inline_option_and_session_merge(tmp_path):
     assert "Missing common security headers" in result.stdout
 
     data = json.loads(session_file.read_text(encoding="utf-8"))
-    titles = [f["title"] for f in data["findings"]]
-    assert "Missing common security headers" in titles
+    assert data['findings'] == []
+    assert data['target'] == 'http://t.com'
+    record = data['agent_state']['evidence'][0]
+    assert record['tool'] == 'plugin:builtin.web.headers'
+    titles = [f['title'] for f in json.loads(record['content'])['findings']]
+    assert 'Missing common security headers' in titles
 
 
 def test_plugins_run_unknown_stage_errors():

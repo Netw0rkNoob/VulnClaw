@@ -459,7 +459,7 @@ def _record_tool_result_with_record(
 ) -> tuple[str, Any | None, str]:
     """Persist raw tool output and return prompt preview plus evidence record."""
 
-    if func_name in {"evidence_list", "evidence_view", "evidence_search"}:
+    if func_name in {"evidence_list", "evidence_view", "evidence_search", "submit_finding"}:
         raw = str(tool_result)
         _record_tool_call_without_new_evidence(
             agent,
@@ -490,6 +490,7 @@ def _record_tool_result_with_record(
         arguments=func_args,
         output=raw,
         status=parse_status_code(raw),
+        target=state.target or "",
     )
     agent_state.record_tool_call(
         tool=func_name,

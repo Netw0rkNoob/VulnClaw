@@ -22,7 +22,7 @@ VulnClaw/
 |   |   |-- context.py           # 会话状态、finding、步骤、生命周期状态
 |   |   |-- runtime_state.py     # 运行时循环状态
 |   |   |-- loop_controller.py   # auto / persistent 主循环
-|   |   |-- finding_parser.py    # finding 提取、证据等级与生命周期归类
+|   |   |-- response_observations.py # 非漏洞观察记录（不创建 finding）
 |   |   |-- prompt_context.py    # 回合上下文与攻击摘要
 |   |   |-- prompts.py           # prompt 构建辅助
 |   |   |-- system_prompt.py     # 动态 system prompt 组合
@@ -71,7 +71,8 @@ VulnClaw/
 |   |   |-- lifecycle.py         # attach / probe / call / degrade 行为
 |   |   |-- registry.py          # 服务状态、健康度、attach 状态、工具注册
 |   |   `-- router.py            # 自然语言意图到 MCP 工具建议
-|   |-- report/                  # 报告生成、过滤、PoC 生成
+|   |-- findings/                # 结构化上报、证据快照、独立验证与 PoC 检查
+|   |-- report/                  # 报告渲染、过滤、findings.json/SARIF 输出
 |   |-- skills/                  # 内置 markdown skills、loader、dispatcher
 |   |   |-- core/                  # 7 个核心 flat-format Skill（单个 .md 文件）
 |   |   |-- specialized/           # 目录格式专项 Skill，每个子目录含 SKILL.md
@@ -175,15 +176,20 @@ VulnClaw/
 
 不要在业务逻辑里到处手写配置解析。
 
-### 2.6 修改报告逻辑 → `vulnclaw/report/`
+### 2.6 修改上报 / 验证 / 报告逻辑 → `vulnclaw/findings/` + `vulnclaw/report/`
 
 适用场景：
-- Markdown / HTML 报告渲染
-- 报告内容过滤
-- PoC 生成
-- 验证摘要与定位信息
+- `findings/intake.py`：`submit_finding` 工具的校验、证据归属与入库去重
+- `findings/evidence.py`：稳定证据快照的写入与校验
+- `findings/verification.py`：任务结束时的独立漏洞审计（证据审查 / PoC）
+- `findings/poc.py`：类型专用 PoC 计划构建与受控执行
+- Markdown / HTML 报告渲染、报告内容过滤、findings.json / SARIF 输出
 
-主入口是 `generator.py`，同时影响 target-state 报告和 persistent-cycle 报告。
+渲染主入口是 `report/generator.py`，同时影响 target-state 报告和 persistent-cycle 报告；
+渲染器只消费 `findings/verification.py` 产出的已审计快照，不得自行改写状态。
+共享 `finding_service.py` / `report_service.py` 负责历史数据审计及导出编排；报告生成器不执行验证。
+新候选经 `submit_finding` 登记；网络扫描和插件只记录观察证据，不直接调用
+`add_finding`。Team 和子代理通过同一个证据提交器合并；恢复已有业务数据时保留历史记录。
 
 ### 2.7 修改 MCP 行为 → `vulnclaw/mcp/`
 

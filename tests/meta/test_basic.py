@@ -40,7 +40,10 @@ def test_no_import_errors():
         "vulnclaw.kb.retriever",
         "vulnclaw.kb.updater",
         "vulnclaw.report.generator",
-        "vulnclaw.report.poc_builder",
+        "vulnclaw.findings.intake",
+        "vulnclaw.findings.evidence",
+        "vulnclaw.findings.poc",
+        "vulnclaw.findings.verification",
         "vulnclaw.cli.main",
     ]
     for mod_name in modules:

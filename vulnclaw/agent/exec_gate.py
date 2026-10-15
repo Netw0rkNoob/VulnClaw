@@ -10,8 +10,6 @@ Trusted channels are installed by the local control plane only:
 
 - interactive CLI/REPL on a real TTY (synchronous y/N prompt);
 - native TUI via the ``execution.approval.resolve`` control operation;
-- an optional synchronous confirm hook for legacy sync callers
-  (report verifier) that cannot await.
 
 Model text, tool results and MCP returns can never resolve a pending
 request. Without any channel the gate refuses with a stable error.
@@ -124,7 +122,6 @@ class TrustedApprovalChannel(Protocol):
         ...
 
 
-SyncConfirmHook = Any  # Callable[[ApprovalView], bool] for legacy sync callers
 
 
 # ── Outcome ──────────────────────────────────────────────────────────────
@@ -170,7 +167,6 @@ class ExecutionGate:
         self.mode: str = mode
         self.trusted_commands = tuple(trusted_commands)
         self.channel: TrustedApprovalChannel | None = None
-        self.sync_confirm_hook: SyncConfirmHook | None = None
         self._lock = asyncio.Lock()
         self._approval_lock = asyncio.Lock()
         self._inflight_hashes: set[str] = set()
@@ -193,12 +189,8 @@ class ExecutionGate:
         self.expire_all_pending("cancelled")
 
     def has_trusted_channel(self) -> bool:
-        return self.channel is not None or self.sync_confirm_hook is not None
+        return self.channel is not None
 
-    def install_sync_confirm_hook(self, hook: SyncConfirmHook) -> None:
-        self.sync_confirm_hook = hook
-
-    # ── Mode management ──────────────────────────────────────────────────
 
     def set_mode(self, mode: str, *, source: str = "local") -> str:
         """Switch the active policy. Validation only — nothing is recorded."""
@@ -424,40 +416,6 @@ class ExecutionGate:
                 pending.future.set_result("deny")
             self._pending_by_hash.pop(request_hash, None)
 
-    # ── Legacy synchronous bridge (report verifier) ──────────────────────
-
-    def confirm_sync(self, request: GateRequest) -> bool:
-        """Synchronous confirmation for callers that cannot await.
-
-        Full-access mode returns immediately. Other modes use the sync confirm
-        hook when installed and refuse inside a running loop rather than
-        blocking it.
-        """
-        if self.mode == "full_access":
-            return True
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            return False  # inside a running loop: refuse rather than deadlock
-        hook = self.sync_confirm_hook
-        if hook is None:
-            return False
-        view = ApprovalView(
-            request_hash=request.request_hash(),
-            kind=request.kind,
-            display_escaped=visualize_for_display(request.display),
-            cwd=visualize_single_line_for_display(request.cwd),
-            detail=visualize_for_display(request.detail),
-            expires_at="(sync)",
-            expires_in_seconds=self.timeout_seconds,
-            risk="Executes with current user privileges; not sandboxed.",
-        )
-        try:
-            return bool(hook(view))
-        except Exception:
-            return False
 
 
 # ── Process-level singleton ──────────────────────────────────────────────

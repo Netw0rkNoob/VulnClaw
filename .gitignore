@@ -60,7 +60,7 @@ _test_output*.txt
 _test_report_raw.txt
 
 # Frontend build / deps
-frontend/node_modules/
+frontend/node_modules
 frontend/dist/
 frontend/.vite/
 frontend/.npm-cache/
@@ -90,3 +90,4 @@ docs/
 .projectHelp/
 # Rust TUI build artifacts
 tui/target/
+.archify/

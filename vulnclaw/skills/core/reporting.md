@@ -1,6 +1,6 @@
 ---
 name: reporting
-description: 报告生成流程 — 生成结构化渗透测试报告和PoC
+description: 报告生成流程 — 从已审计漏洞生成结构化渗透测试报告
 routing:
   phases: [reporting]
   task_types: [report]
@@ -8,7 +8,8 @@ routing:
 
 # 报告生成 Skill
 
-将渗透测试结果整理为结构化报告，包含详细发现、PoC 脚本和修复建议。
+将已审计的渗透测试结果整理为结构化报告，引用已有证据、PoC 附件和修复建议。
+漏洞审计由任务流程或独立 verify 入口完成；报告阶段不执行验证、不生成新的验证结论。
 
 ## 报告结构
 

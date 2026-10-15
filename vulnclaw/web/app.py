@@ -5,9 +5,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
+from vulnclaw.finding_service import FindingStateChangedError
 from vulnclaw.web.auth import AuthMiddleware, attach_session_cookie, verify_token
 from vulnclaw.web.schemas import (
     ConfigUpdateRequest,
+    FindingVerifyRequest,
     ProviderModelsRequest,
     ReportGenerateRequest,
     TaskCreateRequest,
@@ -111,6 +113,10 @@ def _report_fs_errors():
     """Map report filesystem errors onto HTTP responses (missing -> 404, denied -> 403)."""
     try:
         yield
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FindingStateChangedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
@@ -262,12 +268,27 @@ def create_app():
     @app.post("/api/reports/target")
     async def report_target(request: ReportGenerateRequest):
         with _report_fs_errors():
-            path = generate_target_report(
+            path = await generate_target_report(
                 request.target,
                 request.output_path,
                 request.report_format,
             )
         return {"status": "ok", "path": path}
+
+    @app.post("/api/findings/verify")
+    async def findings_verify(request: FindingVerifyRequest):
+        from vulnclaw.config.settings import load_config
+        from vulnclaw.finding_service import assessment_summary, verify_target
+        from vulnclaw.i18n import init_i18n
+
+        config = load_config()
+        init_i18n(config=config)
+        with _report_fs_errors():
+            session, path, _raw = await verify_target(
+                request.target, config=config, poc_verify=request.poc_verify,
+            )
+        return {"status": "ok", "target": request.target,
+                "path": str(path), "summary": assessment_summary(session)}
 
     @app.get("/")
     async def index(request: Request):

@@ -185,6 +185,18 @@ export function generateTargetReport(
   });
 }
 
+export function verifyTargetFindings(target: string, pocVerify: boolean): Promise<{
+  status: string;
+  target: string;
+  path: string;
+  summary: { total: number; verified: number; rejected: number; suspected_high: number; suspected_low: number; incomplete: number };
+}> {
+  return requestJson("/api/findings/verify", {
+    method: "POST",
+    body: JSON.stringify({ target, poc_verify: pocVerify }),
+  });
+}
+
 export function createTask(command: TaskCommand, target: string, resume: boolean, options: TaskOptions = {}): Promise<TaskRecord> {
   return requestJson<TaskRecord>("/api/tasks/run", {
     method: "POST",

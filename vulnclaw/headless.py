@@ -188,22 +188,15 @@ class FindingClassification:
         return self.candidates > 0
 
 
-def classify_findings(session_state: Any) -> FindingClassification:
-    """Split a session's findings into verified vs. unverified-candidate counts.
-
-    ``verified`` is owned by the finding schema (``VulnerabilityFinding.verified``
-    / ``mark_verified``). Everything present that is not yet verified — and not a
-    rejected false positive — is a candidate for exit-code purposes.
-    """
-    findings = list(getattr(session_state, "findings", []) or [])
-    verified = 0
-    candidates = 0
-    for finding in findings:
-        if getattr(finding, "verified", False):
-            verified += 1
-        elif getattr(finding, "verification_status", "pending") != "rejected":
-            candidates += 1
-    return FindingClassification(verified=verified, candidates=candidates)
+def classify_report_findings(document: dict[str, Any]) -> FindingClassification:
+    """Use the assessed findings artifact shared by the report and SARIF."""
+    return FindingClassification(
+        verified=len(document["verified"]),
+        candidates=sum(
+            finding["assessment"]["outcome"] in {"suspected_high", "suspected_low"}
+            for finding in document["findings"]
+        ),
+    )
 
 
 def determine_exit_code(

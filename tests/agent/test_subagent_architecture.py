@@ -828,6 +828,7 @@ def test_compact_model_catalog_exposes_only_two_subagent_tools() -> None:
         include_subagent_tool=True,
     )
     assert {item["function"]["name"] for item in leader_tools} == {
+        "submit_finding",
         "agent_run",
         "evidence_list",
         "evidence_view",

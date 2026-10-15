@@ -4,7 +4,6 @@ import pytest
 
 from vulnclaw.agent.context import ContextManager
 from vulnclaw.agent.solver import extract_json, solve
-from vulnclaw.agent.subagent.solve import sync_verified_findings
 from vulnclaw.config.domain_models import VulnerabilityFinding
 
 
@@ -18,7 +17,7 @@ class _Agent:
         self.context = ContextManager()
         self.session_state = self.context.state
         self.config = SimpleNamespace()
-        self._finding_parser = _Parser()
+        self._observation_parser = _Parser()
 
 
 def test_extract_json_accepts_noisy_model_output():
@@ -58,7 +57,7 @@ async def test_solve_rejects_unverified_flag_then_completes(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_evidence_gated_final_promotes_only_matching_finding(monkeypatch):
+async def test_evidence_gated_final_completes_without_promoting_findings(monkeypatch):
     agent = _Agent()
     sql = VulnerabilityFinding(
         title="SQL injection in id",
@@ -100,46 +99,11 @@ async def test_evidence_gated_final_promotes_only_matching_finding(monkeypatch):
     )
 
     assert result.completed is True
-    assert sql.verified is True
-    assert sql.evidence_level == "L4"
-    assert "e001" in sql.verification_note
+    assert sql.verified is False
+    assert sql.verification_status == "pending"
     assert xss.verified is False
 
 
-def test_finding_sync_never_reopens_rejected_or_cross_endpoint_findings():
-    agent = _Agent()
-    rejected = VulnerabilityFinding(
-        title="XSS candidate",
-        vuln_type="XSS",
-        endpoint="/item",
-        evidence="candidate",
-        remediation="encode output",
-    )
-    rejected.mark_rejected("control request disproved the candidate")
-    wrong_endpoint = VulnerabilityFinding(
-        title="SQL injection candidate",
-        vuln_type="SQLi",
-        endpoint="/other",
-        evidence="candidate",
-        remediation="parameterize queries",
-    )
-    agent.context.state.add_finding(rejected)
-    agent.context.state.add_finding(wrong_endpoint)
-    record = agent.context.state.agent_state.remember_tool_result(
-        tool="fetch",
-        arguments={"url": "http://target.local/item?id=1"},
-        output="SQL injection confirmed at /item",
-    )
-
-    promoted = sync_verified_findings(
-        agent,
-        f"FINAL: SQL injection confirmed at /item evidence {record.id}",
-        [record.id],
-    )
-
-    assert promoted == []
-    assert rejected.verification_status == "rejected"
-    assert wrong_endpoint.verified is False
 
 
 @pytest.mark.asyncio

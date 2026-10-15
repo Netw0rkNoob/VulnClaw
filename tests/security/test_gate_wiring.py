@@ -98,15 +98,6 @@ class TestPythonExecuteGateWiring:
         reset_execution_gate()
 
 
-class TestVerifierBridge:
-    def test_execute_poc_refuses_without_sync_hook(self, fresh_gate):
-        from vulnclaw.report.verifier import VerifierExecutor
-
-        rc, output = VerifierExecutor.execute_poc("print('poc')")
-        assert rc == -4
-        assert "[REFUSED]" in output
-
-
 class TestModelRiskWiring:
     """args.risk_self_assessment flows from tool call to gate decision."""
 

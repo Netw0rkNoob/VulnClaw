@@ -12,7 +12,9 @@ observable artifact shape:
 
 import json
 
+from tests.reporting_fixtures import assessed_findings, assessed_snapshot
 from vulnclaw.agent.context import EvidenceRef, SessionState, VulnerabilityFinding
+from vulnclaw.findings.types import FindingAssessment
 from vulnclaw.report.findings_output import (
     build_findings_document,
     is_report_included,
@@ -24,7 +26,8 @@ from vulnclaw.report.findings_output import (
 def _verified(**kwargs) -> VulnerabilityFinding:
     finding = VulnerabilityFinding(**kwargs)
     finding.mark_verified(note="confirmed", evidence_level="L4")
-    return finding
+    finding.assessment = FindingAssessment(outcome="verified", method="poc", reason="Controlled test result")
+    return assessed_findings([finding])[0]
 
 
 def _web_finding() -> VulnerabilityFinding:
@@ -66,6 +69,7 @@ def _make_mixed_session() -> SessionState:
         title="Bogus XSS", severity="Medium", vuln_type="XSS", evidence="maybe"
     )
     rejected.mark_rejected(reason="false positive")
+    rejected.assessment = FindingAssessment(outcome="rejected", method="poc", reason="Controlled exclusion")
     state.add_finding(rejected)
 
     # candidate (has vuln_type so it isn't intake-quarantined)
@@ -74,6 +78,9 @@ def _make_mixed_session() -> SessionState:
             title="Weak header", severity="Low", vuln_type="Info Leak", evidence="server header"
         )
     )
+    for finding in state.findings:
+        if finding.assessment is None:
+            finding.assessment = FindingAssessment(outcome="suspected_low", method="evidence_review", reason="Indirect evidence")
     return state
 
 
@@ -90,9 +97,9 @@ class TestInclusionGate:
 class TestFindingsDocument:
     def test_all_findings_present_verified_subset_gated(self):
         session = _make_mixed_session()
-        doc = build_findings_document(session)
+        doc = build_findings_document(assessed_snapshot(session))
 
-        assert doc["schema_version"] == "1.0"
+        assert doc["schema_version"] == "1.2"
         assert doc["tool"]["name"] == "VulnClaw"
         assert doc["target"] == "https://shop.example.com"
 
@@ -124,14 +131,14 @@ class TestFindingsDocument:
         state.findings.append(_verified(**kwargs))
         state.findings.append(_verified(**kwargs))
 
-        doc = build_findings_document(state)
+        doc = build_findings_document(assessed_snapshot(state))
         assert doc["summary"]["total"] == 2  # every raw finding counted
         assert len(doc["verified"]) == 1  # deduplicated array
         assert doc["summary"]["verified"] == 1  # summary aligned with the array
 
     def test_findings_json_serializes_evidence_refs(self):
         session = _make_mixed_session()
-        doc = build_findings_document(session)
+        doc = build_findings_document(assessed_snapshot(session))
         sqli = next(f for f in doc["findings"] if f["title"] == "SQLi in login")
         refs = sqli["evidence_refs"]
         assert {"kind": "http_capture", "path": "http/req-9.json", "request_id": "req-9"} in refs
@@ -144,7 +151,7 @@ class TestFindingsDocument:
 
 class TestSarifShape:
     def _sarif(self):
-        return to_sarif([_web_finding(), _code_finding()], target="https://shop.example.com")
+        return to_sarif(assessed_findings([_web_finding(), _code_finding()]), target="https://shop.example.com")
 
     def test_top_level_shape(self):
         sarif = self._sarif()
@@ -163,7 +170,7 @@ class TestSarifShape:
             assert result["locations"]
 
     def test_web_finding_uses_logical_locations_and_synthetic_anchor(self):
-        sarif = to_sarif([_web_finding()], target="https://shop.example.com")
+        sarif = to_sarif(assessed_findings([_web_finding()]), target="https://shop.example.com")
         result = sarif["runs"][0]["results"][0]
         location = result["locations"][0]
         assert "logicalLocations" in location
@@ -174,14 +181,14 @@ class TestSarifShape:
 
     def test_web_finding_without_endpoint_gets_synthetic_uri(self):
         finding = _verified(title="Odd bug", severity="High", vuln_type="Weird", evidence="e")
-        sarif = to_sarif([finding], target="https://t.example.com")
+        sarif = to_sarif(assessed_findings([finding]), target="https://t.example.com")
         anchor = sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
             "artifactLocation"
         ]["uri"]
         assert anchor.startswith("vulnclaw://")
 
     def test_code_finding_uses_physical_location_and_region(self):
-        sarif = to_sarif([_code_finding()])
+        sarif = to_sarif(assessed_findings([_code_finding()]))
         result = sarif["runs"][0]["results"][0]
         phys = result["locations"][0]["physicalLocation"]
         assert phys["artifactLocation"]["uri"] == "src/config/settings.py"
@@ -194,12 +201,12 @@ class TestSarifShape:
         finding = _verified(
             title="Line only", vuln_type="Secret", evidence="e", code_location="a/b.py:7"
         )
-        phys = to_sarif([finding])["runs"][0]["results"][0]["locations"][0]["physicalLocation"]
+        phys = to_sarif(assessed_findings([finding]))["runs"][0]["results"][0]["locations"][0]["physicalLocation"]
         assert phys["artifactLocation"]["uri"] == "a/b.py"
         assert phys["region"] == {"startLine": 7}
 
     def test_evidence_refs_become_artifact_locations(self):
-        sarif = to_sarif([_web_finding()])
+        sarif = to_sarif(assessed_findings([_web_finding()]))
         result = sarif["runs"][0]["results"][0]
         attachments = result["attachments"]
         uris = {a["artifactLocation"]["uri"] for a in attachments}
@@ -211,7 +218,7 @@ class TestSarifShape:
         assert "req-9" in http_att["artifactLocation"]["description"]["text"]
 
     def test_subagent_provenance_reaches_sarif_properties(self):
-        result = to_sarif([_web_finding()])["runs"][0]["results"][0]
+        result = to_sarif(assessed_findings([_web_finding()]))["runs"][0]["results"][0]
         assert result["properties"]["subagent_provenance"]["task_id"] == "b1.t1"
 
     def test_cwe_populates_taxonomies_and_properties(self):
@@ -235,7 +242,7 @@ class TestSarifShape:
         assert sqli_result["properties"]["http_method"] == "POST"
 
     def test_empty_findings_produce_valid_empty_run(self):
-        sarif = to_sarif([])
+        sarif = to_sarif(assessed_findings([]))
         run = sarif["runs"][0]
         assert run["results"] == []
         assert run["tool"]["driver"]["rules"] == []
@@ -245,7 +252,7 @@ class TestSarifShape:
 class TestWriteArtifacts:
     def test_writes_both_files(self, tmp_path):
         session = _make_mixed_session()
-        paths = write_findings_artifacts(session, tmp_path / "findings")
+        paths = write_findings_artifacts(assessed_snapshot(session), tmp_path / "findings")
 
         json_path = paths["findings_json"]
         sarif_path = paths["findings_sarif"]
@@ -262,26 +269,22 @@ class TestWriteArtifacts:
         result_titles = {r["message"]["text"].split(" — ")[0] for r in sarif["runs"][0]["results"]}
         assert "Bogus XSS" not in result_titles
 
-    def test_generate_report_emits_findings_dir(self, tmp_path):
+    async def test_generate_report_emits_findings_dir(self, tmp_path):
         from vulnclaw.report.generator import generate_report
 
         session = _make_mixed_session()
-        generate_report(session, str(tmp_path / "report.md"))
-        assert (tmp_path / "findings" / "findings.json").exists()
-        assert (tmp_path / "findings" / "findings.sarif").exists()
+        await generate_report(assessed_snapshot(session), str(tmp_path / "report.md"))
+        assert (tmp_path / "report.artifacts" / "findings" / "findings.json").exists()
+        assert (tmp_path / "report.artifacts" / "findings" / "findings.sarif").exists()
 
-    def test_persistent_cycle_report_emits_findings_dir(self, tmp_path):
+    async def test_persistent_cycle_report_emits_findings_dir(self, tmp_path):
         from vulnclaw.report.generator import generate_persistent_cycle_report
 
         session = _make_mixed_session()
-        generate_persistent_cycle_report(
-            session,
+        await generate_persistent_cycle_report(
+            assessed_snapshot(session),
             cycle_num=1,
-            total_findings=len(session.findings),
-            new_findings=2,
-            total_steps=10,
-            rounds_per_cycle=100,
             output_path=str(tmp_path / "cycle.md"),
         )
-        assert (tmp_path / "findings" / "findings.json").exists()
-        assert (tmp_path / "findings" / "findings.sarif").exists()
+        assert (tmp_path / "cycle.artifacts" / "findings" / "findings.json").exists()
+        assert (tmp_path / "cycle.artifacts" / "findings" / "findings.sarif").exists()

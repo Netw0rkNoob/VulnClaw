@@ -10,6 +10,8 @@ from typing import Any, Callable, Optional
 
 from vulnclaw.agent.agent_graph import AgentGraph, AgentOutcome
 from vulnclaw.agent.context import SessionState, VulnerabilityFinding
+from vulnclaw.findings.evidence import merge_finding_evidence
+from vulnclaw.findings.types import replace_snapshot_refs
 
 
 @dataclass(frozen=True)
@@ -235,7 +237,27 @@ async def _run_surface_wave(
 def merge_session_state(parent: SessionState, child: SessionState) -> None:
     """Merge child findings, recon data, notes, and steps into a parent session."""
     for finding in child.findings:
-        parent.add_finding(finding)
+        merged = copy.deepcopy(finding)
+        by_fingerprint = {record.fingerprint: record.id for record in parent.agent_state.evidence}
+        replace_snapshot_refs(merged, [
+            ref.model_copy(update={"evidence_id": by_fingerprint.get(
+                ref.fingerprint, ref.fingerprint[:12] + ":" + ref.source_id,
+            )}) for ref in merged.evidence_snapshots
+        ])
+        existing = (
+            next(
+                (f for f in parent.findings if f.finding_id == merged.finding_id),
+                None,
+            )
+            if merged.finding_id
+            else None
+        )
+        if existing is not None:
+            # Same structured identity: add_finding would silently drop the
+            # child's submission, so fold its novel evidence in instead.
+            merge_finding_evidence(existing, merged)
+            continue
+        parent.add_finding(merged)
 
     for key, value in child.recon_data.items():
         existing = parent.recon_data.get(key)

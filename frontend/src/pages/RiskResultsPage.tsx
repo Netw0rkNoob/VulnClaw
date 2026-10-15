@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { generateTargetReport } from "../api/web";
+import { generateTargetReport, verifyTargetFindings } from "../api/web";
 import { SectionCard } from "../components/SectionCard";
-import { useTargetPreviewQuery, useTargetQuery, useTargetsQuery } from "../hooks/queries";
+import { useConfigQuery, useTargetPreviewQuery, useTargetQuery, useTargetsQuery } from "../hooks/queries";
 import { useT, type TFunction } from "../i18n";
 import { loadUiPreferences, subscribeUiPreferences, type UiPreferences } from "../utils/preferences";
 import {
@@ -134,6 +134,11 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
   const [generatedReport, setGeneratedReport] = useState<GeneratedReportState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [auditStatus, setAuditStatus] = useState<string | null>(null);
+  const [pocVerify, setPocVerify] = useState<boolean | null>(null);
+  const configQuery = useConfigQuery();
+  const usePoc = pocVerify ?? configQuery.data?.poc_verify_enabled ?? false;
   const [reportFormat, setReportFormat] = useState<UiPreferences["reportFormat"]>(() => loadUiPreferences().reportFormat);
   const [showRaw, setShowRaw] = useState(false);
 
@@ -191,6 +196,31 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
     }
   }
 
+  async function handleVerify() {
+    if (!targetValue) return;
+    try {
+      setVerifying(true);
+      setError(null);
+      setAuditStatus(null);
+      const result = await verifyTargetFindings(targetValue, usePoc);
+      setAuditStatus(t("risk.audit_completed", {
+        total: String(result.summary.total), verified: String(result.summary.verified),
+        incomplete: String(result.summary.incomplete),
+      }));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["targets"] }),
+        queryClient.invalidateQueries({ queryKey: ["target", targetValue] }),
+        queryClient.invalidateQueries({ queryKey: ["target-preview", targetValue] }),
+        queryClient.invalidateQueries({ queryKey: ["target-snapshots", targetValue] }),
+        queryClient.invalidateQueries({ queryKey: ["target-diff", targetValue] }),
+      ]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("risk.audit_failed"));
+    } finally {
+      setVerifying(false);
+    }
+  }
+
   return (
     <section className="risk-page">
       <SectionCard
@@ -206,6 +236,7 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
               setLocalTarget(value ?? "");
               onSelectTarget(value);
               setGeneratedReport(null);
+              setAuditStatus(null);
               setError(null);
             }}
           >
@@ -270,9 +301,17 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
             </div>
 
             <div className="button-row">
-              <button type="button" className="primary-btn" disabled={generating} onClick={handleGenerateReport}>
+              <button type="button" className="primary-btn" disabled={generating || verifying} onClick={handleGenerateReport}>
                 {generating ? t("risk.generating") : t("risk.generate_report")}
               </button>
+              <button type="button" className="secondary-btn" disabled={generating || verifying} onClick={handleVerify}>
+                {verifying ? t("risk.auditing") : t("risk.audit_findings")}
+              </button>
+              <label className="check-row">
+                <input type="checkbox" checked={usePoc} disabled={verifying || generating}
+                  onChange={(event) => setPocVerify(event.target.checked)} />
+                <span>{t("risk.poc_verify")}</span>
+              </label>
               <button type="button" className="secondary-btn" onClick={() => onOpenReports()}>
                 {t("risk.open_reports")}
               </button>
@@ -280,6 +319,8 @@ export function RiskResultsPage({ selectedTarget, onSelectTarget, onOpenHome, on
                 {t("risk.open_scope")}
               </button>
             </div>
+            <p className="inline-note">{t("risk.poc_verify_hint")}</p>
+            {auditStatus && <div className="success-box">{auditStatus}</div>}
 
             {generatedReport && (
               <div className="report-delivery-card risk-delivery-card">

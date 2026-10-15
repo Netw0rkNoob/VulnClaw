@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 
 class ReportContentFilter:
@@ -265,29 +264,6 @@ class ReportContentFilter:
 
         return result
 
-    @classmethod
-    def is_pure_markdown(cls, content: str) -> bool:
-        """检查内容是否是纯 Markdown（无干扰标记）.
-
-        用于验证过滤结果是否合格。
-        """
-        # 检查是否包含干扰标记
-        interference_patterns = [
-            r"\[TOOL_CALL\]",
-            r"\{tool\s*=>",
-            r"──\s*Round",
-            r"──\s*Cycle",
-            r"<thinking>",
-            r"```python",
-            r"^\s*print\s*\(",
-            r"^\s*import\s+",
-        ]
-
-        for pattern in interference_patterns:
-            if re.search(pattern, content, re.MULTILINE):
-                return False
-
-        return True
 
 
 # ── 便捷函数 ────────────────────────────────────────────────────────────────
@@ -320,55 +296,3 @@ def deduplicate_report_findings(findings: list, threshold: float = 0.75) -> list
     from vulnclaw.config.finding_similarity import deduplicate_findings
 
     return deduplicate_findings(findings, threshold=threshold)
-
-
-def extract_findings_section(content: str) -> Optional[str]:
-    """从报告中提取漏洞列表部分.
-
-    如果找不到专门的漏洞列表，返回 None。
-    """
-    patterns = [
-        r"(##\s*漏洞列表\s*\n[\s\S]*?)(?=##|\Z)",
-        r"(##\s*详细发现\s*\n[\s\S]*?)(?=##|\Z)",
-        r"(##\s*Findings\s*\n[\s\S]*?)(?=##|\Z)",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, content, re.IGNORECASE)
-        if match:
-            return match.group(1)
-
-    return None
-
-
-def remove_unverified_findings(content: str) -> str:
-    """从报告内容中移除未验证的漏洞.
-
-    标记为 [未验证] 的漏洞将被移除。
-    """
-    # 移除 [未验证] 标记的漏洞章节
-    pattern = re.compile(
-        r"(###\s*\[[^\]]*\]\s*[^\n]*未验证[^\n]*\n[\s\S]*?)(?=###|\Z)",
-        re.IGNORECASE,
-    )
-    result = pattern.sub("", content)
-
-    # 移除包含 [未验证] 的行
-    lines = result.split("\n")
-    filtered_lines = []
-    skip_section = False
-
-    for line in lines:
-        # 检测未验证章节开始
-        if "[未验证]" in line and line.strip().startswith("###"):
-            skip_section = True
-            continue
-
-        # 检测章节结束
-        if skip_section and line.startswith("##"):
-            skip_section = False
-
-        if not skip_section:
-            filtered_lines.append(line)
-
-    return "\n".join(filtered_lines)

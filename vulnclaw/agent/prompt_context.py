@@ -279,6 +279,7 @@ async def generate_attack_summary(agent: AgentContext) -> str:
                     severity=finding.severity,
                     title=finding.title,
                     evidence=evidence or _("agent.common.none"),
+                    outcome=finding.assessment.outcome if finding.assessment else "pending",
                 )
             )
         findings_text = "\n".join(lines)

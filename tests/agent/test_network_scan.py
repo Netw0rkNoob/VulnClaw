@@ -113,7 +113,7 @@ def test_parse_nmap_xml_structured_ranks_weak_links():
     assert "192.168.56.10:23" in summary
 
 
-def test_attach_network_scan_to_session_creates_candidate_findings():
+def test_attach_network_scan_to_session_keeps_weak_links_as_recon():
     from vulnclaw.agent.context import SessionState
     from vulnclaw.agent.network_scan import (
         attach_network_scan_to_session,
@@ -127,10 +127,10 @@ def test_attach_network_scan_to_session_creates_candidate_findings():
 
     assert session.recon_data["network_scans"][0]["profile"] == "fast"
     assert len(session.recon_data["network_services"]) == 2
-    assert {f.vuln_type for f in session.findings} == {
+    assert {f['risk'] for f in session.recon_data['network_scans'][0]['weak_links']} == {
         "unencrypted_protocol",
         "web_surface",
     }
-    assert all(f.verification_status == "pending" for f in session.findings)
+    assert session.findings == []
     assert session.step_records[-1].action == "network scan"
     assert json.loads(session.step_records[-1].detail)["target"] == "192.168.56.10"

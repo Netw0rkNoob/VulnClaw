@@ -16,7 +16,6 @@ from vulnclaw.agent.context import (
     PentestPhase,
     SessionState,
     StepStatus,
-    VulnerabilityFinding,
 )
 
 NETWORK_SCAN_PROFILES = {"adaptive", "fast", "thorough", "stealth"}
@@ -381,7 +380,7 @@ def attach_network_scan_to_session(
     profile: str,
     safe_probes: bool = True,
 ) -> None:
-    """Persist network scan facts and candidate weak-link findings into session state."""
+    """Persist network scan facts and weak-link observations for explicit candidate submission."""
     if not structured:
         return
 
@@ -399,26 +398,6 @@ def attach_network_scan_to_session(
     session.recon_data["network_services"] = _dedupe_services(
         session.recon_data.get("network_services", []), structured.get("open_services", [])
     )
-
-    for weak_link in structured.get("weak_links", []):
-        finding = VulnerabilityFinding(
-            title=f"Exposed {weak_link.get('service') or weak_link.get('risk')} on {weak_link.get('target')}",
-            severity=weak_link.get("severity", "Medium"),
-            vuln_type=weak_link.get("risk", "network_exposure"),
-            description=weak_link.get("reason", ""),
-            evidence=(
-                f"nmap identified {weak_link.get('service') or 'service'} on "
-                f"{weak_link.get('target')} during {profile} network scan."
-            ),
-            remediation=weak_link.get("next_action", ""),
-            evidence_level="L2",
-            lifecycle_status="pending_verification",
-            finding_id=(
-                f"network:{weak_link.get('risk', 'network_exposure')}:"
-                f"{weak_link.get('host', '')}:{weak_link.get('port', '')}"
-            )[:50],
-        )
-        session.add_finding(finding)
 
     session.add_step(
         f"network_scan:{structured.get('target', session.target or '')}:{profile}",

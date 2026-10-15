@@ -1,4 +1,6 @@
+
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from typer.testing import CliRunner
@@ -352,7 +354,7 @@ class TestWebServices:
         assert diff is not None
         assert diff.added_findings
 
-    def test_web_report_service_generates_target_report(self, monkeypatch, tmp_path):
+    async def test_web_report_service_generates_target_report(self, monkeypatch, tmp_path):
         import vulnclaw.target_state.store as store_mod
         import vulnclaw.web.services.report_service as report_service
         from vulnclaw.agent.context import SessionState, VulnerabilityFinding
@@ -374,10 +376,10 @@ class TestWebServices:
         store_mod.save_target_state("https://example.com", state, command="scan")
 
         out = sessions_dir / "report.md"
-        path = report_service.generate_target_report("https://example.com", str(out))
+        path = await report_service.generate_target_report("https://example.com", str(out))
         assert Path(path).exists()
 
-    def test_web_report_service_generates_html_target_report(self, monkeypatch, tmp_path):
+    async def test_web_report_service_generates_html_target_report(self, monkeypatch, tmp_path):
         import vulnclaw.target_state.store as store_mod
         import vulnclaw.web.services.report_service as report_service
         from vulnclaw.agent.context import SessionState, VulnerabilityFinding
@@ -396,7 +398,7 @@ class TestWebServices:
         state.add_finding(finding)
         store_mod.save_target_state("https://example.com", state, command="scan")
 
-        path = report_service.generate_target_report(
+        path = await report_service.generate_target_report(
             "https://example.com",
             report_format="html",
         )
@@ -931,7 +933,7 @@ class TestWebServices:
 
         assert config_service.get_public_config().language == "auto"
 
-    def test_generate_target_report_inits_i18n_from_config(self, monkeypatch):
+    async def test_generate_target_report_inits_i18n_from_config(self, monkeypatch):
         """The standalone report endpoint must initialize i18n from the saved
         config language — otherwise it ignores the setting and defaults to
         Chinese. Regression test for reports only generating in Chinese."""
@@ -951,11 +953,11 @@ class TestWebServices:
         monkeypatch.setattr(report_service, "load_target_state", lambda target: {"target": target})
         monkeypatch.setattr(
             report_service,
-            "generate_report_from_target_state",
-            lambda raw, report_format, output_path: output_path,
+            "generate_report_for_target",
+            AsyncMock(side_effect=lambda raw, report_format, output_path, **kwargs: output_path),
         )
 
-        report_service.generate_target_report("https://example.com")
+        await report_service.generate_target_report("https://example.com")
 
         assert captured["language"] == "en", (
             "generate_target_report must init i18n from config so the report "
@@ -973,6 +975,9 @@ class TestWebServices:
                     "Ctx", (), {"state": SessionState(target="https://example.com")}
                 )()
                 self.runtime = type("Runtime", (), {})()
+                from vulnclaw.config.schema import VulnClawConfig
+
+                self.config = VulnClawConfig()
 
             @property
             def session_state(self):

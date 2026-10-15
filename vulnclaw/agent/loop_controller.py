@@ -1,4 +1,4 @@
-﻿"""Autonomous / persistent loop helpers for AgentCore."""
+"""Autonomous / persistent loop helpers for AgentCore."""
 
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ async def auto_pentest(
             agent.context.add_assistant_message(
                 _("agent.loop.round_analysis", round=round_num, response=response_text)
             )
-            agent._finding_parser.parse(response_text)
+            agent._observation_parser.parse(response_text)
 
             if agent.runtime.is_recon_phase:
                 agent._update_recon_dimension_completion(response_text)
@@ -333,12 +333,6 @@ async def persistent_pentest(
 
         cycle_results_list: list[AgentResult] = []
 
-        # Snapshot which findings were already verified before this cycle runs, so
-        # the cycle report can label only genuinely-new verified findings.
-        prev_verified_ids = {
-            f.finding_id for f in agent.context.state.get_verified_findings()
-        }
-
         def _make_step_callback(cycle: int):
             def _on_step(round_num: int, result: AgentResult) -> None:
                 cycle_results_list.append(result)
@@ -380,6 +374,9 @@ async def persistent_pentest(
             should_stop = True
             cycle_results_list = cycle_results_list or []
 
+        from vulnclaw.findings.verification import verify_findings
+
+        audited = await verify_findings(agent.context.state, config=agent.config)
         total_findings = len(agent.context.state.findings)
         total_steps = len(agent.context.state.executed_steps)
         new_findings = total_findings - findings_at_cycle_start
@@ -396,15 +393,10 @@ async def persistent_pentest(
             try:
                 from vulnclaw.report.generator import generate_persistent_cycle_report
 
-                report_path = generate_persistent_cycle_report(
-                    session=agent.context.state,
+                report_path = await generate_persistent_cycle_report(
+                    session=audited,
                     cycle_num=cycle_num,
-                    total_findings=total_findings,
-                    new_findings=new_findings,
-                    total_steps=total_steps,
-                    rounds_per_cycle=rounds_per_cycle,
                     llm_attack_summary=llm_summary,
-                    prev_verified_ids=prev_verified_ids,
                 )
             except Exception as e:
                 report_path = _("agent.loop.report_failed", error=e)

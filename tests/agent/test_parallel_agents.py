@@ -45,6 +45,149 @@ class FakeAgent:
         return ["worker-result"]
 
 
+def test_merging_a_repeated_finding_keeps_both_sides_evidence():
+    from vulnclaw.agent.parallel_agents import merge_session_state
+    from vulnclaw.findings.types import EvidenceSnapshotRef
+
+    def snapshot(evidence_id, sha256):
+        return EvidenceSnapshotRef(
+            evidence_id=evidence_id, source_id=evidence_id, target="https://lab.test",
+            root="/evidence", path=f"findings/x/{sha256}.json", sha256=sha256,
+            fingerprint=f"fp-{sha256}",
+        )
+
+    def finding(description, sha256):
+        record = VulnerabilityFinding(
+            title="Command injection candidate", vuln_type="RCE", severity="High",
+            target="https://lab.test", endpoint="https://lab.test/cmd", method="GET",
+            finding_id="shared-identity", description=description,
+            evidence=f"[e001] saved tool evidence: findings/x/{sha256}.json",
+        )
+        record.evidence_snapshots = [snapshot("e001", sha256)]
+        return record
+
+    parent = SessionState(target="https://lab.test")
+    parent.add_finding(finding("first weak observation", "aa"))
+    child = SessionState(target="https://lab.test")
+    child.add_finding(finding("supplementary reproduction evidence", "bb"))
+
+    merge_session_state(parent, child)
+
+    # One finding, but the child's novel evidence must survive the merge.
+    assert len(parent.findings) == 1
+    merged = parent.findings[0]
+    assert [ref.sha256 for ref in merged.evidence_snapshots] == ["aa", "bb"]
+    assert merged.description == "first weak observation"
+    assert "findings/x/bb.json" in merged.evidence
+
+    # Re-merging the same child evidence is idempotent.
+    merge_session_state(parent, child)
+    assert [ref.sha256 for ref in parent.findings[0].evidence_snapshots] == ["aa", "bb"]
+
+
+def test_merging_distinct_snapshots_preserves_shared_fingerprint():
+    from vulnclaw.agent.parallel_agents import merge_session_state
+    from vulnclaw.findings.types import EvidenceSnapshotRef
+
+    parent = SessionState(target="https://lab.test")
+    shared = parent.agent_state.remember_tool_result(
+        tool="fetch", arguments={"url": "https://lab.test/cmd"},
+        output="shared output", target="https://lab.test",
+    )
+    first = VulnerabilityFinding(
+        title="Command injection candidate", vuln_type="RCE", severity="High",
+        target="https://lab.test", endpoint="https://lab.test/cmd", method="GET",
+        finding_id="shared-identity", description="parent side",
+    )
+    # Parent-side snapshot of a tool result the child also snapshotted.
+    first.evidence_snapshots = [EvidenceSnapshotRef(
+        evidence_id=shared.id, source_id=shared.id, target="https://lab.test",
+        root="/evidence", path="findings/x/aa.json", sha256="aa",
+        fingerprint=shared.fingerprint,
+    )]
+    parent.add_finding(first)
+    child = SessionState(target="https://lab.test")
+    second = VulnerabilityFinding(
+        title="Command injection candidate", vuln_type="RCE", severity="High",
+        target="https://lab.test", endpoint="https://lab.test/cmd", method="GET",
+        finding_id="shared-identity", description="child side",
+    )
+    # A matching fingerprint does not establish that two saved snapshots are
+    # identical. Keep both source references even after the parent ID mapping.
+    second.evidence_snapshots = [EvidenceSnapshotRef(
+        evidence_id="c001", source_id="c001", target="https://lab.test",
+        root="/evidence", path="findings/x/bb.json", sha256="bb",
+        fingerprint=shared.fingerprint,
+    )]
+    child.add_finding(second)
+
+    merge_session_state(parent, child)
+
+    merged = parent.findings[0]
+    assert [ref.sha256 for ref in merged.evidence_snapshots] == ["aa", "bb"]
+    assert len({ref.evidence_id for ref in merged.evidence_snapshots}) == 2
+    assert [ref.source_id for ref in merged.evidence_snapshots] == [shared.id, "c001"]
+
+
+@pytest.mark.parametrize("legacy_fingerprint", [False, True])
+@pytest.mark.parametrize("commit_evidence", [False, True])
+def test_merging_long_request_arguments_keeps_distinct_evidence(
+    tmp_path, legacy_fingerprint, commit_evidence,
+):
+    import hashlib
+    from types import SimpleNamespace
+
+    from vulnclaw.agent.parallel_agents import merge_session_state
+    from vulnclaw.agent.subagent.merge import EvidenceCommitter
+    from vulnclaw.config.schema import VulnClawConfig
+    from vulnclaw.findings.evidence import load_snapshots
+    from vulnclaw.findings.intake import submit_finding
+
+    config = VulnClawConfig()
+    config.session.output_dir = tmp_path
+    sessions = []
+    records = []
+    for task, argument in (("parent", "baseline"), ("child", "id")):
+        state = SessionState(target="https://lab.test", task_id=task)
+        record = state.agent_state.remember_tool_result(
+            tool="fetch", target=state.target, output="same response",
+            arguments={"url": "https://lab.test/cmd", "headers": {"Cookie": "x" * 700},
+                       "params": {"arg": argument}},
+        )
+        if legacy_fingerprint:
+            record.fingerprint = hashlib.sha256(
+                f"fetch\0{record.key_args}\0{record.content}".encode()
+            ).hexdigest()[:24]
+        agent = SimpleNamespace(config=config, session_state=state,
+                                context=SimpleNamespace(state=state))
+        submit_finding(agent, {
+            "title": "Candidate", "description": "Recorded observation", "vuln_type": "RCE",
+            "severity": "High", "endpoint": "https://lab.test/cmd", "evidence_ids": [record.id],
+        })
+        sessions.append(state)
+        records.append(record)
+    assert records[0].key_args == records[1].key_args
+    assert (records[0].fingerprint == records[1].fingerprint) == legacy_fingerprint
+
+    def merge():
+        if commit_evidence:
+            EvidenceCommitter().commit(
+                SimpleNamespace(context=SimpleNamespace(state=sessions[0])), sessions[1],
+                task_id="child", agent_type="test", baseline_fingerprints=set(),
+                include_session_state=True,
+            )
+        else:
+            merge_session_state(*sessions)
+
+    merge()
+    merged = sessions[0].findings[0]
+    snapshots = load_snapshots(merged)
+    assert {snapshot.arguments["params"]["arg"] for snapshot in snapshots.values()} == {"baseline", "id"}
+    assert len({ref.evidence_id for ref in merged.evidence_snapshots}) == 2
+    merge()
+    assert len(merged.evidence_snapshots) == 2
+
+
 def test_extract_attack_surfaces_from_network_state_and_findings():
     state = SessionState(target="192.168.1.0/24")
     state.recon_data["network_services"] = [

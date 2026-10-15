@@ -1,4 +1,4 @@
-﻿"""VulnClaw CLI main entry point with REPL and sub-commands."""
+"""VulnClaw CLI main entry point with REPL and sub-commands."""
 
 # ruff: noqa: E402
 
@@ -152,7 +152,14 @@ def _prepare_repl_target(
 
 async def _run_repl_agent_call(agent, *, call, after_result) -> None:
     """Run a REPL agent call and hand each result back to a caller hook."""
-    await run_repl_call(call=call, after_result=after_result)
+    async def audited_call():
+        from vulnclaw.findings.verification import verify_findings
+
+        result = await call()
+        await verify_findings(agent.session_state, config=agent.config)
+        return result
+
+    await run_repl_call(call=audited_call, after_result=after_result)
 
 
 def _localized_phase_label(phase: Any) -> str:
@@ -625,13 +632,13 @@ def _run_repl() -> None:
                     console.print(_("cli.no_target_for_report"))
                     continue
 
-                report_path = _generate_report_for_target(
+                report_path = asyncio.run(_generate_report_for_target(
                     report_target,
                     current_session=agent.session_state
                     if agent.session_state.target == report_target
                     else None,
                     report_format=config.session.report_format,
-                )
+                ))
                 console.print(_("cli.report_generated", path=report_path))
                 continue
 
@@ -722,21 +729,21 @@ def _run_repl() -> None:
 
                     asyncio.run(_run_persistent())
                     if auto_report and not all_cycle_results:
-                        partial_report = _generate_report_for_target(
+                        partial_report = asyncio.run(_generate_report_for_target(
                             persistent_target,
                             current_session=agent.session_state,
                             report_format=config.session.report_format,
-                        )
+                        ))
                         console.print(_("cli.partial_report", path=partial_report))
                 except KeyboardInterrupt:
                     console.print(f"\n{_('persistent.interrupted_message')}")
                     if agent.session_state.findings:
                         try:
-                            final_report = _generate_report_for_target(
+                            final_report = asyncio.run(_generate_report_for_target(
                                 persistent_target,
                                 current_session=agent.session_state,
                                 report_format=config.session.report_format,
-                            )
+                            ))
                             console.print(_("persistent.final_report", path=final_report))
                         except Exception as exc:
                             console.print(_("persistent.failed_final_report", exc=exc))
@@ -906,7 +913,7 @@ def _run_repl() -> None:
                                         "export",
                                     )
                                 ):
-                                    _auto_save_recon_report(agent, user_input, config)
+                                    await _auto_save_recon_report(agent, user_input, config)
 
                         await _run_repl_agent_call(agent, call=call, after_result=after_result)
 
@@ -1053,7 +1060,6 @@ def _run_non_interactive(
     scope_mode: str,
     fail_on: str,
     run_coro_factory,
-    classification_holder: dict,
 ) -> None:
     """Drive a headless run: no prompts, structured output, exit-code contract.
 
@@ -1061,20 +1067,17 @@ def _run_non_interactive(
     scan never exits 0. On completion the finding set is mapped to an exit code
     under ``--fail-on`` and a ``summary.json`` is written into the run directory.
     """
+    import json
     from datetime import datetime
+    from pathlib import Path
 
     try:
-        asyncio.run(run_coro_factory())
+        orchestrated = asyncio.run(run_coro_factory())
     except typer.Exit:
         raise
     except BaseException as exc:  # noqa: BLE001 - CI must see a nonzero exit, not a traceback
         err_console.print(f"[!] Scan did not complete: {type(exc).__name__}: {exc}")
         raise typer.Exit(headless.EXIT_ERROR) from exc
-
-    classification = classification_holder.get("classification") or headless.FindingClassification(
-        verified=0, candidates=0
-    )
-    exit_code = headless.determine_exit_code(classification, fail_on)
 
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = headless.run_directory(RUNS_DIR, target, run_id)
@@ -1082,7 +1085,17 @@ def _run_non_interactive(
     # Co-locate the report inside the run directory unless the caller pinned a
     # path with --output, so all structured output for a run lives in one place.
     report_output = output or str(run_dir / "report.md")
-    report_path = _generate_report_for_target(target, output_path=report_output)
+    try:
+        report_path = Path(asyncio.run(_generate_report_for_target(
+            target, output_path=report_output,
+            current_session=getattr(orchestrated, "audited_session", None),
+        )))
+        findings_path = report_path.parent / (report_path.stem + ".artifacts") / "findings" / "findings.json"
+        classification = headless.classify_report_findings(json.loads(findings_path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        err_console.print(f"[!] Report export did not complete: {type(exc).__name__}: {exc}")
+        raise typer.Exit(headless.EXIT_ERROR) from exc
+    exit_code = headless.determine_exit_code(classification, fail_on)
 
     summary = headless.build_run_summary(
         target=target,
@@ -1377,7 +1390,6 @@ def run(
         raise typer.Exit(headless.EXIT_ERROR) from exc
 
     agent_state_holder: dict = {}
-    classification_holder: dict = {}
     stream_out = sys.stdout if stream else None
 
     async def _run():
@@ -1424,9 +1436,13 @@ def run(
             )
             if agent_state is not None:
                 agent_state_holder["agent_state"] = agent_state.get_summary()
-            classification_holder["classification"] = headless.classify_findings(
-                getattr(agent, "session_state", None)
-            )
+            if stream:
+                agent_state_holder["agent"] = agent
+                from vulnclaw.cli._helpers import stream_session_findings
+
+                agent_state_holder["findings"] = stream_session_findings(
+                    getattr(agent, "session_state", None)
+                )
             return result
 
         result = await _run_cli_orchestrated_task(
@@ -1448,35 +1464,25 @@ def run(
             scope_mode=scope_mode,
             fail_on=fail_on,
             run_coro_factory=_run,
-            classification_holder=classification_holder,
         )
         return
 
     orchestrated = asyncio.run(_run())
 
     if stream:
-        from vulnclaw.cli._helpers import emit_complete_event
+        from vulnclaw.cli._helpers import emit_complete_event, stream_session_findings
 
-        findings: list[dict[str, Any]] = []
         agent_state = agent_state_holder.get("agent_state") or {}
         summary = (
             f"{'✅ goal reached' if agent_state.get('completed') else '⊘ not reached'}"
             f" — steps={agent_state.get('steps', 0)} evidence={agent_state.get('evidence', 0)}"
         )
-        # Verified claims map onto the Rust TUI finding list.
-        for idx, claim in enumerate(
-            (agent_state.get("verified_claims") or [])[:50], start=1
-        ):
-            if isinstance(claim, dict):
-                findings.append(
-                    {
-                        "id": claim.get("id") or f"v{idx:03d}",
-                        "severity": "high",
-                        "title": str(claim.get("claim") or "")[:200],
-                        "target": target,
-                    }
-                )
-        emit_complete_event(stream_out, summary=summary, findings=findings)
+        emit_complete_event(
+            stream_out, summary=summary, findings=(
+                stream_session_findings(agent_state_holder["agent"].session_state)
+                if agent_state_holder.get("agent") else agent_state_holder.get("findings", [])
+            ),
+        )
         return
 
     if agent_state_holder.get("agent_state"):
@@ -1492,7 +1498,9 @@ def run(
         total_findings = orchestrated.summary["findings_count"]
         console.print(_("cli.pentest_finished", findings=total_findings))
 
-    report_path = _generate_report_for_target(target, output_path=output)
+    report_path = asyncio.run(_generate_report_for_target(
+        target, output_path=output, current_session=getattr(orchestrated, "audited_session", None),
+    ))
     console.print(_("cli.report_generated", path=report_path))
 
 
@@ -1605,19 +1613,10 @@ def solve(
     asyncio.run(_run())
     agent_state = holder.get("agent_state") or {}
     if stream:
-        from vulnclaw.cli._helpers import emit_complete_event
+        from vulnclaw.cli._helpers import emit_complete_event, stream_session_findings
 
-        findings: list[dict[str, Any]] = []
-        for idx, claim in enumerate((agent_state.get("verified_claims") or [])[:50], start=1):
-            if isinstance(claim, dict):
-                findings.append(
-                    {
-                        "id": claim.get("id") or f"v{idx:03d}",
-                        "severity": "high",
-                        "title": str(claim.get("claim") or "")[:200],
-                        "target": target,
-                    }
-                )
+        agent = holder.get("agent")
+        findings = stream_session_findings(getattr(agent, "session_state", None))
         summary = (
             f"{'✅ goal reached' if agent_state.get('completed') else '⊘ not reached'}"
             f" — steps={agent_state.get('steps', 0)} evidence={agent_state.get('evidence', 0)}"
@@ -2381,6 +2380,34 @@ def exploit(
 
 
 @app.command()
+def verify(
+    session: str = typer.Argument(..., help="Session JSON file or target when used with --target"),
+    target_mode: bool = typer.Option(False, "--target", help="Audit saved target state"),
+    poc_verify: Optional[bool] = typer.Option(
+        None, "--poc-verify/--no-poc-verify",
+        help="Override the PoC audit default; execution still requires approval",
+    ),
+) -> None:
+    """Independently audit findings and save the conclusions without generating a report."""
+    from vulnclaw.cli.approval_channel import install_cli_approval_channel
+    from vulnclaw.finding_service import assessment_summary, verify_session_file, verify_target
+    from vulnclaw.i18n import init_i18n
+
+    config = load_config()
+    install_cli_approval_channel(config)
+    init_i18n(config=config)
+    try:
+        if target_mode:
+            view, path, _raw = asyncio.run(verify_target(session, config=config, poc_verify=poc_verify))
+        else:
+            view, path = asyncio.run(verify_session_file(session, config=config, poc_verify=poc_verify))
+    except (FileNotFoundError, ValueError) as exc:
+        err_console.print(f"[!] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(_("cli.findings_audited", summary=assessment_summary(view), path=path))
+
+
+@app.command()
 def report(
     session: str = typer.Argument(
         ..., help="Path to session JSON file or target when used with --target"
@@ -2402,20 +2429,27 @@ def report(
     from vulnclaw.i18n import init_i18n
 
     report_config = load_config()
+    from vulnclaw.cli.approval_channel import install_cli_approval_channel
+
+    install_cli_approval_channel(report_config)
     init_i18n(config=report_config)
 
     if target_mode:
-        from vulnclaw.report.generator import generate_report_from_target_state
+        from vulnclaw.report_service import generate_report_for_target
 
         state = load_target_state(session)
         if not state:
             err_console.print(f"[!] Target state not found: {session}")
             raise typer.Exit(1)
-        report_path = generate_report_from_target_state(state)
+        report_path = asyncio.run(generate_report_for_target(
+            session, config=report_config,
+        ))
     else:
-        from vulnclaw.report.generator import generate_report_from_file
+        from vulnclaw.report_service import generate_report_from_file
 
-        report_path = generate_report_from_file(session)
+        report_path = asyncio.run(generate_report_from_file(
+            session, config=report_config,
+        ))
     console.print(f"[+] Report generated: {report_path}")
 
     if pdf:
@@ -2955,7 +2989,7 @@ def plugins_run(
         False, "--allow-destructive", help="Permit destructive plugins"
     ),
     session_file: Optional[str] = typer.Option(
-        None, "--session", help="Merge findings into this SessionState JSON and save it"
+        None, "--session", help="Save plugin evidence in this SessionState JSON"
     ),
     as_json: bool = typer.Option(False, "--json", help="Print the raw PluginResult as JSON"),
 ) -> None:
@@ -2966,7 +3000,7 @@ def plugins_run(
     from rich.table import Table
 
     from vulnclaw.plugins import PluginContext, PluginStage, create_builtin_runtime
-    from vulnclaw.plugins.integration import merge_plugin_results_into_session
+    from vulnclaw.plugins.integration import record_plugin_result
 
     try:
         stage_value = PluginStage(stage)
@@ -3032,9 +3066,13 @@ def plugins_run(
         from vulnclaw.agent.context import SessionState
 
         session = SessionState.load(session_path) if session_path.exists() else SessionState()
-        added = merge_plugin_results_into_session(session, result)
+        try:
+            evidence_id = record_plugin_result(session, result, context)
+        except ValueError as exc:
+            err_console.print(f"[!] {exc}")
+            raise typer.Exit(1) from None
         session.save(session_path)
-        console.print(f"[+] Merged {added} finding(s) into {session_file}")
+        console.print(f"[+] Saved plugin evidence {evidence_id} into {session_file}")
 
 
 @kb_app.command("update")
@@ -3548,7 +3586,7 @@ def _resume_saved_run(
     asyncio.run(_run())
 
 
-def _auto_save_recon_report(agent, user_input: str, config) -> None:
+async def _auto_save_recon_report(agent, user_input: str, config) -> None:
     """Auto-save a recon report after auto_pentest completes when user requested file output."""
     import re
     from datetime import datetime
@@ -3571,11 +3609,10 @@ def _auto_save_recon_report(agent, user_input: str, config) -> None:
             date_str = datetime.now().strftime("%Y%m%d_%H%M")
             output_path = str(config.session.output_dir / f"{safe_name}_recon_{date_str}.md")
 
-        from vulnclaw.report.generator import generate_report
+        from vulnclaw.report_service import generate_report_for_target
 
-        generate_report(
-            state,
-            output_path,
+        await generate_report_for_target(
+            target, current_session=state, output_path=output_path, config=config,
             report_format=config.session.report_format,
         )
 

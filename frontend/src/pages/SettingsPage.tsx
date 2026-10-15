@@ -74,6 +74,7 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
   const [persistentRounds, setPersistentRounds] = useState(100);
   const [persistentCycles, setPersistentCycles] = useState(10);
   const [showThinking, setShowThinking] = useState(false);
+  const [pocVerifyEnabled, setPocVerifyEnabled] = useState(false);
   const [pythonExecuteEnabled, setPythonExecuteEnabled] = useState(true);
   const [pythonExecuteMode, setPythonExecuteMode] = useState("trusted-local");
   const [pythonExecuteMaxLines, setPythonExecuteMaxLines] = useState(50);
@@ -129,6 +130,7 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
     setPersistentRounds(configQuery.data.persistent_rounds_per_cycle);
     setPersistentCycles(configQuery.data.persistent_max_cycles);
     setShowThinking(configQuery.data.show_thinking);
+    setPocVerifyEnabled(configQuery.data.poc_verify_enabled);
     setPythonExecuteEnabled(configQuery.data.python_execute_enabled);
     setPythonExecuteMode(configQuery.data.python_execute_mode);
     setPythonExecuteMaxLines(configQuery.data.python_execute_max_lines);
@@ -233,6 +235,7 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
         persistent_rounds_per_cycle: persistentRounds,
         persistent_max_cycles: persistentCycles,
         show_thinking: showThinking,
+        poc_verify_enabled: pocVerifyEnabled,
         python_execute_enabled: pythonExecuteEnabled,
         python_execute_mode: pythonExecuteMode,
         python_execute_max_lines: pythonExecuteMaxLines,
@@ -400,6 +403,11 @@ export function SettingsPage({ initialSection = "basic", onOpenAdvanced }: Setti
 
           {activeSection === "checks" && (
             <div className="form-grid">
+              <label className="check-row field-wide">
+                <input checked={pocVerifyEnabled} onChange={(event) => setPocVerifyEnabled(event.target.checked)} type="checkbox" />
+                <span>{t("settings.poc_verify")}</span>
+              </label>
+              <p className="inline-note field-wide">{t("settings.poc_verify_hint")}</p>
               <label className="field">
                 <span>{t("settings.max_rounds")}</span>
                 <input type="number" value={maxRounds} onChange={(event) => setMaxRounds(Number(event.target.value))} />

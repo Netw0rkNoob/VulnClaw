@@ -82,24 +82,4 @@ def install_cli_approval_channel(config: Any = None) -> bool:
     if not isinstance(gate.channel, CliTtyApprovalChannel):
         gate.install_channel(CliTtyApprovalChannel())
 
-    # Legacy sync surface (report verifier PoC): reuse the same prompt.
-    def _sync_confirm(view: ApprovalView) -> bool:
-        if not tty_available():
-            return False
-        channel = CliTtyApprovalChannel()
-        loop = asyncio.new_event_loop()
-        try:
-            decision = loop.run_until_complete(
-                asyncio.wait_for(
-                    channel.request_approval(view),
-                    timeout=max(1, int(view.expires_in_seconds)),
-                )
-            )
-            return decision == "approve"
-        except asyncio.TimeoutError:
-            return False
-        finally:
-            loop.close()
-
-    gate.install_sync_confirm_hook(_sync_confirm)
     return True

@@ -498,6 +498,10 @@ class SessionState(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         """初始化后同步字段值到子状态。"""
+        from vulnclaw.findings.evidence import merge_structured_findings
+
+        self.findings = merge_structured_findings(self.findings)
+        self._finding_ids_cache = {finding.finding_id for finding in self.findings}
         # 从序列化数据恢复子状态
         self._config = SessionConfig(
             target=self.target,
@@ -512,6 +516,7 @@ class SessionState(BaseModel):
             findings=self.findings,
             semantic_dedup_threshold=self.semantic_dedup_threshold,
         )
+        self._vulnerabilities._finding_ids_cache = self._finding_ids_cache
         self._recon = ReconState(
             recon_data=self.recon_data,
             recon_dimensions_completed=self.recon_dimensions_completed,

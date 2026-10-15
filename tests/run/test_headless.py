@@ -14,7 +14,7 @@ from vulnclaw.headless import (
     FindingClassification,
     ScanProfile,
     build_run_summary,
-    classify_findings,
+    classify_report_findings,
     determine_exit_code,
     effective_scope_mode,
     resolve_scan_profile,
@@ -22,22 +22,6 @@ from vulnclaw.headless import (
     scan_mode_profile,
     write_run_artifacts,
 )
-
-
-class _Finding:
-    """Minimal stand-in for VulnerabilityFinding for exit-code classification."""
-
-    def __init__(self, verified: bool = False, verification_status: str = "pending"):
-        self.verified = verified
-        self.verification_status = verification_status
-
-
-class _Session:
-    def __init__(self, findings):
-        self.findings = findings
-
-
-# ── Scan-mode presets ───────────────────────────────────────────────
 
 
 class TestScanModePresets:
@@ -88,20 +72,19 @@ class TestScanModePresets:
 
 
 class TestClassifyFindings:
-    def test_counts_verified_and_candidates(self):
-        session = _Session(
-            [
-                _Finding(verified=True),
-                _Finding(verified=False),
-                _Finding(verified=False, verification_status="rejected"),
-            ]
-        )
-        c = classify_findings(session)
+    def test_counts_current_verified_and_suspected_findings(self):
+        c = classify_report_findings({
+            "verified": [{"title": "Controlled result"}],
+            "findings": [
+                {"assessment": {"outcome": outcome}}
+                for outcome in ("verified", "suspected_high", "suspected_low", "rejected")
+            ],
+        })
         assert c.verified == 1
-        assert c.candidates == 1  # rejected false-positive excluded
+        assert c.candidates == 2
 
-    def test_empty_session(self):
-        c = classify_findings(_Session([]))
+    def test_empty_report(self):
+        c = classify_report_findings({"verified": [], "findings": []})
         assert not c.has_verified and not c.has_candidates
 
 

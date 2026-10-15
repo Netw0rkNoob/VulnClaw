@@ -17,6 +17,7 @@ from vulnclaw.agent.agent_state import (
 )
 from vulnclaw.agent.parallel_agents import merge_session_state
 from vulnclaw.agent.subagent.models import get_subagent_context
+from vulnclaw.findings.types import replace_snapshot_refs
 
 
 @dataclass(frozen=True)
@@ -413,6 +414,13 @@ class EvidenceCommitter:
             max_records=self.max_records,
             baseline_fingerprints=baseline_fingerprints,
         )
+        for finding in parent_session.findings:
+            refs = []
+            for ref in finding.evidence_snapshots:
+                mapped = next((record.id for record in parent_session.agent_state.evidence
+                               if record.fingerprint == ref.fingerprint), None)
+                refs.append(ref.model_copy(update={"evidence_id": mapped or ref.evidence_id}))
+            replace_snapshot_refs(finding, refs)
         new_ids = sorted(set(id_map.values()))
         for parent_id in new_ids:
             child_ids = sorted(

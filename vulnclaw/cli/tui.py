@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -1461,7 +1462,7 @@ def _cmd_report(session: dict[str, Any], args: str) -> None:
         return
 
     from vulnclaw.cli.main import _generate_report_for_target
-    report_path = _generate_report_for_target(target)
+    report_path = asyncio.run(_generate_report_for_target(target))
     _set_prompt_message(session, f"{_('tui.report_generated')}: {report_path}")
 
 
@@ -2237,7 +2238,6 @@ def _render_config_summary(screen: Console, config) -> None:
     session.add_row("Engine", config.session.engine)
     session.add_row("Max rounds", str(config.session.max_rounds))
     session.add_row("Report format", config.session.report_format)
-    session.add_row("PoC language", config.session.poc_language)
     session.add_row("Language", config.session.language)
     session.add_row("Show thinking", "yes" if config.session.show_thinking else "no")
     session.add_row("Persistent cycles", str(config.session.persistent_max_cycles))
@@ -2342,9 +2342,6 @@ def _edit_session_config(screen: Console, config):
     config.session.auto_save = _prompt_bool_value(screen, "Auto save", config.session.auto_save)
     config.session.report_format = _prompt_choice_value(
         screen, "Report format", ["markdown", "html"], config.session.report_format
-    )
-    config.session.poc_language = _prompt_choice_value(
-        screen, "PoC language", ["python", "bash"], config.session.poc_language
     )
     config.session.engine = _prompt_choice_value(
         screen, "Autonomous engine", list(ENGINE_CHOICES), config.session.engine

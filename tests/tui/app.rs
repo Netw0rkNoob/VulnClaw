@@ -449,6 +449,71 @@ fn task_requires_a_target() {
 }
 
 #[test]
+fn completion_shows_report_paths_or_export_error_and_keeps_completed_receipt() {
+    let report = serde_json::json!({
+        "path": "/tmp/run/reports/report.md",
+        "findings_json": "/tmp/run/reports/report.artifacts/findings/findings.json",
+        "findings_sarif": "/tmp/run/reports/report.artifacts/findings/findings.sarif",
+    });
+    for result in [
+        serde_json::json!({"report": report, "report_error": null}),
+        serde_json::json!({"report": null, "report_error": "Disk full"}),
+        serde_json::json!({}),
+    ] {
+        let mut harness = AppHarness::connected();
+        let (request_id, task_id) = start_task(&mut harness, "report.test");
+        harness
+            .app
+            .apply_event(vulnclaw_tui::protocol::AppEvent::backend(
+                vulnclaw_tui::protocol::BackendEvent::TaskCompleted {
+                    request_id,
+                    task_id,
+                    result: result.clone(),
+                    findings: vec![],
+                    state: vulnclaw_tui::protocol::StateSnapshot {
+                        target: "report.test".into(),
+                        last_run: Some(result.clone()),
+                        ..Default::default()
+                    },
+                },
+            ));
+        assert!(!harness.app.worker_active);
+        assert_eq!(
+            harness.app.last_receipt.as_ref().unwrap().phase,
+            "Completed"
+        );
+        assert_eq!(harness.app.last_run.as_ref(), Some(&result));
+        let output = harness
+            .app
+            .transcript
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(report) = result.get("report").filter(|value| value.is_object()) {
+            for key in ["path", "findings_json", "findings_sarif"] {
+                assert!(output.contains(report[key].as_str().unwrap()));
+            }
+            for label in ["Report: ", "Findings JSON: ", "SARIF: "] {
+                assert!(
+                    harness
+                        .app
+                        .transcript
+                        .iter()
+                        .any(|item| item.text.starts_with(label)),
+                    "{label} must have its own transcript row"
+                );
+            }
+        }
+        if result["report_error"].is_string() {
+            assert!(output.contains("Task completed, but report export failed: Disk full"));
+        } else {
+            assert!(!output.contains("report export failed"));
+        }
+    }
+}
+
+#[test]
 fn task_command_is_only_a_presentation_adapter_for_the_structured_dto() {
     let task = parse_task_payload(
         "/scan https://app.test/admin --ports 80,443 --only-port 443 --no-resume",

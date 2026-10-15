@@ -55,43 +55,35 @@ def test_config_defaults_expose_plugin_runtime_and_budget_fields():
     assert config.plugin_max_requests_per_target == 30
 
 
-def test_plugin_finding_converts_to_vuln_finding():
-    from vulnclaw.plugins.integration import plugin_finding_to_vuln_finding
-    from vulnclaw.plugins.result import PluginFinding, RiskLevel
-
-    pf = PluginFinding(
-        title="Missing security headers",
-        risk=RiskLevel.HIGH,
-        vuln_type="security_headers",
-        description="缺少安全响应头",
-        evidence={"missing": ["x-frame-options"]},
-        remediation="补齐响应头",
-        confidence=0.9,
-    )
-    vuln = plugin_finding_to_vuln_finding(pf, plugin_id="builtin.web.headers")
-
-    assert vuln.severity == "High"
-    assert vuln.vuln_type == "security_headers"
-    assert "builtin.web.headers" in vuln.description
-    assert "x-frame-options" in vuln.evidence
-    assert vuln.evidence_level == "L2"
-
-
-def test_merge_plugin_results_dedups_into_session():
+def test_plugin_observations_retain_sources_without_registering_candidates():
     from vulnclaw.agent.context import SessionState
-    from vulnclaw.plugins.integration import merge_plugin_results_into_session
+    from vulnclaw.plugins.integration import record_plugin_result
     from vulnclaw.plugins.result import PluginFinding, PluginResult, RiskLevel
 
     finding = PluginFinding(title="Weak CSP", risk=RiskLevel.LOW, vuln_type="security_headers")
     result = PluginResult(plugin_id="builtin.web.headers", findings=[finding])
+    session = SessionState(target="https://example.com")
+    context = PluginContext(target=session.target, options={"headers": {"server": "nginx"}})
+    first = record_plugin_result(session, result, context)
+    second = record_plugin_result(session, result, context)
+    assert first != second
+    assert session.findings == []
+    assert len(session.agent_state.evidence) == 2
+    assert session.agent_state.evidence[1].duplicate_of == first
+    assert session.agent_state.evidence[0].arguments["options"] == context.options
 
-    session = SessionState(target="t.com")
-    added_first = merge_plugin_results_into_session(session, result)
-    added_again = merge_plugin_results_into_session(session, result)
 
-    assert added_first == 1
-    assert added_again == 0  # 去重：相同 finding 不重复计入
-    assert len(session.findings) == 1
+def test_plugin_observations_cannot_be_attached_to_another_target():
+    import pytest
+
+    from vulnclaw.agent.context import SessionState
+    from vulnclaw.plugins.integration import record_plugin_result
+
+    session = SessionState(target="https://one.test")
+    with pytest.raises(ValueError, match="another session target"):
+        record_plugin_result(session, PluginResult(plugin_id="test"),
+                             PluginContext(target="https://two.test"))
+    assert session.agent_state.evidence == []
 
 
 async def test_disabled_runtime_does_not_execute_plugin():

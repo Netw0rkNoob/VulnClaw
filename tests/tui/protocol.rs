@@ -112,6 +112,43 @@ fn completion_deserializes_authoritative_findings() {
 }
 
 #[test]
+fn report_completion_fields_follow_the_shared_schema() {
+    let report = serde_json::json!({
+        "path": "/tmp/report.md",
+        "findings_json": "/tmp/report.artifacts/findings/findings.json",
+        "findings_sarif": "/tmp/report.artifacts/findings/findings.sarif",
+    });
+    for result in [
+        serde_json::json!({"report": report.clone(), "report_error": null}),
+        serde_json::json!({"report": null, "report_error": "Disk full"}),
+        serde_json::json!({}),
+    ] {
+        let line = serde_json::json!({
+            "protocol_version": 1, "type": "task_completed",
+            "request_id": "r1", "task_id": "t1", "result": result,
+            "findings": [], "state": complete_state(),
+        })
+        .to_string();
+        assert!(matches!(
+            parse_backend_line(&line).unwrap(),
+            BackendEvent::TaskCompleted { .. }
+        ));
+    }
+    for missing in ["path", "findings_json", "findings_sarif"] {
+        let mut incomplete = report.clone();
+        incomplete.as_object_mut().unwrap().remove(missing);
+        let line = serde_json::json!({
+            "protocol_version": 1, "type": "task_completed",
+            "request_id": "r1", "task_id": "t1",
+            "result": {"report": incomplete},
+            "findings": [], "state": complete_state(),
+        })
+        .to_string();
+        assert!(parse_backend_line(&line).is_err());
+    }
+}
+
+#[test]
 fn rejects_every_missing_authoritative_state_field() {
     for field in [
         "target",

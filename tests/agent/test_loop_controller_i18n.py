@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from vulnclaw.agent import loop_controller
@@ -50,7 +52,7 @@ async def test_persistent_pentest_localizes_cycle_narration_and_report_errors(
     monkeypatch.setattr(agent, "auto_pentest", fake_auto_pentest)
     monkeypatch.setattr(agent, "_generate_attack_summary", fake_summary)
     monkeypatch.setattr(
-        "vulnclaw.report.generator.generate_persistent_cycle_report", fail_report
+        "vulnclaw.report.generator.generate_persistent_cycle_report", AsyncMock(side_effect=fail_report)
     )
 
     i18n_language("en")

@@ -171,6 +171,7 @@ class EvidenceRecord(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
+    target: str = ""
     tool: str = ""
     arguments: dict[str, Any] = Field(default_factory=dict)
     key_args: str = ""
@@ -408,11 +409,13 @@ class AgentState(BaseModel):
         arguments: dict[str, Any] | None,
         output: Any,
         status: int = 0,
+        target: str = "",
         preview_chars: int = DEFAULT_EVIDENCE_PREVIEW_CHARS,
     ) -> EvidenceRecord:
         raw = str(output or "")
         args = dict(arguments or {})
-        key_args = json.dumps(args, ensure_ascii=False, sort_keys=True)[:500]
+        serialized_args = json.dumps(args, ensure_ascii=False, sort_keys=True)
+        key_args = serialized_args[:500]
         content_hash = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:24]
         duplicate_of = ""
         for item in self.evidence:
@@ -420,7 +423,7 @@ class AgentState(BaseModel):
                 duplicate_of = item.id
                 break
         digest = hashlib.sha256(
-            f"{tool}\0{key_args}\0{raw}".encode("utf-8", errors="replace")
+            f"{tool}\0{serialized_args}\0{raw}".encode("utf-8", errors="replace")
         ).hexdigest()[:24]
         self.evidence_seq += 1
         if duplicate_of:
@@ -434,6 +437,7 @@ class AgentState(BaseModel):
             preview = make_evidence_preview(raw, preview_chars)
         record = EvidenceRecord(
             id=f"e{self.evidence_seq:03d}",
+            target=target,
             tool=tool,
             arguments=args,
             key_args=key_args,

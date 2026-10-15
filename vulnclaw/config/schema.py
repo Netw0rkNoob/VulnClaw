@@ -405,7 +405,6 @@ class SessionConfig(BaseModel):
     report_format: str = Field(
         default="markdown", description="Default report format: markdown, html"
     )
-    poc_language: str = Field(default="python", description="Default PoC language: python, bash")
     max_rounds: int = Field(default=15, description="Max autonomous pentest rounds (1-100)")
     context_hot_max_messages: int = Field(
         default=48,
@@ -519,6 +518,10 @@ class SessionConfig(BaseModel):
         default=True,
         description="Print the generated solve replay report in the terminal after completion",
     )
+    poc_verify_enabled: bool = Field(
+        default=False,
+        description="Allow approved PoC execution during finding audits; otherwise review saved evidence",
+    )
     show_thinking: bool = Field(
         default=False, description="Show LLM thinking/reasoning output (default: off)"
     )
@@ -610,10 +613,6 @@ class SessionConfig(BaseModel):
     plugin_max_requests_per_target: int = Field(
         default=30, description="Max plugin requests per target"
     )
-    evidence_min_report_level: str = Field(
-        default="L4", description="Minimum evidence level for report inclusion"
-    )
-
 class VulnClawConfig(BaseModel):
     """Top-level VulnClaw configuration."""
 

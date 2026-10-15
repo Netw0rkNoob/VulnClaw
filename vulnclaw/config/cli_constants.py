@@ -301,6 +301,18 @@ COMMANDS: tuple[ManualTopic, ...] = (
         ),
     ),
     ManualTopic(
+        name="verify",
+        summary="Independently audit saved findings without generating a report.",
+        usage="vulnclaw verify SESSION_OR_TARGET [--target] [--poc-verify/--no-poc-verify]",
+        flags=(
+            ("SESSION_OR_TARGET", "Session JSON path, or a target name with --target."),
+            ("--target", "Audit the saved target state and append checkpoints."),
+            ("--poc-verify / --no-poc-verify", "Override the PoC audit default; execution requires approval."),
+        ),
+        notes=("Explicit audits reassess all findings. Session files are preserved; an audited copy is saved.",),
+        examples=("vulnclaw verify session.json", "vulnclaw verify https://example.com --target --poc-verify"),
+    ),
+    ManualTopic(
         name="report",
         summary="Generate a report from a saved session file or from target history.",
         usage="vulnclaw report SESSION_JSON [--target] [--pdf] [--pdf-out PATH]",

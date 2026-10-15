@@ -13,8 +13,9 @@ from typing import Any, Optional
 # 修改时间: 2026-07-08
 # 修改原因: 消除 V3 违规 — 叶子类型已移至 config/domain_models.py。
 from vulnclaw.agent.context import SessionState
-from vulnclaw.config.domain_models import PentestPhase
+from vulnclaw.config.domain_models import PentestPhase, VulnerabilityFinding
 from vulnclaw.config.settings import TARGETS_DIR, ensure_dirs
+from vulnclaw.findings.evidence import merge_finding_evidence, restore_latest_verdict
 from vulnclaw.run_context import RunContext, atomic_write_json
 from vulnclaw.target_state.planner import (
     build_resume_plan,
@@ -165,6 +166,19 @@ def _unique_paths(paths: list[Path | None]) -> list[Path | None]:
     return unique
 
 
+def target_state_path(
+    target: str,
+    snapshot_id: Optional[str] = None,
+    *,
+    run_context: RunContext | None = None,
+    target_model: Target | None = None,
+) -> Path | None:
+    """Resolve the existing source used by target-state loading."""
+    return next((path for path in _candidate_state_paths(
+        target, snapshot_id=snapshot_id, run_context=run_context, target_model=target_model,
+    ) if path is not None and path.exists()), None)
+
+
 def load_target_state(
     target: str,
     snapshot_id: Optional[str] = None,
@@ -184,8 +198,58 @@ def load_target_state(
         raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
             raw.setdefault("schema_version", TARGET_STATE_SCHEMA_VERSION)
+            _normalize_structured_state(raw)
             return raw
     return None
+
+
+def _normalize_structured_state(raw: dict[str, Any]) -> None:
+    """Restore current audits and identities in memory; preserve historical files."""
+    findings = raw.get("findings", [])
+    for index, finding in enumerate(findings):
+        if not finding.get("submission_id") and (
+            finding.get("assessment") or finding.get("report_assessment")
+            or finding.get("verification_history")
+        ):
+            model = VulnerabilityFinding.model_validate(finding)
+            restore_latest_verdict(model)
+            findings[index] = model.model_dump(mode="json")
+    structured = [finding for finding in findings if finding.get("submission_id")]
+    if not structured:
+        return
+    normalized = [VulnerabilityFinding.model_validate(f).model_dump(mode="json") for f in structured]
+    identities = {_finding_key(old): new["finding_id"] for old, new in zip(structured, normalized)}
+    merged = {f["finding_id"]: f for f in _merge_findings([], normalized)}
+    result = []
+    for finding in findings:
+        if not finding.get("submission_id"):
+            result.append(finding)
+        elif (kept := merged.pop(identities[_finding_key(finding)], None)) is not None:
+            result.append(kept)
+    raw["findings"] = result
+    if "finding_meta" not in raw:
+        return
+    metadata = {}
+    for old_id, entry in raw["finding_meta"].items():
+        key = identities.get(old_id, old_id)
+        if key not in metadata:
+            metadata[key] = dict(entry)
+            continue
+        previous = metadata[key]
+        combined = {**entry, **previous}
+        combined["observation_count"] = (
+            int(previous.get("observation_count", 0)) + int(entry.get("observation_count", 0))
+        )
+        for name, select in (("first_seen_at", min), ("last_seen_at", max), ("last_verified_at", max)):
+            times = [item[name] for item in (previous, entry) if item.get(name)]
+            if times:
+                combined[name] = select(times)
+        metadata[key] = combined
+    for finding in normalized:
+        key = finding["finding_id"]
+        if key in metadata:
+            metadata[key]["confidence"] = compute_finding_confidence(metadata[key])
+    raw["finding_meta"] = metadata
 
 
 def save_target_state(
@@ -839,6 +903,8 @@ def _merge_findings(
 ) -> list[dict[str, Any]]:
     by_key: dict[str, dict[str, Any]] = {}
     for finding in existing + current:
+        if finding.get("submission_id"):
+            finding = {**finding, **VulnerabilityFinding.model_validate(finding).model_dump(mode="json")}
         key = (
             finding.get("finding_id")
             or f"{finding.get('title', '')}::{finding.get('vuln_type', '')}"
@@ -851,10 +917,38 @@ def _merge_findings(
         prev_status = prev.get("verification_status", "pending")
         new_status = finding.get("verification_status", "pending")
         if prev_status != "verified" and new_status == "verified":
-            by_key[key] = finding
+            by_key[key] = _merge_finding_evidence(finding, prev)
         elif prev_status == "pending" and new_status == "rejected":
-            by_key[key] = finding
+            by_key[key] = _merge_finding_evidence(finding, prev)
+        else:
+            # Same identity, no status promotion: keep the previous record but
+            # absorb the evidence/history the current session appended since
+            # the last save — a structured submission extends snapshots in place.
+            by_key[key] = _merge_finding_evidence(prev, finding)
+    # Restore the latest audit of the merged inputs, invalidating stale conclusions.
+    for key, finding in by_key.items():
+        if finding.get("verification_history") or finding.get("assessment") or finding.get("report_assessment"):
+            model = VulnerabilityFinding.model_validate(finding)
+            restore_latest_verdict(model)
+            by_key[key] = model.model_dump(mode="json")
     return list(by_key.values())
+
+
+def _merge_finding_evidence(base: dict[str, Any], other: dict[str, Any]) -> dict[str, Any]:
+    """Union the evidence/history fields of two finding records sharing one identity.
+
+    Raw-dict counterpart of ``findings.evidence.merge_finding_evidence`` for the
+    persistence merge. The kept record absorbs the dropped record's snapshots
+    (deduped by snapshot hash with unique reference IDs), refs, free-text
+    evidence listing and verification history.
+    """
+    kept = VulnerabilityFinding.model_validate(base)
+    merge_finding_evidence(kept, VulnerabilityFinding.model_validate(other))
+    fields = {
+        "evidence_snapshots", "evidence_refs", "evidence", "verification_history",
+        "assessment", "submission_id",
+    }
+    return {**base, **kept.model_dump(mode="json", include=fields)}
 
 
 def _finding_key(finding: dict[str, Any]) -> str:

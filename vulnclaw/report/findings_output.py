@@ -8,14 +8,10 @@ Every run emits two machine-consumable artifacts alongside the human report:
 - ``findings.sarif`` — only the **verified** findings (the report inclusion gate),
   shaped for GitHub code-scanning and other SARIF 2.1.0 consumers.
 
-The inclusion gate is a single predicate — ``verification_status == "verified"`` —
-covering both verification paths (PoC execution in ``verifier.py`` and manual
-``confirmed_facts`` elevation in ``finding_parser.py``). The verified set is
-deduplicated with the same ``deduplicate_report_findings`` the Markdown/PDF report
-uses, so the three outputs never diverge.
+Only findings independently assessed as verified by a current, saved PoC audit are
+included. Saved historical flags never bypass current finding assessment.
 
-The SARIF emitter is stdlib-only (``json``) — no third-party SARIF library. See
-``docs/research/findings-sarif-mapping.md`` for the finding→SARIF mapping.
+The SARIF emitter uses stdlib ``json``; the mapping is defined in this module.
 """
 
 from __future__ import annotations
@@ -30,7 +26,7 @@ from vulnclaw.agent.context import SessionState, VulnerabilityFinding
 
 SARIF_SCHEMA_URI = "https://json.schemastore.org/sarif-2.1.0.json"
 SARIF_VERSION = "2.1.0"
-FINDINGS_SCHEMA_VERSION = "1.0"
+FINDINGS_SCHEMA_VERSION = "1.2"
 TOOL_NAME = "VulnClaw"
 TOOL_URI = "https://github.com/JMAN730/VulnClaw"
 # Stable (non-random) GUID for the CWE taxonomy component.
@@ -58,19 +54,22 @@ _LIFECYCLE_BUCKETS = (
 
 
 def is_report_included(finding: VulnerabilityFinding) -> bool:
-    """The single inclusion gate for report / SARIF / ``findings.json`` verified set.
+    """Include only conclusive current PoC assessments."""
+    from vulnclaw.findings.types import finding_input_digest
 
-    A finding is included iff it reached ``verified`` state via *any* path — PoC
-    execution (``verifier.py``) or manual confirmation (``finding_parser`` +
-    ``mark_verified``). Pending / candidate / rejected findings never pass.
-    """
-    return finding.verification_status == "verified"
+    assessment = finding.assessment
+    return bool(assessment and assessment.input_digest == finding_input_digest(finding)
+                and assessment.complete and assessment.method == "poc"
+                and assessment.outcome == "verified" and finding.verified)
+
 
 
 def _verified_set(session: SessionState) -> list[VulnerabilityFinding]:
     """Deduplicated verified findings — the shared feed for report/SARIF/json."""
+    from vulnclaw.findings.types import require_assessed
     from vulnclaw.report.filter import deduplicate_report_findings
 
+    require_assessed(session)
     verified = [f for f in session.findings if is_report_included(f)]
     return deduplicate_report_findings(verified)
 
@@ -116,7 +115,9 @@ def build_findings_document(
     # than len(verified), breaking consumers that trust the totals.
     lifecycle = _lifecycle_counts(all_findings)
     lifecycle["verified"] = len(verified)
-    summary = {"total": len(all_findings), **lifecycle}
+    summary = {"total": len(all_findings), **lifecycle,
+               **{outcome: sum(f.assessment.outcome == outcome for f in all_findings)
+                  for outcome in ("rejected", "suspected_high", "suspected_low")}}
 
     return {
         "schema_version": FINDINGS_SCHEMA_VERSION,
@@ -282,6 +283,12 @@ def to_sarif(
 ) -> dict[str, Any]:
     """Render verified findings into a SARIF 2.1.0 log (stdlib-only, no external lib)."""
     from vulnclaw import __version__
+    from vulnclaw.findings.types import finding_input_digest
+
+    if any(f.assessment is None or f.assessment.input_digest != finding_input_digest(f)
+           for f in findings):
+        raise ValueError("SARIF requires an independent assessment for every finding")
+    findings = [f for f in findings if is_report_included(f)]
 
     version = version or __version__
 
