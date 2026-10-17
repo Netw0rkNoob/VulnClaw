@@ -874,7 +874,7 @@ class TestPoCBuilder:
         assert "CVE-2026-12345" in content
         assert "python3" in content
         assert "sql_injection" in content
-        assert "requests.get(target, params=params" in content
+        assert "httpx.get(target, params=params" in content
         assert "http://192.168.1.100/login?id=1" in content
         assert "[CONFIRMED] SQL注入漏洞" in content
 

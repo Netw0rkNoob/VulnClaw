@@ -65,13 +65,13 @@ class _FakeResp:
         self.headers = headers or {}
 
 
-def _fake_requests(handler):
-    module = types.ModuleType("requests")
+def _fake_http_client(handler, module_name: str):
+    module = types.ModuleType(module_name)
 
-    class Timeout(Exception):
+    class TimeoutException(Exception):
         ...
 
-    module.Timeout = Timeout
+    module.TimeoutException = TimeoutException
     state = {"n": 0}
 
     def get(url, params=None, timeout=None, verify=None):
@@ -83,9 +83,14 @@ def _fake_requests(handler):
 
 
 def _run(poc, handler):
-    """Execute a generated PoC with `requests` stubbed, returning stdout."""
-    original = sys.modules.get("requests")
-    sys.modules["requests"] = _fake_requests(handler)
+    """Execute a generated PoC with its HTTP client stubbed, returning stdout.
+
+    The templates were migrated from ``requests`` to ``httpx`` (a declared
+    dependency); stub whichever one the template imports.
+    """
+    stub_name = "httpx" if "import httpx" in poc else "requests"
+    original = sys.modules.get(stub_name)
+    sys.modules[stub_name] = _fake_http_client(handler, stub_name)
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
@@ -93,9 +98,9 @@ def _run(poc, handler):
                 exec(compile(poc, "poc.py", "exec"), {"__name__": "__main__"})
     finally:
         if original is not None:
-            sys.modules["requests"] = original
+            sys.modules[stub_name] = original
         else:
-            sys.modules.pop("requests", None)
+            sys.modules.pop(stub_name, None)
     return buf.getvalue()
 
 
