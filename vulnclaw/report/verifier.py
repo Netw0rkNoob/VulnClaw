@@ -103,7 +103,7 @@ class PoCGenerator:
     # f-string 打印字面量 ``{var}`` 文本而非插值结果。
     POC_TEMPLATES: dict[str, str] = {
         "sql_injection": """
-import requests
+import httpx
 
 target = "{target}"
 params = {
@@ -111,7 +111,7 @@ params = {
 }
 
 try:
-    r = requests.get(target, params=params, timeout=10, verify=False)
+    r = httpx.get(target, params=params, timeout=10, verify=False)
     text = r.text.lower()
 
     # SQL 错误特征
@@ -133,19 +133,19 @@ try:
         print(f"[POSSIBLE] 响应长度异常: {len(r.content)} vs baseline {baseline_len}")
 
     print("[REJECTED] 未检测到SQL注入特征")
-except requests.Timeout:
+except httpx.TimeoutException:
     print("[REJECTED] 请求超时")
 except Exception as e:
     print(f"[ERROR] {e}")
 """,
         "xss": """
-import requests
+import httpx
 
 target = "{target}"
 payload = "{payload}"
 
 try:
-    r = requests.get(target, params={"q": payload}, timeout=10, verify=False)
+    r = httpx.get(target, params={"q": payload}, timeout=10, verify=False)
 
     if payload in r.text:
         print("[CONFIRMED] XSS漏洞: payload出现在响应中")
@@ -157,7 +157,7 @@ except Exception as e:
     print(f"[ERROR] {e}")
 """,
         "command_injection": """
-import requests
+import httpx
 
 target = "{target}"
 params = {
@@ -165,7 +165,7 @@ params = {
 }
 
 try:
-    r = requests.get(target, params=params, timeout=10, verify=False)
+    r = httpx.get(target, params=params, timeout=10, verify=False)
     text = r.text
 
     # 命令注入特征
@@ -181,17 +181,17 @@ except Exception as e:
     print(f"[ERROR] {e}")
 """,
         "debug_mode": """
-import requests
+import httpx
 
 target = "{target}"
 
 try:
     # 正常请求
-    r_normal = requests.get(target, timeout=10, verify=False)
+    r_normal = httpx.get(target, timeout=10, verify=False)
     len_normal = len(r_normal.content)
 
     # 调试模式请求
-    r_debug = requests.get(target + "/?debug=1", timeout=10, verify=False)
+    r_debug = httpx.get(target + "/?debug=1", timeout=10, verify=False)
     len_debug = len(r_debug.content)
 
     print(f"[INFO] 正常响应长度: {len_normal}")
@@ -224,13 +224,13 @@ except Exception as e:
     print(f"[ERROR] {e}")
 """,
         "lfi": """
-import requests
+import httpx
 
 target = "{target}"
 payload = "{payload}"
 
 try:
-    r = requests.get(target, params={"file": payload}, timeout=10, verify=False)
+    r = httpx.get(target, params={"file": payload}, timeout=10, verify=False)
     text = r.text.lower()
 
     # LFI 特征
@@ -246,13 +246,13 @@ except Exception as e:
     print(f"[ERROR] {e}")
 """,
         "sensitive_file": """
-import requests
+import httpx
 
 target = "{target}"
 path = "{path}"
 
 try:
-    r = requests.get(target + path, timeout=10, verify=False)
+    r = httpx.get(target + path, timeout=10, verify=False)
 
     if r.status_code == 200 and len(r.content) > 10:
         print(f"[CONFIRMED] 敏感文件可访问: {path}")
@@ -269,12 +269,12 @@ except Exception as e:
     print(f"[ERROR] {e}")
 """,
         "info_disclosure": """
-import requests
+import httpx
 
 target = "{target}"
 
 try:
-    r = requests.get(target, timeout=10, verify=False)
+    r = httpx.get(target, timeout=10, verify=False)
     headers = {k.lower(): v.lower() for k, v in r.headers.items()}
 
     # 检查敏感 header
@@ -348,7 +348,7 @@ except Exception as e:
         ``[CONFIRMED]`` / ``[POSSIBLE]`` / ``[REJECTED]`` 标记。
         """
         return """
-import requests
+import httpx
 
 target = "{target}"
 payload = "{payload}"
@@ -365,7 +365,7 @@ SIGNATURES = [
 
 
 def fetch(params=None):
-    return requests.get(target, params=params, timeout=10, verify=False)
+    return httpx.get(target, params=params, timeout=10, verify=False)
 
 
 try:
@@ -404,7 +404,7 @@ try:
     if not confirmed:
         print("[REJECTED] 通用验证未检测到明确的漏洞特征")
 
-except requests.Timeout:
+except httpx.TimeoutException:
     print("[REJECTED] 请求超时")
 except Exception as e:
     print(f"[ERROR] {e}")
