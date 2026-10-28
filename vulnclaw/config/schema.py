@@ -26,6 +26,7 @@ class LLMProvider(str, Enum):
     STEPFUN = "stepfun"
     SENSETIME = "sensetime"
     OPENROUTER = "openrouter"
+    CHEAPERINFERENCE = "cheaperinference"
     OLLAMA = "ollama"
     CUSTOM = "custom"
 
@@ -118,6 +119,15 @@ PROVIDER_PRESETS: dict[LLMProvider, dict[str, str]] = {
         "label": "OpenRouter",
         "website_url": "https://openrouter.ai/",
     },
+    # OpenAI-compatible gateway to models from several labs. Model IDs are bare
+    # (gpt-5.4-mini, claude-sonnet-5, ...). Pick a tool-capable model — VulnClaw
+    # drives everything through function calls.
+    LLMProvider.CHEAPERINFERENCE: {
+        "base_url": "https://api.cheaperinference.com/v1",
+        "default_model": "gpt-5.4-mini",
+        "label": "Cheaper Inference",
+        "website_url": "https://cheaperinference.com/",
+    },
     # Local models via Ollama's OpenAI-compatible endpoint. No API key is
     # required (the client sends a placeholder). The default model must support
     # tool calling — VulnClaw drives everything through function calls — so pick
@@ -143,7 +153,7 @@ class LLMConfig(BaseModel):
 
     provider: str = Field(
         default="openai",
-        description="LLM provider name (openai/anthropic/minimax/deepseek/zhipu/moonshot/qwen/siliconflow/doubao/stepfun/sensetime/openrouter/ollama/custom)",
+        description="LLM provider name (openai/anthropic/minimax/deepseek/zhipu/moonshot/qwen/siliconflow/doubao/stepfun/sensetime/openrouter/cheaperinference/ollama/custom)",
     )
     api_key: str = Field(default="", description="Static API key for the chosen provider (auth_mode=static)")
     api_keys: list[str] = Field(

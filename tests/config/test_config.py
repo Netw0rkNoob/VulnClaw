@@ -286,6 +286,7 @@ class TestVulnClawConfig:
             "qwen",
             "siliconflow",
             "openrouter",
+            "cheaperinference",
         ]
         for provider in expected_providers:
             assert provider in PROVIDER_PRESETS, f"Missing provider: {provider}"
@@ -301,6 +302,17 @@ class TestVulnClawConfig:
         assert preset["base_url"] == "https://openrouter.ai/api/v1"
         assert preset["default_model"] == "anthropic/claude-opus-5"
         assert preset["label"] == "OpenRouter"
+
+    def test_cheaperinference_preset_uses_bare_default_model(self):
+        """Cheaper Inference is an OpenAI-compatible gateway with bare model IDs.
+        No provider specific code path is needed beyond the preset."""
+        from vulnclaw.config.schema import PROVIDER_PRESETS, LLMProvider
+
+        assert LLMProvider("cheaperinference") is LLMProvider.CHEAPERINFERENCE
+        preset = PROVIDER_PRESETS[LLMProvider.CHEAPERINFERENCE]
+        assert preset["base_url"] == "https://api.cheaperinference.com/v1"
+        assert preset["default_model"] == "gpt-5.4-mini"
+        assert preset["label"] == "Cheaper Inference"
 
     def test_ollama_preset_points_at_local_openai_endpoint(self):
         """Ollama is a first-class preset so it appears in `vulnclaw config`

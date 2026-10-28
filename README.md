@@ -65,7 +65,7 @@ VulnClaw 自动执行：
 - **轻量纠偏层** — 工具调用前后记录重复调用、失败降级、耗时和新发现等信号；重复读取同一 evidence 范围会被抑制，连续证据空转会触发 stall guard，但不恢复旧阶段规划器
 - **证据级反幻觉闸门** — 声称的 flag/结论必须在真实工具输出里逐字符出现才被采信，杜绝凭空编造 flag 的假胜利
 - **自然语言驱动** — 用人话描述渗透意图，自动识别阶段和工具
-- **13 个 LLM Provider** — OpenAI / Anthropic / MiniMax / DeepSeek / 智谱 / Moonshot / 千问 / SiliconFlow / 豆包 / 阶跃星辰 / 商汤 / OpenRouter / 本地 Ollama，一键切换
+- **14 个 LLM Provider** — OpenAI / Anthropic / MiniMax / DeepSeek / 智谱 / Moonshot / 千问 / SiliconFlow / 豆包 / 阶跃星辰 / 商汤 / OpenRouter / Cheaper Inference / 本地 Ollama，一键切换
 - **MCP 工具链** — 4 个 MCP 服务：`fetch` / `memory` 本地实现开箱即用，`chrome-devtools` / `burp` 对接外部 MCP 服务实现浏览器自动化和 HTTP 抓包重放
 - **增强 fetch 请求工具** — 默认直接 GET 并返回完整响应 body，支持 HTTP/HTTPS、自定义 method/headers/params/cookies/body/data/form/json、timeout/redirect/TLS 控制；CTF/靶场 HTTPS 默认不校验证书
 - **原生流量证据存储** — 按运行内作用域过滤后以追加式 JSONL 索引 + 每请求原始报文落盘于 `evidence/traffic/`，内置 `traffic_list` / `traffic_view` / `traffic_repeat` / `traffic_sitemap` 工具直接读写
@@ -590,6 +590,7 @@ vulnclaw config provider minimax   # 一键切换
 | 阶跃星辰 | `provider stepfun` | step-3.7-flash |
 | 商汤 | `provider sensetime` | SenseNova-V6.5-Pro |
 | OpenRouter | `provider openrouter` | anthropic/claude-opus-5 |
+| Cheaper Inference | `provider cheaperinference` | gpt-5.4-mini |
 | Ollama (本地) | `provider ollama` | qwen3.5:9b |
 | 自定义 | `provider custom` | 手动填写 |
 
