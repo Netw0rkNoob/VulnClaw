@@ -153,6 +153,24 @@ ALLOWED_SPAWN_SITES: dict[str, str] = {
     "vulnclaw/agent/network_scan.py:472:subprocess.run": (
         "fixed local IPv4-interface diagnostic"
     ),
+    "vulnclaw/agent/builtin_tools.py:1624:subprocess.run": (
+        "Windows fallback where.exe nmap lookup: fixed argv, no shell, no user input"
+    ),
+    "vulnclaw/agent/builtin_tools.py:1703:subprocess.run": (
+        "model-reachable nmap scan (ExecutionGate): fixed nmap argv + target host, 120s, no shell"
+    ),
+    "vulnclaw/agent/builtin_tools.py:1711:subprocess.run": (
+        "nmap privilege-deescalation retry: non-privileged argv derived from gated cmd"
+    ),
+    "vulnclaw/agent/tool_catalog.py:545:subprocess.run": (
+        "operator control plane: dpkg -l host-toolchain discovery probe, fixed argv, 2s timeout"
+    ),
+    "vulnclaw/agent/tool_catalog.py:587:subprocess.run": (
+        "batch whatis description resolution: fixed argv, bounded timeout, static _TOOLS names"
+    ),
+    "vulnclaw/cli/main.py:2738:subprocess.run": (
+        "operator control plane: doctor node --version environment probe, fixed argv, 5s timeout"
+    ),
 }
 
 
