@@ -114,9 +114,9 @@ about_links = re.findall(r'href=["\']([^"\']*(?:about|me|contact)[^"\']*)["\']',
 
 ### 查询 crt.sh 子域名
 ```python
-import requests
+import httpx
 domain = "example.com"
-r = requests.get(f"https://crt.sh/?q=%.{domain}&output=json")
+r = httpx.get(f"https://crt.sh/?q=%.{domain}&output=json")
 if r.status_code == 200:
     for entry in r.json():
         print(entry['name_value'])
@@ -124,9 +124,9 @@ if r.status_code == 200:
 
 ### GitHub 用户信息
 ```python
-import requests
+import httpx
 username = "target_user"
-r = requests.get(f"https://api.github.com/users/{username}")
+r = httpx.get(f"https://api.github.com/users/{username}")
 if r.status_code == 200:
     data = r.json()
     print(f"Name: {data.get('name')}")
@@ -139,12 +139,12 @@ if r.status_code == 200:
 
 ### WAF 检测（响应特征法）
 ```python
-import requests
+import httpx
 url = "https://target.com"
 # 正常请求
-r1 = requests.get(url)
+r1 = httpx.get(url)
 # 触发 WAF 的请求（带攻击特征）
-r2 = requests.get(url + "/?id=1' OR 1=1--")
+r2 = httpx.get(url + "/?id=1' OR 1=1--")
 # 对比响应
 if r1.status_code != r2.status_code or len(r1.text) != len(r2.text):
     print("[!] 可能存在 WAF")
@@ -153,9 +153,9 @@ if r1.status_code != r2.status_code or len(r1.text) != len(r2.text):
 
 ### 旁站查询（同 IP 反查域名）
 ```python
-import requests
+import httpx
 ip = "1.2.3.4"
 # 使用 chinaz API 或其他反查接口
 # 也可以通过 crt.sh 查询同 IP 的证书
-r = requests.get(f"https://crt.sh/?q={ip}&output=json")
+r = httpx.get(f"https://crt.sh/?q={ip}&output=json")
 ```

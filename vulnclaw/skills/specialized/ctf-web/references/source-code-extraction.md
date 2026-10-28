@@ -13,8 +13,8 @@
 **适用**：`highlight_file()` / `show_source()` 展示源码的页面
 
 ```python
-import requests, re
-r = requests.get(url)
+import httpx, re
+r = httpx.get(url)
 # 去掉所有 HTML 标签，获取纯文本
 clean = re.sub(r'<[^>]+>', '', r.text)
 # 可选：去除多余空行
@@ -75,8 +75,8 @@ print(source)
 有些题目在 HTML 注释中放置源码或提示：
 
 ```python
-import requests, re
-r = requests.get(url)
+import httpx, re
+r = httpx.get(url)
 # 提取 HTML 注释内容
 comments = re.findall(r'<!--(.*?)-->', r.text, re.DOTALL)
 for c in comments:
@@ -90,8 +90,8 @@ for c in comments:
 有些题目在响应头中藏有提示：
 
 ```python
-import requests
-r = requests.get(url)
+import httpx
+r = httpx.get(url)
 print("Headers:", dict(r.headers))
 print("Cookies:", dict(r.cookies))
 ```

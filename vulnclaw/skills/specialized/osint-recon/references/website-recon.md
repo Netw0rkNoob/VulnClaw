@@ -22,10 +22,10 @@
 
 ### python_execute 架构探测
 ```python
-import requests
+import httpx
 
 url = "https://target.com"
-r = requests.get(url, timeout=10)
+r = httpx.get(url, timeout=10)
 
 # 1. 响应头分析
 headers = r.headers
@@ -80,10 +80,10 @@ if 'hugo' in html.lower():
 
 ### python_execute 指纹识别
 ```python
-import requests, re
+import httpx, re
 
 url = "https://target.com"
-r = requests.get(url, timeout=10)
+r = httpx.get(url, timeout=10)
 html = r.text
 
 # CMS 检测
@@ -133,12 +133,12 @@ print(f"JS 文件: {js_files[:10]}")
 
 ### python_execute WAF 检测
 ```python
-import requests
+import httpx
 
 url = "https://target.com"
 
 # 1. 正常请求
-r1 = requests.get(url)
+r1 = httpx.get(url)
 
 # 2. 触发 WAF 的请求
 waf_payloads = [
@@ -149,7 +149,7 @@ waf_payloads = [
 ]
 
 for payload in waf_payloads:
-    r2 = requests.get(url + payload, allow_redirects=False)
+    r2 = httpx.get(url + payload, follow_redirects=False)
     # 状态码变化
     if r2.status_code in [403, 406, 429, 501]:
         print(f"[!] WAF 检测: {payload} → {r2.status_code}")
@@ -198,7 +198,7 @@ for waf_name, sigs in waf_headers.items():
 
 ### python_execute 目录扫描
 ```python
-import requests
+import httpx
 
 target = "https://target.com"
 paths = [
@@ -210,7 +210,7 @@ paths = [
 
 for path in paths:
     try:
-        r = requests.get(target + path, timeout=5, allow_redirects=False)
+        r = httpx.get(target + path, timeout=5, follow_redirects=False)
         if r.status_code in [200, 301, 302, 401, 403]:
             print(f"[{r.status_code}] {path}")
     except:
@@ -234,23 +234,23 @@ for path in paths:
 
 ### Git 仓库泄露利用
 ```python
-import requests
+import httpx
 
 target = "https://target.com"
 
 # 1. 检查 .git/HEAD
-r = requests.get(f"{target}/.git/HEAD")
+r = httpx.get(f"{target}/.git/HEAD")
 if r.status_code == 200 and "ref:" in r.text:
     print("[!] Git 仓库泄露!")
     # 2. 尝试获取 ref
     ref_path = r.text.strip().split("ref: ")[1] if "ref: " in r.text else ""
     if ref_path:
-        r2 = requests.get(f"{target}/.git/{ref_path}")
+        r2 = httpx.get(f"{target}/.git/{ref_path}")
         if r2.status_code == 200:
             print(f"[+] Git ref: {r2.text.strip()}")
 
 # 3. 尝试获取 config
-r3 = requests.get(f"{target}/.git/config")
+r3 = httpx.get(f"{target}/.git/config")
 if r3.status_code == 200:
     print(f"[+] Git config:\n{r3.text}")
 ```
@@ -265,12 +265,12 @@ if r3.status_code == 200:
 
 ### python_execute 旁站查询
 ```python
-import requests, json
+import httpx, json
 
 ip = "1.2.3.4"
 
 # 方法1: crt.sh 查询同 IP 证书
-r = requests.get(f"https://crt.sh/?q={ip}&output=json", timeout=15)
+r = httpx.get(f"https://crt.sh/?q={ip}&output=json", timeout=15)
 if r.status_code == 200:
     domains = set()
     for entry in r.json():
@@ -286,7 +286,7 @@ if r.status_code == 200:
 
 ### python_execute C 段扫描
 ```python
-import requests, socket
+import httpx, socket
 from concurrent.futures import ThreadPoolExecutor
 
 # 从域名获取 IP

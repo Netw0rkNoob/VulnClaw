@@ -3,10 +3,10 @@
 ## CTFd API 基础
 
 ```python
-import requests
+import httpx
 
 CTFD_URL = "https://ctf.example.com"
-session = requests.Session()
+session = httpx.Client()
 
 def login(username, password):
     """登录 CTFd"""
@@ -61,7 +61,7 @@ def get_user_info():
 def detect_platform(url):
     """检测 CTF 平台类型"""
     # CTFd
-    r = requests.get(f"{url}/login")
+    r = httpx.get(f"{url}/login")
     if 'ctfd' in r.text.lower() or 'csrf_token' in r.text:
         return "CTFd"
 
@@ -116,7 +116,7 @@ def auto_solve(url, username, password, solve_func):
 
     solve_func(challenge_data) -> flag
     """
-    session = requests.Session()
+    session = httpx.Client()
     login(username, password)
 
     challenges = get_challenges()['data']

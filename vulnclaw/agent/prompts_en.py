@@ -547,8 +547,8 @@ When you obtain the source code of the target application, analyze it in the fol
 When encountering a page that displays source via `highlight_file()` / `show_source()`:
 1. **First choice**: `python_execute` + `re.sub(r'<[^>]+>', '', html)` to strip HTML coloring tags and get plain text
    ```python
-   import requests, re
-   r = requests.get(url)
+   import httpx, re
+   r = httpx.get(url)
    clean = re.sub(r'<[^>]+>', '', r.text)
    print(clean)
    ```
@@ -579,7 +579,7 @@ When encountering a page that displays source via `highlight_file()` / `show_sou
     2. If the response only contains the value you submitted or unrecognized text → it is very likely the else-branch echo → the bypass **did not succeed**
     3. After sending each payload, **you must search the response for the success-marker string defined in the source** to confirm its presence
 - **Draw the data-flow diagram**: user input → filter check → dangerous function
-- **⚠️ When encountering `$_SESSION` you must use session management**: the challenge uses `$_SESSION` to store state → you need to use `requests.Session()` or manually manage cookies, request step by step to keep PHPSESSID, and cannot send stateless requests each time
+- **⚠️ When encountering `$_SESSION` you must use session management**: the challenge uses `$_SESSION` to store state → you need to use `httpx.Client()` or manually manage cookies, request step by step to keep PHPSESSID, and cannot send stateless requests each time
 
 ### Step Two: Path Selection
 - List all paths from "user input" to "dangerous function"

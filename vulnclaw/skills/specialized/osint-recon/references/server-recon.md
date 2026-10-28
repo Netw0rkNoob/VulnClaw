@@ -68,7 +68,7 @@ def grab_banner(host, port, timeout=3):
 
 ### 方法二：全局 Ping
 ```python
-import requests
+import httpx
 # 使用多地 Ping 服务
 urls = [
     f"https://www.whatsmydns.net/#A/{domain}",
@@ -91,9 +91,9 @@ urls = [
 
 ### 方法五：SSL 证书搜索
 ```python
-import requests
+import httpx
 domain = "target.com"
-r = requests.get(f"https://crt.sh/?q=%.{domain}&output=json")
+r = httpx.get(f"https://crt.sh/?q=%.{domain}&output=json")
 if r.status_code == 200:
     # 查找不同子域名的证书关联的 IP
     for entry in r.json():
@@ -154,17 +154,17 @@ X-AspNet-Version: 4.0.30319
 
 ### 特征文件探测
 ```python
-import requests
+import httpx
 target = "https://target.com"
 # Apache
-r = requests.get(f"{target}/server-status")  # 403 = 存在
-r = requests.get(f"{target}/server-info")    # 403 = 存在
+r = httpx.get(f"{target}/server-status")  # 403 = 存在
+r = httpx.get(f"{target}/server-info")    # 403 = 存在
 # Nginx
-r = requests.get(f"{target}/nginx_status")   # 可能暴露状态
+r = httpx.get(f"{target}/nginx_status")   # 可能暴露状态
 # Tomcat
-r = requests.get(f"{target}/manager/html")   # 管理界面
+r = httpx.get(f"{target}/manager/html")   # 管理界面
 # IIS
-r = requests.get(f"{target}/aspnet_client/") # ASP.NET 特征
+r = httpx.get(f"{target}/aspnet_client/") # ASP.NET 特征
 ```
 
 ## 5. 数据库识别

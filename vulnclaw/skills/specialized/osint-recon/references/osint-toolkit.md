@@ -4,13 +4,13 @@
 
 ### 用法
 ```python
-import requests
+import httpx
 
 def query_crtsh(domain):
     """通过 crt.sh 查询子域名"""
     url = f"https://crt.sh/?q=%25.{domain}&output=json"
     try:
-        r = requests.get(url, timeout=30)
+        r = httpx.get(url, timeout=30)
         if r.status_code == 200:
             data = r.json()
             subdomains = set()
@@ -41,7 +41,7 @@ def search_github_code(query, max_results=10):
     params = {'q': query, 'per_page': max_results}
     headers = {'Accept': 'application/vnd.github.v3+json'}
     
-    r = requests.get(url, params=params, headers=headers)
+    r = httpx.get(url, params=params, headers=headers)
     if r.status_code == 200:
         items = r.json().get('items', [])
         return [{
@@ -110,7 +110,7 @@ def whois_lookup(domain):
     # 使用 whoisjson.com 免费 API
     url = f"https://whoisjson.com/api/v1/whois?domain={domain}"
     try:
-        r = requests.get(url, timeout=10)
+        r = httpx.get(url, timeout=10)
         if r.status_code == 200:
             data = r.json()
             return {
@@ -173,7 +173,7 @@ def wayback_query(domain):
     """查询 Wayback Machine 历史快照"""
     url = f"http://archive.org/wayback/available?url={domain}"
     try:
-        r = requests.get(url, timeout=10)
+        r = httpx.get(url, timeout=10)
         if r.status_code == 200:
             data = r.json()
             snapshots = data.get('archived_snapshots', {})
@@ -197,13 +197,13 @@ def wayback_query(domain):
 
 ### python_execute 旁站查询
 ```python
-import requests
+import httpx
 
 def reverse_ip_lookup(ip):
     """通过 crt.sh 反查同 IP 域名"""
     domains = set()
     try:
-        r = requests.get(f"https://crt.sh/?q={ip}&output=json", timeout=30)
+        r = httpx.get(f"https://crt.sh/?q={ip}&output=json", timeout=30)
         if r.status_code == 200:
             for entry in r.json():
                 for name in entry.get('name_value', '').split('\n'):
@@ -283,7 +283,7 @@ for h in hosts:
 
 ### python_execute ICP 备案查询
 ```python
-import requests
+import httpx
 
 def icp_lookup(domain):
     """查询 ICP 备案信息（使用公开 API）"""
@@ -295,7 +295,7 @@ def icp_lookup(domain):
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
-        r = requests.get(url, headers=headers, timeout=10)
+        r = httpx.get(url, headers=headers, timeout=10)
         # 解析备案信息
         import re
         icp_match = re.search(r'备案号[：:]\s*([^<\s]+)', r.text)

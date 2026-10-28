@@ -445,8 +445,8 @@ AUTO_PENTEST_INSTRUCTION = """\
 当遇到 `highlight_file()` / `show_source()` 展示源码的页面时：
 1. **首选**：`python_execute` + `re.sub(r'<[^>]+>', '', html)` 去除 HTML 着色标签，获取纯文本
    ```python
-   import requests, re
-   r = requests.get(url)
+   import httpx, re
+   r = httpx.get(url)
    clean = re.sub(r'<[^>]+>', '', r.text)
    print(clean)
    ```
@@ -477,7 +477,7 @@ AUTO_PENTEST_INSTRUCTION = """\
     2. 如果响应只包含你提交的值或不明文字 → 很可能是 else 分支的回显 → 绕过**未成功**
     3. 每次发送 payload 后，**必须在响应中搜索源码定义的成功标记字符串**，确认其存在
 - **画出数据流图**：用户输入 → 过滤检查 → 危险函数
-- **⚠️ 遇到 `$_SESSION` 时必须使用 session 管理**：题目用 `$_SESSION` 存状态 → 需要用 `requests.Session()` 或手动管理 cookie，分步请求保持 PHPSESSID，不能每次发无状态请求
+- **⚠️ 遇到 `$_SESSION` 时必须使用 session 管理**：题目用 `$_SESSION` 存状态 → 需要用 `httpx.Client()` 或手动管理 cookie，分步请求保持 PHPSESSID，不能每次发无状态请求
 
 ### 第二步：路径选择
 - 列出所有从"用户输入"到"危险函数"的路径

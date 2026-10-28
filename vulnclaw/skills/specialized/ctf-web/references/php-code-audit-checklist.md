@@ -138,8 +138,8 @@ system('echo TESTFLAG123');
 ### 响应分析技巧
 ```python
 # 使用 python_execute 分析响应
-import requests
-r = requests.get(url, params=payload)
+import httpx
+r = httpx.get(url, params=payload)
 print(f"Status: {r.status_code}")
 print(f"Length: {len(r.text)}")
 print(f"Headers: {dict(r.headers)}")

