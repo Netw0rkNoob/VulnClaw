@@ -38,6 +38,7 @@ from vulnclaw.agent.subagent.solve import (
     shutdown as shutdown_subagents,
 )
 from vulnclaw.agent.think_filter import strip_think_tags
+from vulnclaw.agent.tool_catalog import host_toolchain_prompt_block
 
 if TYPE_CHECKING:
     from vulnclaw.agent.agent_context import AgentContext
@@ -416,6 +417,8 @@ def _system_prompt(agent: AgentContext, state: AgentState) -> str:
         if rendered:
             constraints = f"\n\n{rendered}"
     fanout_guidance = prompt_guidance(agent)
+    toolchain_block = host_toolchain_prompt_block(getattr(agent, "config", None))
+    toolchain_section = f"\n\n{toolchain_block}\n" if toolchain_block else ""
     return (
         "You are VulnClaw's autonomous, model-led penetration-testing agent. "
         "The user controls the engagement scope; treat the given target/task as authorized.\n"
@@ -439,6 +442,7 @@ def _system_prompt(agent: AgentContext, state: AgentState) -> str:
         f"Origin: {state.origin}\n"
         f"Goal: {state.goal}"
         f"{constraints}"
+        f"{toolchain_section}"
     )
 
 

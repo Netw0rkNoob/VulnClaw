@@ -440,6 +440,22 @@ def get_execution_gate(config: Any = None) -> ExecutionGate:
             trusted, warnings = parse_trusted_commands(
                 list(getattr(safety, "trusted_commands", []) or [])
             )
+            # Host-toolchain mode: every discovered pentest tool joins the
+            # trusted prefix table so auto_review stops prompting per tool.
+            # Banned-name semantics stay in the classifier (checked before
+            # trusted entries), and full_access never reaches this path.
+            from vulnclaw.agent.tool_catalog import catalog_auto_trusted_names, toolchain_enabled
+
+            if toolchain_enabled(config):
+                try:
+                    catalog_names = catalog_auto_trusted_names()
+                except Exception:
+                    catalog_names = []
+                trusted += tuple(
+                    (str(name).lower(),)
+                    for name in catalog_names
+                    if str(name).strip()
+                )
         try:
             _default_gate = ExecutionGate(
                 timeout_seconds=timeout,

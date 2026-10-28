@@ -361,6 +361,16 @@ class SafetyConfig(BaseModel):
             "'git diff'). Entries starting with a banned name are refused."
         ),
     )
+    shell_tool_catalog: bool = Field(
+        default=False,
+        description=(
+            "Discover host pentest tools (PATH + dpkg) and surface them in "
+            "the system prompt and shell_command guidance; also merges the "
+            "discovered tool names into the auto_review trusted command set. "
+            "VULNCLAW_SHELL_TOOL_CATALOG overrides this; unset + kali-rolling "
+            "auto-enables."
+        ),
+    )
 
     @model_validator(mode="after")
     def _warn_deprecated_python_sandbox_fields(self) -> "SafetyConfig":
