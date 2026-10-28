@@ -444,11 +444,11 @@ def get_execution_gate(config: Any = None) -> ExecutionGate:
             # trusted prefix table so auto_review stops prompting per tool.
             # Banned-name semantics stay in the classifier (checked before
             # trusted entries), and full_access never reaches this path.
-            from vulnclaw.agent.tool_catalog import catalog_tool_names, toolchain_enabled
+            from vulnclaw.agent.tool_catalog import catalog_auto_trusted_names, toolchain_enabled
 
             if toolchain_enabled(config):
                 try:
-                    catalog_names = catalog_tool_names()
+                    catalog_names = catalog_auto_trusted_names()
                 except Exception:
                     catalog_names = []
                 trusted += tuple(

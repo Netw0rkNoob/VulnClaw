@@ -205,7 +205,7 @@ SUBAGENT_ROLE_REGISTRY: dict[str, AgentRole] = {
             "You are a general isolated worker. Follow the assignment without "
             "delegating and use no specialist-only assumptions."
         ),
-        allowed_tool_globs=("shell_command",),
+        allowed_tool_globs=(),
         goal_template=(
             "Objective: {objective}\n"
             "Done when: {done_when}\n"

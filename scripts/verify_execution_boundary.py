@@ -162,10 +162,10 @@ ALLOWED_SPAWN_SITES: dict[str, str] = {
     "vulnclaw/agent/builtin_tools.py:1711:subprocess.run": (
         "nmap privilege-deescalation retry: non-privileged argv derived from gated cmd"
     ),
-    "vulnclaw/agent/tool_catalog.py:545:subprocess.run": (
+    "vulnclaw/agent/tool_catalog.py:563:subprocess.run": (
         "operator control plane: dpkg -l host-toolchain discovery probe, fixed argv, 2s timeout"
     ),
-    "vulnclaw/agent/tool_catalog.py:587:subprocess.run": (
+    "vulnclaw/agent/tool_catalog.py:605:subprocess.run": (
         "batch whatis description resolution: fixed argv, bounded timeout, static _TOOLS names"
     ),
     "vulnclaw/cli/main.py:2738:subprocess.run": (

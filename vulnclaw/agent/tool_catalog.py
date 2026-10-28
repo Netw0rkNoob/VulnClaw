@@ -47,6 +47,24 @@ CACHE_FILE = Path.home() / ".cache" / "vulnclaw" / "tool_catalog.json"
 
 CATEGORIES = ("recon", "web", "exploit", "crack", "misc")
 
+#: Tools we never auto-approve into the exec-gate trusted set: they all
+#: reach the network / read arbitrary files, so silently trusting them
+#: would let the model exfiltrate data without a review prompt. They stay
+#: discoverable in the prompt block; they just keep prompting at the gate.
+_NO_AUTO_TRUST = frozenset(
+    {
+        "curl",
+        "wget",
+        "openssl",
+        "tcpdump",
+        "host",
+        "dig",
+        "nslookup",
+        "netcat",
+        "nc",
+    }
+)
+
 # ── Known-tool registry ──────────────────────────────────────────────────
 # Binary name -> category. "宁多勿少": false positives cost one missed
 # PATH hit, false negatives cost the model a tool it could have used.
@@ -130,7 +148,6 @@ _TOOLS: dict[str, str] = {
     "gau": "web",
     "waybackurls": "web",
     "getJS": "web",
-    "urls": "web",
     "arachni": "web",
     "skipfish": "web",
     "w3af": "web",
@@ -140,8 +157,6 @@ _TOOLS: dict[str, str] = {
     "curl": "web",
     "wget": "web",
     "httpie": "web",
-    "hs": "web",
-    "httplist_sorter": "web",
     "anew": "web",
     "tojson": "web",
     # exploit: frameworks, credential-relay, privesc helpers, scanners
@@ -152,7 +167,6 @@ _TOOLS: dict[str, str] = {
     "msfupdate": "exploit",
     "armitage": "exploit",
     "searchsploit": "exploit",
-    "exploit": "exploit",
     "ntlmrelayx": "exploit",
     "ntlmrelayx.py": "exploit",
     "mitmproxy": "exploit",
@@ -191,8 +205,6 @@ _TOOLS: dict[str, str] = {
     "lse.sh": "exploit",
     "unix-privesc-check": "exploit",
     "linux-smart-enumeration": "exploit",
-    "wsuspie": "exploit",
-    "dfscache": "exploit",
     # crack: password/hash tooling and wordlist generators
     "hydra": "crack",
     "medusa": "crack",
@@ -371,7 +383,6 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "msfvenom": "Metasploit payload generator",
     "armitage": "Metasploit GUI front-end",
     "searchsploit": "search the Exploit-DB archive",
-    "exploit": "Exploit-DB local exploit runner",
     "ntlmrelayx": "relay captured NTLM auth (impacket suite)",
     "mitmproxy": "interactive HTTPS interception proxy",
     "mitmweb": "web-UI mitmproxy",
@@ -516,11 +527,18 @@ def toolchain_enabled(config: object = None) -> bool:
 # ── Discovery ────────────────────────────────────────────────────────────
 
 
-def _scan_path_executables() -> set[str]:
-    """Single walk over PATH; returns every executable basename found."""
+def _scan_path_executables(deadline: float) -> set[str]:
+    """Single walk over PATH; returns every executable basename found.
+
+    ``deadline`` is a ``time.monotonic()`` budget: once it passes we stop
+    walking further PATH entries and keep whatever has been found so far,
+    so a cold scan on a slow/remote PATH mount can never stall startup.
+    """
     found: set[str] = set()
     path_entries = os.environ.get("PATH", "").split(os.pathsep)
     for directory in path_entries:
+        if time.monotonic() >= deadline:
+            break
         if not directory:
             continue
         try:
@@ -560,7 +578,7 @@ def _dpkg_installed_names() -> set[str]:
 
 def _discover_names(deadline: float) -> list[str]:
     """Known tool names actually executable on this host."""
-    executables = _scan_path_executables()
+    executables = _scan_path_executables(deadline)
     names = {name for name in _TOOLS if name in executables}
     if time.monotonic() < deadline:
         installed = _dpkg_installed_names()
@@ -733,3 +751,15 @@ def catalog_tool_names() -> list[str]:
             if name:
                 names.append(name)
     return names
+
+
+def catalog_auto_trusted_names() -> list[str]:
+    """Discovered names that may join the exec-gate trusted set.
+
+    Same list as ``catalog_tool_names()`` minus ``_NO_AUTO_TRUST``: the
+    generic network clients / sniffers keep their per-call approval prompt
+    even on a Kali host, because silently trusting them would hand the
+    model an unreviewed exfiltration primitive. Comparison is
+    case-insensitive so PATH variants (``NC``/``nc``) stay excluded.
+    """
+    return [name for name in catalog_tool_names() if name.lower() not in _NO_AUTO_TRUST]
