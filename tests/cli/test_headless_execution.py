@@ -2,14 +2,16 @@ import asyncio
 import io
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from tests.cli.test_session_backend import FakeRuntime
-from vulnclaw.agent.context import SessionState
+from vulnclaw.agent.context import SessionState, VulnerabilityFinding
 from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate, reset_execution_gate
 from vulnclaw.cli.execution import HeadlessExecutor
 from vulnclaw.cli.output import CommandOutput
+from vulnclaw.findings.types import FindingAssessment, apply_assessment, finding_input_digest
 from vulnclaw.input_service import InputRequest
 from vulnclaw.task_service import TaskCreateRequest
 
@@ -132,3 +134,55 @@ async def test_headless_control_input_returns_business_result(text, operation, r
         assert result["result"] == control["result"]
     else:
         assert result_key in result["result"]
+
+
+@pytest.mark.parametrize("format", ["json", "jsonl"])
+@pytest.mark.parametrize("completed", [False, True])
+async def test_natural_task_keeps_verified_findings_exit_code(
+    headless_runtime, monkeypatch, format, completed,
+):
+    headless_runtime.config.session.conversation_auto_report = False
+    agent = headless_runtime.agent
+    finding = VulnerabilityFinding(
+        title="Synthetic verified finding", severity="High", target="https://example.test",
+        vuln_type="test", description="Fixture only",
+    )
+    apply_assessment(finding, FindingAssessment(
+        outcome="verified", method="poc", reason="Synthetic validated evidence",
+        input_digest=finding_input_digest(finding),
+    ))
+
+    async def solve(*_args, **_kwargs):
+        agent.session_state.findings.append(finding)
+        agent.session_state.agent_state.completed = completed
+        return SimpleNamespace(completed=completed, output="fixture output")
+
+    agent.solve = solve
+    monkeypatch.setattr(
+        "vulnclaw.findings.verification.verify_findings",
+        AsyncMock(side_effect=lambda session, **_kwargs: session.model_copy(deep=True)),
+    )
+    executor = HeadlessExecutor(CommandOutput(format, io.StringIO()))
+    result = await executor.execute(InputRequest(text="pentest https://example.test"))
+    assert result["status"] == "completed", result
+    assert agent.session_state.findings[0].verified
+    assert result["exit_code"] == 2, result
+    assert result["findings"] == {"verified": 1, "candidates": 0}
+    assert any(item["kind"] == "summary" for item in result["artifacts"])
+
+
+@pytest.mark.parametrize("mode,text", [
+    ("full_access", "hello"),
+    ("read_only", "hello"),
+    ("read_only", "pentest https://example.test"),
+])
+async def test_chat_does_not_emit_task_summary_or_classification(headless_runtime, mode, text):
+    headless_runtime.config.safety.permission_mode = mode
+    executor = HeadlessExecutor(CommandOutput("json", io.StringIO()))
+    result = await executor.execute(InputRequest(text=text))
+    assert result["status"] == "completed", result
+    assert result["exit_code"] == 0
+    assert result["artifacts"] == []
+    assert "findings" not in result
+    headless_runtime.agent.chat.assert_awaited_once()
+    headless_runtime.agent.solve.assert_not_awaited()

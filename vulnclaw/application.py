@@ -411,10 +411,12 @@ class ApplicationSession:
 
         if self.permission_mode == "read_only":
             raise ApplicationError("read_only", "Read-Only does not execute tasks.")
-        return await self._foreground(
-            arguments["target"],
-            lambda: run_agent_task(agent=self.agent, **arguments),
-        )
+
+        async def call() -> Any:
+            await self.runtime.mcp_manager.wait_for_startup()
+            return await run_agent_task(agent=self.agent, **arguments)
+
+        return await self._foreground(arguments["target"], call)
 
     async def cancel(self) -> None:
         """Cancel the active operation and wait for its existing cleanup path."""

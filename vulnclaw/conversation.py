@@ -524,7 +524,11 @@ async def run_conversation(application: Any, text: str, sink: Any) -> dict[str, 
     if application.permission_mode != "read_only":
         from vulnclaw.findings.verification import verify_findings
 
-        await verify_findings(state, config=config)
+        await verify_findings(
+            state,
+            config=config,
+            poc_verify=conversation.task.request.options.poc_verify if conversation.task else None,
+        )
     conversation.target = state.target or conversation.target
     phase = getattr(state.phase, "value", state.phase)
     conversation.phase = str(phase)

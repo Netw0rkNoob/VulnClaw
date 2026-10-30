@@ -6,10 +6,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from vulnclaw.agent.context import VulnerabilityFinding
 from vulnclaw.agent.core import AgentCore
 from vulnclaw.agent.exec_gate import GateRequest, get_execution_gate, reset_execution_gate
 from vulnclaw.application import ApplicationError, ApplicationSession
 from vulnclaw.config.schema import VulnClawConfig
+from vulnclaw.findings.types import FindingAssessment
 from vulnclaw.orchestrator import OrchestratorRunResult
 from vulnclaw.target_state.store import SessionRestoreResult
 
@@ -356,3 +358,29 @@ async def test_answered_question_does_not_stop_restarted_continuous_cycles(pause
     )
     assert len(cycles) == 3
     assert not paused_task.agent.session_state.agent_state.pending_questions
+
+
+@pytest.mark.parametrize("poc_verify", [None, False, True])
+@pytest.mark.parametrize("default_poc_verify", [False, True])
+async def test_continuation_audits_preserve_task_poc_choice(
+    paused_task, monkeypatch, poc_verify, default_poc_verify,
+):
+    agent = paused_task.agent
+    agent.config.session.poc_verify_enabled = default_poc_verify
+    await paused_task.start(options={"poc_verify": poc_verify})
+    agent.session_state.findings.append(VulnerabilityFinding(
+        title="Synthetic candidate", severity="High", target="https://example.test",
+        vuln_type="test", description="Fixture only",
+    ))
+    decisions = []
+
+    async def assess(_session, _finding, _config, *, poc_verify, artifact_dir):
+        decisions.append(poc_verify)
+        return FindingAssessment(
+            outcome="suspected_low", method="evidence_review", reason="Fixture assessment",
+        )
+
+    monkeypatch.setattr("vulnclaw.findings.verification.assess_finding", assess)
+    kind, result = await paused_task.reply("yes")
+    assert kind == "turn_completed", result
+    assert decisions == [default_poc_verify if poc_verify is None else poc_verify]

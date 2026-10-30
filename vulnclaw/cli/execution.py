@@ -176,7 +176,12 @@ class HeadlessExecutor:
             if (
                 status == "completed"
                 and not self.interaction.status
-                and (request.task is not None or direct is not None or app.conversation.auto_mode)
+                and (
+                    request.task is not None
+                    or direct is not None
+                    or result.get("completed")
+                    or app.conversation.auto_mode
+                )
             ):
                 from vulnclaw.report.findings_output import build_findings_document
 
