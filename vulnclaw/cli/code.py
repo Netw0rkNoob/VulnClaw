@@ -170,11 +170,17 @@ def _resolve_llm_client():
 
         class _SyncLLM:
             def complete(self, prompt: str, *, temperature: float = 0.2) -> str:
-                resp = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=temperature,
-                )
+                create_kwargs: dict = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+                # Fixed-temperature models (Kimi K2.5+) reject any explicit
+                # temperature; omit it so the server applies its fixed value.
+                from vulnclaw.config.llm_utils import _has_fixed_temperature
+
+                if not _has_fixed_temperature(model):
+                    create_kwargs["temperature"] = temperature
+                resp = client.chat.completions.create(**create_kwargs)
                 return resp.choices[0].message.content or ""
 
         console.print(f"[+] L3 enabled: using provider '{provider}' (model {model})")

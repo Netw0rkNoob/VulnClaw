@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -17,6 +18,28 @@ def _is_openai_reasoning_model(provider: str, model: str) -> bool:
         return False
     normalized = model.lower()
     return normalized.startswith(("o1", "o3", "o4", "gpt-5"))
+
+
+_KIMI_K_SERIES = re.compile(r"^kimi-k(\d+)(?:\.(\d+))?")
+
+
+def _has_fixed_temperature(model: str) -> bool:
+    """Return True for models whose temperature is fixed server-side.
+
+    Kimi K2.5 and later (k2.6 / k2.7 / k3, …) pin temperature to a
+    model-specific value and reject requests that send any other value, so
+    callers must omit the field entirely and let the server apply its fixed
+    value. The check keys off the model name only — with any vendor prefix
+    (e.g. ``moonshotai/``) stripped — so Kimi models reached through
+    gateways such as OpenRouter are covered as well.
+    """
+    bare = model.lower().rsplit("/", 1)[-1]
+    match = _KIMI_K_SERIES.match(bare)
+    if not match:
+        return False
+    major = int(match.group(1))
+    minor = int(match.group(2) or 0)
+    return (major, minor) >= (2, 5)
 
 
 def build_chat_completion_kwargs(
@@ -57,7 +80,7 @@ def build_chat_completion_kwargs(
             kwargs["max_completion_tokens"] = token_limit
         else:
             kwargs["max_tokens"] = token_limit
-    if temp is not None and not uses_reasoning_params:
+    if temp is not None and not uses_reasoning_params and not _has_fixed_temperature(model):
         kwargs["temperature"] = temp
     if tools:
         kwargs["tools"] = tools
