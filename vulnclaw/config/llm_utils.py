@@ -8,7 +8,11 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+_KIMI_FIXED_TEMPERATURE_RE = re.compile(r"kimi-k(\d+)(?:\.(\d+))?", re.IGNORECASE)
+_KIMI_FIXED_TEMPERATURE_MIN = (2, 5)
 
 
 def _is_openai_reasoning_model(provider: str, model: str) -> bool:
@@ -17,6 +21,23 @@ def _is_openai_reasoning_model(provider: str, model: str) -> bool:
         return False
     normalized = model.lower()
     return normalized.startswith(("o1", "o3", "o4", "gpt-5"))
+
+
+def _has_fixed_temperature(model: str) -> bool:
+    """Return True when the model pins ``temperature`` server-side.
+
+    Moonshot's Kimi K2.5 and later (K2.5/K2.6/K2.7/K3) reject requests that
+    pass an explicit temperature, so callers must omit the field and let the
+    service apply its fixed value. Match the model name rather than the
+    provider so vendor-prefixed IDs on gateways (``moonshotai/kimi-k3``) are
+    covered too.
+    """
+    name = str(model or "").rsplit("/", 1)[-1]
+    match = _KIMI_FIXED_TEMPERATURE_RE.match(name)
+    if not match:
+        return False
+    version = (int(match.group(1)), int(match.group(2) or 0))
+    return version >= _KIMI_FIXED_TEMPERATURE_MIN
 
 
 def build_chat_completion_kwargs(
@@ -34,6 +55,9 @@ def build_chat_completion_kwargs(
     require the older field, so keep the switch scoped to OpenAI's newer model
     families.
 
+    Models that pin temperature server-side (Kimi K2.5+) reject any explicit
+    value, so the field is omitted for them.
+
     Args:
         llm_config: An object with attributes: provider, model, max_tokens,
                     temperature, reasoning_effort (typically config.llm).
@@ -47,6 +71,7 @@ def build_chat_completion_kwargs(
     token_limit = max_tokens if max_tokens is not None else getattr(llm_config, "max_tokens", None)
     temp = temperature if temperature is not None else getattr(llm_config, "temperature", None)
     uses_reasoning_params = _is_openai_reasoning_model(provider, model)
+    has_fixed_temperature = _has_fixed_temperature(model)
 
     kwargs: dict[str, Any] = {
         "model": model,
@@ -57,7 +82,7 @@ def build_chat_completion_kwargs(
             kwargs["max_completion_tokens"] = token_limit
         else:
             kwargs["max_tokens"] = token_limit
-    if temp is not None and not uses_reasoning_params:
+    if temp is not None and not uses_reasoning_params and not has_fixed_temperature:
         kwargs["temperature"] = temp
     if tools:
         kwargs["tools"] = tools

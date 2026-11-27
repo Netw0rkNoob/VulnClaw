@@ -101,6 +101,22 @@ def test_probe_ok_when_tool_call_emitted(monkeypatch):
     assert any(tool["function"]["name"] == "ping" for tool in kwargs["tools"])
 
 
+def test_probe_omits_temperature_for_fixed_temperature_kimi(monkeypatch):
+    tool_call = SimpleNamespace(id="1", type="function")
+    message = SimpleNamespace(content=None, tool_calls=[tool_call])
+    response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
+    patch = _ProbeMonkey(monkeypatch, response=response)
+    config = _llm_config()
+    config.provider = "moonshot"
+    config.model = "kimi-k3"
+    config.temperature = 0.1
+
+    result = probe_llm_endpoint(config)
+
+    assert result.ok is True
+    assert "temperature" not in patch.calls["kwargs"]
+
+
 def test_probe_flags_prose_only_endpoint(monkeypatch):
     message = SimpleNamespace(content="I would rather chat than call tools.", tool_calls=[])
     response = SimpleNamespace(choices=[SimpleNamespace(message=message)])

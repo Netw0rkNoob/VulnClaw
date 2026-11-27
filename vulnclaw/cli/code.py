@@ -166,14 +166,18 @@ def _resolve_llm_client():
 
         from openai import OpenAI
 
+        from vulnclaw.config.llm_utils import build_chat_completion_kwargs
+
         client = OpenAI(api_key=api_key, base_url=base_url)
 
         class _SyncLLM:
             def complete(self, prompt: str, *, temperature: float = 0.2) -> str:
                 resp = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=temperature,
+                    **build_chat_completion_kwargs(
+                        llm,
+                        [{"role": "user", "content": prompt}],
+                        temperature=temperature,
+                    )
                 )
                 return resp.choices[0].message.content or ""
 
